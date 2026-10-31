@@ -67,8 +67,8 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 	err = r.pool.QueryRow(ctx,
 		`SELECT
 		   (SELECT COALESCE(SUM(b.bal), 0) FROM (
-		     SELECT CASE WHEN $3::bool THEN i.balance_cents
-		                 ELSE i.total_cents
+		     SELECT CASE WHEN $3::bool THEN i.balance_cents - i.holdback_cents
+		                 ELSE i.total_cents - i.holdback_cents
 		                      + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
 		                      WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
 		                        AND t.txn_type <> i.doc_type AND t.created_at <= $2), 0)

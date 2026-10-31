@@ -322,6 +322,7 @@ type InvoiceWriter struct {
 	journals  JournalKeyReader     // deposit_release.go; nil = the deposit sweep skips
 	audit     audit.Recorder       // deposit_cancel.go; nil = the settlement audits nothing
 	terms     TermsReader          // terms.go; nil = the caller's own resolved terms
+	holdback  Withholder           // holdback.go; nil = no invoice withholds
 	now       func() time.Time
 	zone      houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 }
@@ -697,26 +698,36 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 				}
 			}
 		}
+		// What this document withholds (RT-2), decided on this transaction after the order lock so the
+		// rule is the one in force when the document is written.
+		withheld, err := w.withheldCents(ctx, tx, sourceKind, f.JobID, subtotal)
+		if err != nil {
+			return err
+		}
 		var invoiceID, invoiceNo string
 		// FINALIZED, not DRAFT. The order was delivered; the document is real the moment it exists,
 		// and a DRAFT invoice is a promise to remember to finalize it that nobody keeps.
-		err := tx.QueryRow(ctx, invoiceWriterSeqCTE+`
+		err = tx.QueryRow(ctx, invoiceWriterSeqCTE+`
 INSERT INTO invoices (id, invoice_no, customer_id, order_id, job_id, branch_id, status, issue_date, due_date,
                       discount_date, terms_code,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
-                      doc_type, source_kind, idempotency_key, closes_order, org_id, seq, metadata)
+                      doc_type, source_kind, idempotency_key, closes_order, org_id, seq, metadata, holdback_cents)
 VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), '#INV-' || nextval('invoice_no_seq'),
         $2, $3, $16, $4, 'FINALIZED', $5, $6, $14, $15,
         $7, $8, $9, $9, now(), 'INVOICE', $10, $11, $12,
         (SELECT org_id FROM locations WHERE id = $4::uuid),
-        (SELECT next_value FROM iseq), $13::jsonb)
+        (SELECT next_value FROM iseq), $13::jsonb, $17)
 RETURNING id::text, invoice_no`,
 			docID, f.CustomerID, nullUUID(f.OrderID), f.BranchID, issueDate, dueDate,
 			subtotal, quote.TaxCents, total, sourceKind, idemKey, f.ClosesOrder, headerMetadata(f),
-			discountDate, termsCode, nullUUID(f.JobID),
+			discountDate, termsCode, nullUUID(f.JobID), withheld,
 		).Scan(&invoiceID, &invoiceNo)
 		if err != nil {
 			return fmt.Errorf("insert invoice: %w", err)
+		}
+		// The ledger's row for the withholding, on this same transaction (RT-2).
+		if err := w.bookWithholding(ctx, tx, invoiceID, invoiceNo, f, withheld); err != nil {
+			return err
 		}
 
 		for i, l := range f.Lines {

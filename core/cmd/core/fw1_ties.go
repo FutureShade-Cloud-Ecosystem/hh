@@ -47,6 +47,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	staffctx "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/lien"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 )
@@ -139,6 +140,14 @@ type TieSeams struct {
 	// the filed period rule lives once, in gl, and never as the naming's own
 	// copy of its SQL (W3 item 6).
 	GLClock tieGLJournalClock
+	// Holdback is lien's holdback ledger (RT-2): the retention the 1150 tie reads. Nil leaves the
+	// tie not applicable for a caller that wires no ledger.
+	Holdback tieHoldbackLedger
+}
+
+// tieHoldbackLedger is the one lien read the holdback tie needs. *lien.Repository answers it.
+type tieHoldbackLedger interface {
+	HoldbackLedger(ctx context.Context, branchID string) ([]lien.HoldbackEntry, error)
 }
 
 // tieGLJournalClock is the one read of the GL's as-of filing rule the ties
@@ -189,6 +198,7 @@ const (
 	TieNameBranchTotals = "branch_trial_balances_to_consolidated"
 	TieNameOutbox       = "outbox_drained"
 	TieNameAPAging      = "ap_aging_to_gl_2100"
+	TieNameHoldback     = "holdback_ledger_to_gl_1150"
 	TieNameIncomeClosed = "closed_year_income_statement_unchanged"
 	TieNameNoBranchless = "every_journal_line_carries_a_branch"
 )
@@ -207,6 +217,7 @@ func TiesForMonth(ctx context.Context, seams TieSeams, m TieMonth) ([]TieResult,
 		TieBranchTrialBalancesToConsolidated,
 		TieOutboxDrained,
 		TieAPAgingToGL2100,
+		TieHoldbackLedgerToGL1150,
 	}
 	out := make([]TieResult, 0, len(ties))
 	for _, tie := range ties {
@@ -242,6 +253,43 @@ func TieARAgingToGL1100(ctx context.Context, seams TieSeams, m TieMonth) (TieRes
 			fw1Dollars(aging), fw1Dollars(gl1100), shorter(aging, gl1100), byDollars(variance))
 	}
 	return TieResult{Name: TieNameARAging, Pass: variance == 0, Applicable: true, VarianceCents: variance, Detail: detail}, nil
+}
+
+// TieHoldbackLedgerToGL1150 (RT-2): the holdback ledger equals GL 1150 as of the month's end, to the
+// cent. The ledger is retention less release, the entries filed by the month's last instant; the GL
+// side is the 1150 balance through the same instant. A withholding that no lien job holds (an invoice
+// on a job with no linked lien job) is in 1150 and not in the ledger, and this tie names the gap.
+func TieHoldbackLedgerToGL1150(ctx context.Context, seams TieSeams, m TieMonth) (TieResult, error) {
+	if seams.Holdback == nil {
+		return TieResult{Name: TieNameHoldback, Pass: true, Applicable: false, Detail: "no holdback ledger is wired for this read"}, nil
+	}
+	entries, err := seams.Holdback.HoldbackLedger(ctx, "")
+	if err != nil {
+		return TieResult{}, fmt.Errorf("the holdback ledger read: %w", err)
+	}
+	var ledger int64
+	for _, e := range entries {
+		if e.CreatedAt.After(m.MonthEnd) {
+			continue
+		}
+		switch e.EntryType {
+		case "RETENTION":
+			ledger += e.AmountCents
+		case "RELEASE":
+			ledger -= e.AmountCents
+		}
+	}
+	gl1150, _, err := seams.GLStore.AccountBalanceAsOf(ctx, "1150", m.MonthEnd, "")
+	if err != nil {
+		return TieResult{}, fmt.Errorf("the GL 1150 read: %w", err)
+	}
+	variance := ledger - gl1150
+	detail := fmt.Sprintf("holdback ledger %s ties to GL 1150 %s", fw1Dollars(ledger), fw1Dollars(gl1150))
+	if variance != 0 {
+		detail = fmt.Sprintf("holdback ledger %s does not tie to GL 1150 %s: the ledger is %s %s",
+			fw1Dollars(ledger), fw1Dollars(gl1150), shorter(ledger, gl1150), byDollars(variance))
+	}
+	return TieResult{Name: TieNameHoldback, Pass: variance == 0, Applicable: true, VarianceCents: variance, Detail: detail}, nil
 }
 
 // TieAPAgingToGL2100: the AP aging total equals GL 2100's credit balance as of

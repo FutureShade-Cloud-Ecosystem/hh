@@ -1,0 +1,125 @@
+package billing
+
+// holdback.go, RT-2 (wave 3): an invoice on a job withholds the job's holdback.
+//
+// THE BASE is the invoice's SUBTOTAL, before tax. The Construction Act holds back a percent of the
+// price of the services or materials supplied, and the tax is charged on top of that price, not part
+// of it; the province rules RT-1 reads carry a percent of price, and the holdback sync and the lien
+// aging already treat holdback_cents as a pre tax figure (lien.holdbackAt). The delivery line is part
+// of the price and so of the base. The customer is still billed the tax in full: it falls in the
+// net the customer owes now (total less the holdback), never in the holdback.
+//
+// THE MONEY is integer cents, the percent is basis points, and the half cent goes to the even cent.
+//
+// THE RULE is read through the lien module's seam (lien.Service.HoldbackRuleForJob) on the writer's
+// own transaction (customer.WithCallerTx), so a pool of one never needs a second connection and the
+// rule read is the one in force when the document commits.
+//
+// THE DOORS. Every producer of an INVOICE row goes through InvoiceWriter.writeCore, so each of them
+// withholds the same way:
+//   - InvoiceOrder and InvoiceOrderNamed (the order's whole invoice, the invoices sync door);
+//   - InvoiceOrderGroups (the multi-ship invoice of shipment groups);
+//   - InvoiceOrderAtAgreed, AgreedOrderInvoice and their Tx forms (the counter's agreed invoice);
+//   - the quote conversion and the pay-balance invoicer, which call those.
+// The finance charge run also calls writeCore and is excluded here by source kind: a late fee is
+// not the sale on a job and has no job. A supplier deposit document is excluded for the same reason
+// the credit memo refuses it (it is a liability, not a sale).
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/lien"
+)
+
+// Withholder is the holdback seam: the rule for a job and the ledger's row for a withholding.
+// *lien.Service satisfies it. Declared here so the writer names what it needs.
+type Withholder interface {
+	HoldbackRuleForJob(ctx context.Context, customerJobID string) (lien.HoldbackRule, error)
+	BookRetention(ctx context.Context, b lien.RetentionBooking) (bool, error)
+	BookCreditReversal(ctx context.Context, r lien.CreditReversal) (bool, error)
+}
+
+// WithHoldback binds the holdback seam. Unbound, no invoice withholds (the writer as it was before RT-2).
+func (w *InvoiceWriter) WithHoldback(h Withholder) *InvoiceWriter {
+	w.holdback = h
+	return w
+}
+
+// roundHalfEvenBps answers base*bps/10000 in integer cents, the half to the even cent.
+func roundHalfEvenBps(base, bps int64) int64 {
+	if base <= 0 || bps <= 0 {
+		return 0
+	}
+	q, rem := base*bps/10000, base*bps%10000
+	switch twice := rem * 2; {
+	case twice > 10000:
+		return q + 1
+	case twice == 10000 && q%2 == 1:
+		return q + 1
+	default:
+		return q
+	}
+}
+
+// withheldCents is what the document withholds: nothing without a job, for a document that is not a
+// sale, or when the job's rule is zero.
+func (w *InvoiceWriter) withheldCents(ctx context.Context, tx pgx.Tx, sourceKind, jobID string, subtotal int64) (int64, error) {
+	if w.holdback == nil || jobID == "" || sourceKind == SourceFinanceCharge || sourceKind == SourceSupplierDeposit {
+		return 0, nil
+	}
+	rule, err := w.holdback.HoldbackRuleForJob(customer.WithCallerTx(ctx, tx), jobID)
+	if err != nil {
+		return 0, err
+	}
+	return roundHalfEvenBps(subtotal, int64(rule.HoldbackPctBps)), nil
+}
+
+// bookWithholding gives the withholding its ledger row on the document's transaction.
+func (w *InvoiceWriter) bookWithholding(ctx context.Context, tx pgx.Tx, invoiceID, invoiceNo string, f OrderInvoiceFacts, withheld int64) error {
+	if withheld <= 0 || w.holdback == nil {
+		return nil
+	}
+	if _, err := w.holdback.BookRetention(customer.WithCallerTx(ctx, tx), lien.RetentionBooking{
+		InvoiceID: invoiceID, InvoiceNo: invoiceNo, CustomerJobID: f.JobID, BranchID: f.BranchID, AmountCents: withheld,
+	}); err != nil {
+		return fmt.Errorf("book the holdback ledger row: %w", err)
+	}
+	return nil
+}
+
+// reversalHoldback is the holdback part a credit memo takes back from the invoice it reverses, in
+// proportion to the subtotal it credits: origHold * credited / origSub, the half to the even cent, and
+// never more than the invoice has left to take back (remHold). A memo that credits everything the
+// invoice has left takes back everything it has left, so the parts sum to the invoice's holdback to the
+// cent however the credits were cut.
+func reversalHoldback(origHold, remHold, origSub, remSub, credited int64) int64 {
+	if origHold <= 0 || remHold <= 0 || origSub <= 0 || credited <= 0 {
+		return 0
+	}
+	if credited >= remSub {
+		return remHold
+	}
+	num := origHold * credited
+	q, rem := num/origSub, num%origSub
+	if twice := rem * 2; twice > origSub || (twice == origSub && q%2 == 1) {
+		q++
+	}
+	return min(q, remHold)
+}
+
+// bookCreditReversal takes a memo's holdback part off the retention ledger on the memo's transaction.
+func (w *InvoiceWriter) bookCreditReversal(ctx context.Context, tx pgx.Tx, reversesInvoiceID, memoNo, branchID string, holdback int64) error {
+	if holdback <= 0 || reversesInvoiceID == "" || w.holdback == nil {
+		return nil
+	}
+	if _, err := w.holdback.BookCreditReversal(customer.WithCallerTx(ctx, tx), lien.CreditReversal{
+		InvoiceID: reversesInvoiceID, MemoNo: memoNo, BranchID: branchID, AmountCents: holdback,
+	}); err != nil {
+		return fmt.Errorf("take the credit memo's holdback off the ledger: %w", err)
+	}
+	return nil
+}

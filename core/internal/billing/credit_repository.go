@@ -165,8 +165,8 @@ func (r *Repository) SetCreditChangeThresholds(ctx context.Context, branchID str
 const agingSelect = `
 	WITH open_ar AS (
 		SELECT i.customer_id, i.branch_id,
-		       CASE WHEN $7::bool THEN i.balance_cents
-		            ELSE i.total_cents
+		       CASE WHEN $7::bool THEN i.balance_cents - i.holdback_cents
+		            ELSE i.total_cents - i.holdback_cents
 		                 + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
 		                     WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
 		                       AND t.txn_type <> i.doc_type AND t.created_at <= $6::timestamptz), 0)

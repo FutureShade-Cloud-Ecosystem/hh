@@ -22,6 +22,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/lien"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
@@ -384,7 +385,17 @@ func newDealerZone(pool *pgxpool.Pool) dealerZoneAdapter {
 func newInvoiceWriter(pool *pgxpool.Pool) *billing.InvoiceWriter {
 	return billing.NewInvoiceWriter(pool).
 		WithZone(newDealerZone(pool)).
-		WithTerms(customer.NewService(customer.NewRepository(pool)))
+		WithTerms(customer.NewService(customer.NewRepository(pool))).
+		WithHoldback(newHoldbackSeam(pool))
+}
+
+// newHoldbackSeam builds the lien service the invoice writer withholds through (RT-2): the rule for a
+// job (RT-1) and the ledger row for each withholding. It carries no caller of its own; the writer
+// hands it the transaction it is writing on.
+func newHoldbackSeam(pool *pgxpool.Pool) *lien.Service {
+	jobs := customer.NewRepository(pool)
+	return lien.NewService(lien.NewRepository(pool)).
+		WithCustomerJobs(lien.NewCustomerJobs(customer.NewService(jobs).WithJobs(jobs)))
 }
 
 // dealerCountryAdapter binds the customer module's CountrySource to the same dealer configuration:
