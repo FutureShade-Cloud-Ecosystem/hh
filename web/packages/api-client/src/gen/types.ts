@@ -7268,6 +7268,55 @@ export type PurchasingAPAgingPage = {
   items: PurchasingAPAgingRow[];
   next_cursor: string | null;
 };
+export type PurchasingRunAPRevaluationRequest = {
+  branch_id: string;
+  month: string;
+  fx_rate: number;
+};
+export type PurchasingReverseAPRevaluationRequest = {
+  branch_id: string;
+};
+export type PurchasingAPRevaluationRun = {
+  branch_id: string;
+  month: string;
+  month_end: string;
+  fx_rate: number;
+  bills: number;
+  doc_open_cents: number;
+  carried_cad_cents: number;
+  revalued_cad_cents: number;
+  difference_cents: number;
+  posted: boolean;
+  journal_id?: string;
+};
+export type PurchasingAPRevaluationReversal = {
+  branch_id: string;
+  month: string;
+  next_house_day: string;
+  difference_cents: number;
+  journal_id: string;
+  reversal_journal_id: string;
+};
+export type PurchasingAPRevaluationRunRecord = {
+  branch_id: string;
+  month: string;
+  fx_rate: number;
+  bills: number;
+  doc_open_cents: number;
+  carried_cad_cents: number;
+  revalued_cad_cents: number;
+  difference_cents: number;
+  journal_id?: string;
+  created_by: string;
+  created_at: string;
+  reversal_journal_id?: string;
+  reversed_by?: string;
+  reversed_at?: string;
+};
+export type PurchasingAPRevaluationRunList = {
+  items: PurchasingAPRevaluationRunRecord[];
+  next_cursor: string | null;
+};
 export type PurchasingPaymentRunStatus = "DRAFT" | "PAID";
 export type PurchasingPaymentRunLineStatus = "SELECTED" | "PAID" | "SKIPPED";
 export type PurchasingPaymentRunLine = {

@@ -91,7 +91,11 @@ import (
 // W3 AX-1 (car 15) moved it to 109: glListAccountMapping joined the page shapes
 // (GlAccountMappingPage), its served answer allowlisted beside the chart
 // list's own entry.
-const shapeCensusWantPages = 109
+//
+// W3 FX-2b moved it to 110: purchasingListAPRevaluations (GET /api/v1/purchasing/ap-revaluations)
+// joined the page shapes; it needs a branch_id query the census does not send, so it sits on the
+// uncovered list with that reason.
+const shapeCensusWantPages = 110
 
 // shapeCensusAllowlist names (per the brief) the page shape operations
 // whose served answer already breaks the page shape, each with the reason
@@ -218,6 +222,7 @@ var shapeCensusUncovered = map[string]string{
 	"posListParked":                "the service requires the branch_id query (internal/pos/policy.go, Service.ListParked, pos: branch_id is required); the counter till legs (inside_sales, sales_manager, GM, branch_manager) answer 400 (the guard), the money and yard legs 403 (the counter till gate (their cells do not reach the route))",
 	"posListPricingOrders":         "the service requires the branch_id query (internal/pos/pricing_orders.go, Service.ListPricingOrders, the same guard); the same leg split (counter legs 400 (the guard), money and yard legs 403 (the counter till gate))",
 	"posListReturnPickups":         "the service requires the branch_id query (internal/pos/returns.go, Service.ListReturnPickups); the dispatch-board legs (sales_manager, GM, branch_manager) answer 400 (the guard), the counter and money legs 403 (the dispatch-board gate (the route's surface))",
+	"purchasingListAPRevaluations": "the service requires the branch_id query (internal/purchasing/ap_revaluation.go, Service.ListAPRevaluations, purchasing: branch_id is required); the census sends no query string, so the Controller legs the gate admits (general_manager and the financial controller) answer 400 (the guard), every other leg 403 (the leadership tier gate, narrowed to the Controller roles by the handler)",
 	"purchasingListIncoming":       "the handler requires the product_id query (internal/purchasing/incoming.go, IncomingForProduct, purchasing: product_id is required); all legs 400",
 	"reportingCommissionPreview":   "the service requires the from and to date queries (internal/reporting/commission_service.go, parseWindow (from must be a date (YYYY-MM-DD)) when they are absent); the manager legs the gate admits answer 400 (the guard), the tier 3 legs (inside_sales, yard_team) 403 (the manager home gate (their cells do not reach the route))",
 	"reportingListCommissionRuns":  "the service requires the from and to date queries (internal/reporting/commission_service.go, parseWindow, the same guard); the same leg split (manager legs 400 (the guard), tier 3 legs 403 (the manager home gate))",
