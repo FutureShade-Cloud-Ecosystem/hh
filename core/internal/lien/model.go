@@ -103,15 +103,17 @@ type ReleaseResult struct {
 
 // AgingRow is one job's outstanding holdback, aged into a bucket (the Bill 60 aging surface).
 type AgingRow struct {
-	JobID            string `json:"job_id"`
-	JobNo            string `json:"job_no"`
-	BranchID         string `json:"branch_id"`
-	Direction        string `json:"holdback_direction"`
-	OutstandingCents int64  `json:"outstanding_cents"`
-	OldestDays       int    `json:"oldest_days"`
-	Bucket           string `json:"bucket"`
-	ReleaseEligible  bool   `json:"release_eligible"` // RECEIVABLE + past the 45-day rule window, and not linked to a customer job
-	linked           bool   // linked to a customer job: released by RT-3, so the old rule's eligibility does not apply
+	JobID              string `json:"job_id"`
+	JobNo              string `json:"job_no"`
+	BranchID           string `json:"branch_id"`
+	Direction          string `json:"holdback_direction"`
+	OutstandingCents   int64  `json:"outstanding_cents"`
+	OldestDays         int    `json:"oldest_days"`
+	Bucket             string `json:"bucket"`
+	ReleaseEligible    bool   `json:"release_eligible"` // RECEIVABLE + past the 45-day rule window, and not linked to a customer job
+	linked             bool   // linked to a customer job: released by RT-3, so the old rule's eligibility does not apply
+	hold               linkedHold
+	daysPastReleasable int
 }
 
 // TriageItem is one Monday-triage worklist row, a job needing attention, badge-classified.

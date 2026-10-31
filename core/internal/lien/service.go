@@ -8,6 +8,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // service.go, the lien domain orchestration: jobs, the idempotent holdback sync, the dual-gated release (with
@@ -371,7 +372,43 @@ func (s *Service) jobFacts(ctx context.Context, branchID string) (map[string]job
 	}
 	out := make(map[string]jobFacts, len(jobs))
 	for _, j := range jobs {
-		out[j.ID] = jobFacts{JobNo: j.JobNo, BranchID: j.BranchID, Direction: j.Direction, Linked: j.CustomerJobID != ""}
+		f := jobFacts{JobNo: j.JobNo, BranchID: j.BranchID, Direction: j.Direction, Linked: j.CustomerJobID != ""}
+		if f.Linked {
+			f.Hold = s.linkedHoldOf(ctx, j)
+		}
+		out[j.ID] = f
 	}
 	return out, nil
+}
+
+// linkedHoldOf reads a linked job's standing under RT-3's preservation rule from the job's own dates and the
+// preserve days of the rule that governs its customer job. A rule that cannot be read leaves the job
+// "no date" (the worklist then says it cannot be judged), never a guess.
+func (s *Service) linkedHoldOf(ctx context.Context, j Job) linkedHold {
+	if j.LienPreservedOn != "" && j.LienDischargedOn == "" {
+		return linkedHold{State: holdLien}
+	}
+	parse := func(v string) *time.Time {
+		if t, err := time.Parse("2006-01-02", v); err == nil {
+			return &t
+		}
+		return nil
+	}
+	_, start := preservationStart(parse(j.CSPPublishedOn), parse(j.SubstantialPerfDate), parse(j.LastSupplyDate))
+	if start == "" {
+		return linkedHold{State: holdNoDate}
+	}
+	rule, err := s.HoldbackRuleForJob(ctx, j.CustomerJobID)
+	if err != nil {
+		return linkedHold{State: holdNoDate}
+	}
+	base, err := time.Parse("2006-01-02", start)
+	if err != nil {
+		return linkedHold{State: holdNoDate}
+	}
+	releasable := base.AddDate(0, 0, rule.PreserveDays+1).Format("2006-01-02")
+	if houseday.DefaultZone().Today(s.clock) < releasable {
+		return linkedHold{State: holdWaiting, ReleasableOn: releasable}
+	}
+	return linkedHold{State: holdReleaseD, ReleasableOn: releasable}
 }
