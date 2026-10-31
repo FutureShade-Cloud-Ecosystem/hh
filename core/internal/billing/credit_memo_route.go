@@ -354,11 +354,12 @@ func (s *CreditMemoService) fence(ctx context.Context, req CreditMemoRouteReques
 	// of another org, answers exactly as a missing invoice answers, so a caller cannot read a ledger's
 	// shape out of the refusals. A missing row falls through to the plan, which refuses in the same
 	// words.
+	reversedJob := ""
 	if invoiceID := strings.TrimSpace(req.InvoiceID); invoiceID != "" {
 		var invBranch, invOrg *string
 		if err := s.w.pool.QueryRow(ctx,
-			`SELECT branch_id::text, org_id::text FROM invoices WHERE id = $1::uuid AND doc_type = 'INVOICE'`,
-			invoiceID).Scan(&invBranch, &invOrg); err == nil {
+			`SELECT branch_id::text, org_id::text, COALESCE(job_id::text, '') FROM invoices WHERE id = $1::uuid AND doc_type = 'INVOICE'`,
+			invoiceID).Scan(&invBranch, &invOrg, &reversedJob); err == nil {
 			if invOrg == nil || *invOrg != caller.OrgID || !caller.reaches(*invBranch) {
 				return creditFence{}, httpx.BadRequestf("no such invoice to reverse")
 			}
@@ -417,11 +418,26 @@ func (s *CreditMemoService) fence(ctx context.Context, req CreditMemoRouteReques
 	// JA-2: the job the credit is opened on, fenced last so the three job refusals answer with
 	// the caller already held to the account. The id is parsed before the seam reads it, the same
 	// rule the customer wall states above it.
-	jobID := strings.TrimSpace(req.JobID)
+	//
+	// A REVERSAL is a mirror, not a fresh document (the review of PR 747, P2-2): the memo that
+	// reverses an invoice on a job is on THAT job, so by job the account nets to zero. The request
+	// naming no job inherits the invoice's job; one naming the same job is the same thing; one naming a
+	// different job is refused in words. Neither of those two goes through the open rule, because
+	// crediting a closed job's invoice is ordinary. Only a job newly named on an invoice that has none
+	// is a fresh choice, and that one is fenced as any new document's job is.
+	jobID := strings.ToLower(strings.TrimSpace(req.JobID))
 	if jobID != "" {
 		if _, perr := uuid.Parse(jobID); perr != nil {
 			return creditFence{}, httpx.BadRequestf("job_id must be a job id, pick a job from the customer's jobs")
 		}
+	}
+	if reversedJob != "" {
+		if jobID != "" && jobID != reversedJob {
+			return creditFence{}, httpx.BadRequestf("that credit reverses an invoice on another job, so it takes that job; leave the job out or name the invoice's own job")
+		}
+		return creditFence{customerID: customerID, branchID: branchID, jobID: reversedJob}, nil
+	}
+	if jobID != "" {
 		if s.jobFence == nil {
 			return creditFence{}, httpx.BadRequestf("the job fence is not wired, so no credit can name a job here")
 		}

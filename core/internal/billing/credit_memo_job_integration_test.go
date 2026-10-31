@@ -197,3 +197,138 @@ func TestIntegration_CreditMemoJob_TheDoorAnswersAJobRefusalInWords(t *testing.T
 		}
 	}
 }
+
+// memoJobSvc builds the credit memo service with the job fence bound, and the caller that reaches
+// Trenton alone.
+func memoJobSvc(t *testing.T, pool *pgxpool.Pool, e memoJobEnv) (*CreditMemoService, context.Context) {
+	t.Helper()
+	plantCreditMemoOrgs(t, pool)
+	repo := customer.NewRepository(pool)
+	svc := NewCreditMemoService(NewInvoiceWriter(pool), slog.Default()).
+		WithPostingRules(creditMemoFixedRules{accounts: creditMemoRules}).
+		WithBranchOrg(cmFixedBranchOrgs{trentonBranch: cmNorthOrgID, kingstonBranch: cmNorthOrgID}).
+		WithCustomerHome(cmFixedHomes{e.customer: trentonBranch}).
+		WithJobFence(memoJobFence{svc: customer.NewService(repo).WithJobs(repo)})
+	ctx := identity.ContextWithStaff(context.Background(), identity.StaffContext{
+		UserID: "00000000-0000-4000-9000-000000000001", RoleCode: "FINANCIAL_CONTROLLER",
+		Tier: identity.TierLeadership, Scope: identity.ScopeBranch, Status: identity.StatusActive,
+		Branches: map[string]bool{trentonBranch: true},
+	})
+	return svc, ctx
+}
+
+// memoJobInvoice seeds a finalized invoice of 1,000.00 for the customer on the named job ("" for none).
+func memoJobInvoice(t *testing.T, pool *pgxpool.Pool, customerID, jobID string) string {
+	t.Helper()
+	inv := seedInvoice(t, pool, customerID, ns(t), invSpec{
+		no: "INV", status: "FINALIZED", subtotal: 100_000, tax: 0,
+		total: 100_000, balance: 100_000, finalized: true,
+	})
+	cmStampInvoiceOrg(t, pool, inv)
+	if jobID != "" {
+		if _, err := pool.Exec(context.Background(),
+			`UPDATE invoices SET job_id = $2::uuid WHERE id = $1::uuid`, inv, jobID); err != nil {
+			t.Fatalf("put the invoice on its job: %v", err)
+		}
+	}
+	return inv
+}
+
+func memoJobOf(t *testing.T, pool *pgxpool.Pool, id string) string {
+	t.Helper()
+	var jobID string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT COALESCE(job_id::text, '') FROM invoices WHERE id = $1::uuid`, id).Scan(&jobID); err != nil {
+		t.Fatalf("read the memo's job: %v", err)
+	}
+	return jobID
+}
+
+// TestIntegration_CreditMemoJob_AReversalCarriesTheInvoicesJob (the review of PR 747, P2-2): a memo
+// that reverses an invoice on a job takes that job when the request names none, the closed job rule
+// does not apply to a reversal of a document already on that job, and a request naming a different
+// job than the invoice's is refused in words.
+func TestIntegration_CreditMemoJob_AReversalCarriesTheInvoicesJob(t *testing.T) {
+	pool := intPool(t)
+	e := memoJobPlant(t, pool)
+	svc, ctx := memoJobSvc(t, pool, e)
+	repo := customer.NewRepository(pool)
+	second, err := repo.InsertJob(context.Background(), customer.JobWrite{
+		CustomerID: e.customer, BranchID: trentonBranch, JobNo: "J-MJ-SECOND",
+		Fields: customer.JobFields{Name: "Back patio"},
+	})
+	if err != nil {
+		t.Fatalf("plant the second open job: %v", err)
+	}
+
+	t.Run("the inherited job", func(t *testing.T) {
+		inv := memoJobInvoice(t, pool, e.customer, e.open)
+		res, err := svc.Issue(ctx, CreditMemoRouteRequest{
+			CustomerID: e.customer, BranchID: trentonBranch, InvoiceID: inv,
+			Reason: "Whole order came back", IdempotencyKey: "mji-" + ns(t),
+		}, cmTrentonOnlyCaller())
+		if err != nil {
+			t.Fatalf("reverse the invoice with no job named: %v", err)
+		}
+		if got := memoJobOf(t, pool, res.CreditMemoID); got != e.open {
+			t.Fatalf("the memo carries the reversed invoice's job: got %q, want %q", got, e.open)
+		}
+	})
+
+	t.Run("a closed job's invoice reversed", func(t *testing.T) {
+		inv := memoJobInvoice(t, pool, e.customer, e.closed)
+		res, err := svc.Issue(ctx, CreditMemoRouteRequest{
+			CustomerID: e.customer, BranchID: trentonBranch, InvoiceID: inv, AmountCents: 40_000,
+			Reason: "Part came back", IdempotencyKey: "mjc-" + ns(t),
+		}, cmTrentonOnlyCaller())
+		if err != nil {
+			t.Fatalf("reverse an invoice on a closed job (ordinary, the document is already on it): %v", err)
+		}
+		if got := memoJobOf(t, pool, res.CreditMemoID); got != e.closed {
+			t.Fatalf("the memo carries the closed job: got %q, want %q", got, e.closed)
+		}
+		// Naming that same closed job is the same reversal.
+		res2, err := svc.Issue(ctx, CreditMemoRouteRequest{
+			CustomerID: e.customer, BranchID: trentonBranch, InvoiceID: inv, AmountCents: 10_000,
+			Reason: "Another part came back", JobID: e.closed, IdempotencyKey: "mjc2-" + ns(t),
+		}, cmTrentonOnlyCaller())
+		if err != nil {
+			t.Fatalf("name the invoice's own closed job: %v", err)
+		}
+		if got := memoJobOf(t, pool, res2.CreditMemoID); got != e.closed {
+			t.Fatalf("the named memo carries the closed job: got %q, want %q", got, e.closed)
+		}
+	})
+
+	t.Run("a different job refused", func(t *testing.T) {
+		inv := memoJobInvoice(t, pool, e.customer, e.open)
+		_, err := svc.Issue(ctx, CreditMemoRouteRequest{
+			CustomerID: e.customer, BranchID: trentonBranch, InvoiceID: inv, AmountCents: 10_000,
+			Reason: "Moved to the wrong job", JobID: second.JobID, IdempotencyKey: "mjd-" + ns(t),
+		}, cmTrentonOnlyCaller())
+		if err == nil || !strings.Contains(err.Error(), "reverses an invoice on another job") {
+			t.Fatalf("a different job than the invoice's: got %v, want words naming the invoice's job", err)
+		}
+	})
+
+	t.Run("an invoice on no job takes a newly named job through the open rule", func(t *testing.T) {
+		inv := memoJobInvoice(t, pool, e.customer, "")
+		res, err := svc.Issue(ctx, CreditMemoRouteRequest{
+			CustomerID: e.customer, BranchID: trentonBranch, InvoiceID: inv, AmountCents: 10_000,
+			Reason: "Name the job", JobID: e.open, IdempotencyKey: "mjn-" + ns(t),
+		}, cmTrentonOnlyCaller())
+		if err != nil {
+			t.Fatalf("name a job on an invoice that has none: %v", err)
+		}
+		if got := memoJobOf(t, pool, res.CreditMemoID); got != e.open {
+			t.Fatalf("got %q, want %q", got, e.open)
+		}
+		_, err = svc.Issue(ctx, CreditMemoRouteRequest{
+			CustomerID: e.customer, BranchID: trentonBranch, InvoiceID: inv, AmountCents: 10_000,
+			Reason: "Name a closed job", JobID: e.closed, IdempotencyKey: "mjn2-" + ns(t),
+		}, cmTrentonOnlyCaller())
+		if err == nil || !strings.Contains(err.Error(), "the job is closed") {
+			t.Fatalf("a newly named closed job: got %v, want the closed words", err)
+		}
+	})
+}
