@@ -1044,12 +1044,24 @@ function midSentence(words: string): string {
   return words === "" ? words : words.charAt(0).toLowerCase() + words.slice(1);
 }
 
+/** One side of a before and after. A worded floor shape reads mid-sentence; a value that matched no
+ *  shape stays exactly as written (no case change), so nothing is invented about it. */
+function floorSide(value: string, staffName?: (id: string) => string): string {
+  const words = floorValueWords(value, staffName);
+  return words === value ? value : midSentence(words);
+}
+
+/** Closes a phrase with a full stop unless it already ends a sentence. */
+function closed(words: string): string {
+  return /[.!?]$/.test(words) ? words : `${words}.`;
+}
+
 /** A margin enforcement row's change, told as a before and after: "Was: ... Now: ...". */
 export function floorDeltaWords(oldValue: string | null, newValue: string | null, staffName?: (id: string) => string): string {
-  const a = oldValue !== null ? midSentence(floorValueWords(oldValue, staffName)) : null;
-  const b = newValue !== null ? midSentence(floorValueWords(newValue, staffName)) : null;
-  if (a !== null && b !== null) return `Was: ${a}. Now: ${b}.`;
-  if (a === null && b !== null) return `Now: ${b}.`;
+  const a = oldValue !== null ? floorSide(oldValue, staffName) : null;
+  const b = newValue !== null ? floorSide(newValue, staffName) : null;
+  if (a !== null && b !== null) return `Was: ${closed(a)} Now: ${closed(b)}`;
+  if (a === null && b !== null) return `Now: ${closed(b)}`;
   if (a !== null && b === null) return "cleared";
   return "";
 }
