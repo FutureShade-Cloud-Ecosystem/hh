@@ -1348,7 +1348,7 @@ func applyAllocations(ctx context.Context, tx pgx.Tx, p *Payment, customerID, me
 	var runningAR int64
 	if err := tx.QueryRow(ctx, `
 		SELECT
-		  (SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
+		  (SELECT COALESCE(SUM(balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0))), 0) FROM invoices
 		    WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID'))
 		+ (SELECT COALESCE(SUM(GREATEST(`+openNSFFeeRemainingExpr+`, 0)), 0)
 		     FROM payment_nsf n
@@ -1581,7 +1581,7 @@ UPDATE invoices
 	// already ran, so the open balances' sum is the after figure.
 	var runningAR int64
 	if err := tx.QueryRow(ctx,
-		`SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
+		`SELECT COALESCE(SUM(balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0))), 0) FROM invoices
 		  WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`,
 		s.CustomerID).Scan(&runningAR); err != nil {
 		return fmt.Errorf("payments: AR balance read: %w", err)

@@ -44,7 +44,7 @@ func (r *Repository) InvoicesWithHoldback(ctx context.Context, branchID string) 
 		return nil, errNoDB
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT id::text, invoice_no::text, customer_id::text, branch_id::text, holdback_cents,
+		`SELECT id::text, invoice_no::text, customer_id::text, COALESCE(job_id::text, ''), branch_id::text, holdback_cents,
 		        COALESCE(finalized_at, created_at)
 		 FROM invoices
 		 WHERE holdback_cents > 0
@@ -59,7 +59,7 @@ func (r *Repository) InvoicesWithHoldback(ctx context.Context, branchID string) 
 	for rows.Next() {
 		var hi lien.HoldbackInvoice
 		var finalized time.Time
-		if err := rows.Scan(&hi.InvoiceID, &hi.InvoiceNo, &hi.CustomerID, &hi.BranchID, &hi.HoldbackCents, &finalized); err != nil {
+		if err := rows.Scan(&hi.InvoiceID, &hi.InvoiceNo, &hi.CustomerID, &hi.CustomerJobID, &hi.BranchID, &hi.HoldbackCents, &finalized); err != nil {
 			return nil, fmt.Errorf("billing: scan holdback invoice: %w", err)
 		}
 		hi.FinalizedAt = finalized.Format(time.RFC3339)

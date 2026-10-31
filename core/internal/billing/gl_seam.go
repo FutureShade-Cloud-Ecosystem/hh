@@ -23,7 +23,17 @@ func (r *Repository) InvoiceForGL(ctx context.Context, invoiceID string) (gl.Inv
 	}
 	var a gl.InvoiceAmounts
 	err := r.pool.QueryRow(ctx,
-		`SELECT subtotal_cents, tax_cents, total_cents, holdback_cents,
+		// holdback_cents is what the invoice STILL withholds: a credit memo and a write off lower it. The
+		// invoice's journal is the invoice as it was written, so the parts they took are added back (a
+		// journal consumed after a credit would otherwise debit 1150 too little).
+		`SELECT subtotal_cents, tax_cents, total_cents,
+		        holdback_cents
+		        + COALESCE((SELECT -SUM(m.holdback_cents) FROM invoices m
+		                     WHERE m.reverses_invoice_id = invoices.id AND m.doc_type = 'CREDIT_MEMO'
+		                       AND m.status NOT IN ('DRAFT','VOID')), 0)
+		        + COALESCE((SELECT SUM(COALESCE((w.value->>'holdback_cents')::bigint, 0))
+		                      FROM jsonb_each(COALESCE(invoices.metadata->'write_offs', '{}'::jsonb)) w
+		                     WHERE w.value->'reversal' IS NULL), 0),
 		        branch_id::text, customer_id::text, invoice_no::text,
 		        COALESCE(finalized_at, created_at), source_kind
 		 FROM invoices WHERE id = $1`, invoiceID,
@@ -67,7 +77,10 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 	err = r.pool.QueryRow(ctx,
 		`SELECT
 		   (SELECT COALESCE(SUM(b.bal), 0) FROM (
-		     SELECT CASE WHEN $3::bool THEN i.balance_cents
+		     SELECT r.raw - LEAST(r.hb, GREATEST(r.raw, 0)) AS bal
+		       FROM (
+		     SELECT CASE WHEN $3::bool THEN GREATEST(i.holdback_cents, 0)
+		                 ELSE invoice_holdback_as_of(i.id, $2::timestamptz) END AS hb, CASE WHEN $3::bool THEN i.balance_cents
 		                 ELSE i.total_cents
 		                      + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
 		                      WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
@@ -77,11 +90,11 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 		                      WHERE a.invoice_id = i.id AND a.created_at <= $2), 0)
 		                      - COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra
 		                      WHERE ra.invoice_id = i.id AND ra.created_at <= $2), 0)
-		                   END AS bal
+		                   END AS raw
 		       FROM invoices i
 		      WHERE i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
 		        AND ($3::bool OR COALESCE(i.finalized_at, i.created_at) <= $2)
-		        AND ($1 = '' OR i.branch_id = $1::uuid)) b
+		        AND ($1 = '' OR i.branch_id = $1::uuid)) r) b
 		      WHERE b.bal <> 0)
 		 + (SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
 		     WHERE txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF') AND source_type <> 'invoice'

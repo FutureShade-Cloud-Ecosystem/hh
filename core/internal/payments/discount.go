@@ -352,7 +352,7 @@ type discountQuerier interface {
 }
 
 // loadDiscountRoom reads the two facts the running total cap needs for one invoice (P3-3): its
-// discountable base (the total less the retained holdback) and the discount its LIVE applications
+// discountable base (the total less the holdback as first withheld, never as a credit later lowered it) and the discount its LIVE applications
 // have already taken. Live means a receipt still standing: a bounced, voided or reversed receipt
 // gave its discount back and no longer counts. An invoice with no discount terms is left alone.
 func loadDiscountRoom(ctx context.Context, q discountQuerier, row *applyInvoiceRow) error {
@@ -360,7 +360,7 @@ func loadDiscountRoom(ctx context.Context, q discountQuerier, row *applyInvoiceR
 		return nil
 	}
 	if err := q.QueryRow(ctx, `
-		SELECT GREATEST(i.total_cents - i.holdback_cents, 0),
+		SELECT GREATEST(i.total_cents - COALESCE(invoice_holdback_withheld(i.id), i.holdback_cents), 0),
 		       COALESCE((SELECT SUM(pa.discount_cents)
 		                   FROM payment_allocations pa
 		                   JOIN payments p ON p.id = pa.payment_id

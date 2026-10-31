@@ -164,7 +164,13 @@ func (r *Repository) SetCreditChangeThresholds(ctx context.Context, branchID str
 // shared space, so they are a lead's call, not this query's.
 const agingSelect = `
 	WITH open_ar AS (
+		SELECT r.customer_id, r.branch_id,
+		       r.raw - LEAST(r.holdback_cents, GREATEST(r.raw, 0)) AS bal,
+		       r.due_date
+		  FROM (
 		SELECT i.customer_id, i.branch_id,
+		       CASE WHEN $7::bool THEN GREATEST(i.holdback_cents, 0)
+		            ELSE invoice_holdback_as_of(i.id, $6::timestamptz) END AS holdback_cents,
 		       CASE WHEN $7::bool THEN i.balance_cents
 		            ELSE i.total_cents
 		                 + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
@@ -175,11 +181,12 @@ const agingSelect = `
 		                     WHERE a.invoice_id = i.id AND a.created_at <= $6::timestamptz), 0)
 		                 - COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra
 		                     WHERE ra.invoice_id = i.id AND ra.created_at <= $6::timestamptz), 0)
-		       END AS bal,
+		       END AS raw,
 		       i.due_date
 		  FROM invoices i
 		 WHERE i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
 		   AND ($7::bool OR COALESCE(i.finalized_at, i.created_at) <= $6::timestamptz)
+		  ) r
 		UNION ALL
 		SELECT ct.customer_id, ct.branch_id,
 		       SUM(ct.amount_cents) AS bal,
@@ -438,7 +445,7 @@ func (r *Repository) OrderDispatchFacts(ctx context.Context, orderID string) (Di
 	var f DispatchFacts
 	err := r.pool.QueryRow(ctx,
 		`SELECT o.id::text, o.customer_id::text, o.branch_id::text, c.payment_terms_days, COALESCE(c.name,''),
-		        COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
+		        COALESCE((SELECT SUM(i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))) FROM invoices i
 		                   WHERE i.order_id = o.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0),
 		        EXISTS (SELECT 1 FROM credit_holds h WHERE h.customer_id = o.customer_id AND h.status = 'ACTIVE'),
 		        COALESCE((SELECT h.hold_kind FROM credit_holds h

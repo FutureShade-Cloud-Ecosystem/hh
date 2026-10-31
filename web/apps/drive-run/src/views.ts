@@ -9,6 +9,8 @@
 // delivery) and the original app's phone screens, drawn to HH's design
 // system under row 563 (take the existing and improve it).
 import { html, nothing, type TemplateResult } from "lit";
+import { servedConsoleConfig } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { demoNote } from "./band-identity.js";
 import { hhAddress } from "@hardscapehouse/design-system/src/address.js";
 import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import type { DemoFlow } from "@hardscapehouse/api-client";
@@ -493,7 +495,7 @@ export function renderEntry(view: EntryView): TemplateResult {
   }
   return html`
     <h1>Drive</h1>
-    <p class="dim">Your run, your stops and proof of delivery, on your phone. Demo data only.</p>
+    <p class="dim">Your run, your stops and proof of delivery, on your phone.${demoNote(servedConsoleConfig())}</p>
     ${view.message !== null ? html`<p class="alert alert-error" role="alert">${view.message}</p>` : nothing}
     ${body}
   `;

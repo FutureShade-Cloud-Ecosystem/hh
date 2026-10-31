@@ -32,6 +32,7 @@ import { AuthController, authHeaderProvider, SessionStore, type AccountSurface }
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { bandIdentity } from "./band-identity.js";
+import { demoNote } from "./band-identity.js";
 import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { ArApi } from "./ar/ar-api.js";
@@ -830,7 +831,7 @@ export class MoneyDeskApp extends HHElement {
       ${session !== null ? this.renderSignedIn() : html`
         <main class="desk">
           <h1>Money Desk</h1>
-          <p class="dim">Receivables for the whole company: the aging, payments, promises and the bounced queue. Demo data only.</p>
+          <p class="dim">Receivables for the whole company: the aging, payments, promises and the bounced queue.${demoNote(servedConsoleConfig())}</p>
           ${renderEntry(this.#entryView)}
         </main>
       `}

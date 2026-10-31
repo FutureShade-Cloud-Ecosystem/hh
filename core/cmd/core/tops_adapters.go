@@ -22,6 +22,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/lien"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
@@ -384,7 +385,25 @@ func newDealerZone(pool *pgxpool.Pool) dealerZoneAdapter {
 func newInvoiceWriter(pool *pgxpool.Pool) *billing.InvoiceWriter {
 	return billing.NewInvoiceWriter(pool).
 		WithZone(newDealerZone(pool)).
-		WithTerms(customer.NewService(customer.NewRepository(pool)))
+		WithTerms(customer.NewService(customer.NewRepository(pool))).
+		WithHoldback(newHoldbackSeam(pool))
+}
+
+// newJEDeciderAdapter builds the approvals rail's journal decider (the rail's own decide path and the
+// sync scope's). Its memo writer is newInvoiceWriter's, holdback seam bound: approving a parked credit
+// memo lowers the invoice's holdback column and its retention ledger in one call, and a bare writer
+// would refuse (billing.ErrNoHoldbackSeam). Both production doors build it here so neither can drift.
+func newJEDeciderAdapter(pool *pgxpool.Pool, svc *gl.Service, journals *gl.Repository) jeDeciderAdapter {
+	return jeDeciderAdapter{svc: svc, journals: journals, memos: newInvoiceWriter(pool)}
+}
+
+// newHoldbackSeam builds the lien service the invoice writer withholds through (RT-2): the rule for a
+// job (RT-1) and the ledger row for each withholding. It carries no caller of its own; the writer
+// hands it the transaction it is writing on.
+func newHoldbackSeam(pool *pgxpool.Pool) *lien.Service {
+	jobs := customer.NewRepository(pool)
+	return lien.NewService(lien.NewRepository(pool)).
+		WithCustomerJobs(lien.NewCustomerJobs(customer.NewService(jobs).WithJobs(jobs)))
 }
 
 // dealerCountryAdapter binds the customer module's CountrySource to the same dealer configuration:

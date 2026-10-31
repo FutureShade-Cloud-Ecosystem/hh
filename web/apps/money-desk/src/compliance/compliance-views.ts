@@ -7,6 +7,8 @@
 // the Money Desk boards (cards border first, no shadow, status as a word before a colour, a table that gives way to
 // cards on a phone) and the original app's release calendar and shared DRAFT banner.
 import { html, nothing, type TemplateResult } from "lit";
+import { servedConsoleConfig } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { demoNote } from "../band-identity.js";
 import type { ComplianceDeadline, ComplianceReviewStatus, LienJob } from "@hardscapehouse/api-client";
 import { empty, loadFailed, loading, messages, pill, tabsNav } from "../lien/lien-kit.js";
 import { deadlineKindWord, deadlineStatusWord, deadlineTone, dueWords, READ_ONLY_REVIEW, REVIEW_STATES, reviewStateWord, reviewTone, STATUS_FILTERS } from "./compliance-logic.js";
@@ -153,7 +155,7 @@ export function renderCompliance(model: ComplianceModel): TemplateResult {
     <div data-compliance>
       <header class="li-head">
         <h1>Compliance</h1>
-        <p class="li-dim">The deadlines the lien jobs register, and the review status of the forms. Demo data only.</p>
+        <p class="li-dim">The deadlines the lien jobs register, and the review status of the forms.${demoNote(servedConsoleConfig())}</p>
       </header>
       ${model.phase === "loading"
         ? loading("Loading the compliance calendar.")

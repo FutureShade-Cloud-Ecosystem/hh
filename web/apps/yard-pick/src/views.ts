@@ -17,6 +17,8 @@
 // ("add, never rename") with the picker's words, never the codes; the unit
 // leg holds the rows against reasonWord.
 import { html, nothing, type TemplateResult } from "lit";
+import { servedConsoleConfig } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { demoNote } from "./band-identity.js";
 import type { DemoFlow } from "@hardscapehouse/api-client";
 import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import type { YardChange, YardLine, YardPick, YardPickedLine, YardShortage, YardTask } from "./yard-api.js";
@@ -815,7 +817,7 @@ export function renderEntry(view: EntryView): TemplateResult {
   }
   return html`
     <h1>Yard Pick</h1>
-    <p class="dim">The pick queue, what was pulled, skids, short picks and staging. On your phone, in the yard. Demo data only.</p>
+    <p class="dim">The pick queue, what was pulled, skids, short picks and staging. On your phone, in the yard.${demoNote(servedConsoleConfig())}</p>
     ${view.message !== null ? html`<p class="alert alert-error" role="alert">${view.message}</p>` : nothing}
     ${body}
   `;
