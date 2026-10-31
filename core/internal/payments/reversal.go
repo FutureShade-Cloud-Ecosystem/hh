@@ -325,18 +325,12 @@ UPDATE invoices
 			customerID, a.cents, runningAR, revID, branchID, "reversal: "+in.Reason); err != nil {
 			return Reversal{}, fmt.Errorf("reverse: insert contra subledger txn: %w", err)
 		}
-		if a.discount > 0 {
-			// The discount's own contra row, against the invoice like the discount it undoes
-			// (source_type 'invoice'), so the account's statement and the aging's past date
-			// reconstruction both read the give back exactly where they read the taking.
-			runningAR += a.discount
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO customer_transactions
-				   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
-				 VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6)`,
-				customerID, a.discount, runningAR, a.invoiceID, branchID, "reversal: early payment discount given back"); err != nil {
-				return Reversal{}, fmt.Errorf("reverse: insert the discount contra subledger txn: %w", err)
-			}
+		runningAR += a.discount
+		if err := GiveBackDiscountTx(ctx, tx, DiscountGiveBack{
+			CustomerID: customerID, BranchID: branchID, InvoiceID: a.invoiceID, Cents: a.discount,
+			BalanceAfter: runningAR, Memo: "reversal: early payment discount given back",
+		}); err != nil {
+			return Reversal{}, err
 		}
 		reopened = append(reopened, a.invoiceID)
 	}

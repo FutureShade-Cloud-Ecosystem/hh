@@ -475,6 +475,9 @@ type paymentBouncedPayload struct {
 	FeeCents    int64  `json:"fee_cents"`
 	FeeTaxable  bool   `json:"fee_taxable"` // true = the gross NSF fee splits into 4200 income + 2200 HST
 	Cleared     bool   `json:"cleared"`     // true = had settled to bank 1000; false = still undeposited/clearing
+	// DiscountCents is the early payment discount the bounced receipt's applications took (TM-2),
+	// given back with the money: DR AR / CR discounts allowed beside the cash reversal.
+	DiscountCents int64 `json:"discount_cents"`
 	// OccurredAt is the bounce's own instant (the NSF record's created_at), carried by
 	// the till that recorded the bounce (FW1-01b). Zero means the emitter carried none,
 	// and the journal falls back to the clock.
@@ -497,6 +500,33 @@ func (s *Service) nsfBackoutRateBps(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("gl: the dealer's standard rate for the NSF fee backout: %w", err)
 	}
 	return int64(bps), nil
+}
+
+// discountGiveBackLines is the one spelling of an undone application's discount in the ledger
+// (TM-2): DR AR / CR discounts allowed for the cents, on the discount's own routing, the mirror
+// image of buildPaymentDiscountTaken. The reversal, the void and the NSF bounce all call it, so a
+// door cannot give the money back and keep the discount. Zero cents adds no lines.
+func (s *Service) discountGiveBackLines(ctx context.Context, branch string, cents int64, word string) ([]draftLine, error) {
+	if cents <= 0 {
+		return nil, nil
+	}
+	const et = "payment.discount.taken"
+	rules, err := s.store.PostingAccounts(ctx, et, branch)
+	if err != nil {
+		return nil, err
+	}
+	discountCode, err := pick(rules, et, "discount_allowed")
+	if err != nil {
+		return nil, err
+	}
+	arCode, err := pick(rules, et, "ar")
+	if err != nil {
+		return nil, err
+	}
+	return []draftLine{
+		dr(arCode, cents, "AR reinstated ("+word+")"),
+		cr(discountCode, cents, "discounts allowed, reversed ("+word+")"),
+	}, nil
 }
 
 func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (journalDraft, bool, error) {
@@ -589,6 +619,11 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 			lines = append(lines, cr(feeCode, p.FeeCents, "NSF fee income"))
 		}
 	}
+	discountLines, err := s.discountGiveBackLines(ctx, branch, p.DiscountCents, "early payment discount reversed (NSF)")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	lines = append(lines, discountLines...)
 	return journalDraft{
 		Source:         SourceAdjustment,
 		SourceRefID:    p.PaymentID,
@@ -682,24 +717,11 @@ func (s *Service) buildPaymentReversed(ctx context.Context, payload []byte) (jou
 	// The discount the receipt's applications took comes back to AR and out of the discount
 	// account, on the receipt's own discount routing (TM-2): the invoice's balance rose by the
 	// money and the discount together, and this journal moves 1100 by both.
-	if p.DiscountCents > 0 {
-		discountRules, err := s.store.PostingAccounts(ctx, "payment.discount.taken", branch)
-		if err != nil {
-			return journalDraft{}, false, err
-		}
-		discountCode, err := pick(discountRules, "payment.discount.taken", "discount_allowed")
-		if err != nil {
-			return journalDraft{}, false, err
-		}
-		arDiscount, err := pick(discountRules, "payment.discount.taken", "ar")
-		if err != nil {
-			return journalDraft{}, false, err
-		}
-		lines = append(lines,
-			dr(arDiscount, p.DiscountCents, "AR reinstated (early payment discount reversed)"),
-			cr(discountCode, p.DiscountCents, "discounts allowed, reversed"),
-		)
+	discountLines, err := s.discountGiveBackLines(ctx, branch, p.DiscountCents, "early payment discount reversed")
+	if err != nil {
+		return journalDraft{}, false, err
 	}
+	lines = append(lines, discountLines...)
 	return journalDraft{
 		Source:         SourcePayment,
 		SourceRefID:    p.PaymentID,
@@ -781,24 +803,11 @@ func (s *Service) buildPaymentVoided(ctx context.Context, payload []byte) (journ
 	// The discount the receipt's applications took is undone with them (TM-2): the void says the
 	// receipt never happened, and the discount journal it produced is reversed on the receipt's
 	// own discount routing, exactly as the receipt's legs are reversed on the receipt's own.
-	if p.DiscountCents > 0 {
-		discountRules, err := s.store.PostingAccounts(ctx, "payment.discount.taken", branch)
-		if err != nil {
-			return journalDraft{}, false, err
-		}
-		discountCode, err := pick(discountRules, "payment.discount.taken", "discount_allowed")
-		if err != nil {
-			return journalDraft{}, false, err
-		}
-		arDiscount, err := pick(discountRules, "payment.discount.taken", "ar")
-		if err != nil {
-			return journalDraft{}, false, err
-		}
-		lines = append(lines,
-			dr(arDiscount, p.DiscountCents, "AR reinstated (early payment discount voided)"),
-			cr(discountCode, p.DiscountCents, "discounts allowed, voided"),
-		)
+	discountLines, err := s.discountGiveBackLines(ctx, branch, p.DiscountCents, "early payment discount voided")
+	if err != nil {
+		return journalDraft{}, false, err
 	}
+	lines = append(lines, discountLines...)
 	return journalDraft{
 		Source:         SourcePayment,
 		SourceRefID:    p.PaymentID,

@@ -292,17 +292,12 @@ UPDATE invoices
 		}
 		// The discount the application took is given back with the money (TM-2), against the
 		// invoice like the taking, so the aging's past date reconstruction reads both in place.
-		if a.discount > 0 {
-			runningAR += a.discount
-			if customerID != "" {
-				if _, err := tx.Exec(ctx,
-					`INSERT INTO customer_transactions
-					   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
-					 VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6)`,
-					customerID, a.discount, runningAR, a.invoiceID, branchID, "voided receipt: early payment discount given back"); err != nil {
-					return Void{}, fmt.Errorf("void: insert the discount subledger txn: %w", err)
-				}
-			}
+		runningAR += a.discount
+		if err := GiveBackDiscountTx(ctx, tx, DiscountGiveBack{
+			CustomerID: customerID, BranchID: branchID, InvoiceID: a.invoiceID, Cents: a.discount,
+			BalanceAfter: runningAR, Memo: "voided receipt: early payment discount given back",
+		}); err != nil {
+			return Void{}, err
 		}
 		reopened = append(reopened, a.invoiceID)
 	}
