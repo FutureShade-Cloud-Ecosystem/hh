@@ -31,7 +31,7 @@ import "@hardscapehouse/pro-kit/src/state-view.js";
 import type { SurfaceSelect } from "@hardscapehouse/pro-kit/src/frame.js";
 import type { SignInMethodChoice, SignInSubmit } from "@hardscapehouse/pro-kit/src/signin.js";
 import type { HHProSignIn } from "@hardscapehouse/pro-kit/src/signin.js";
-import { PaySender, isPayable, payableCents, readHostedToken, type PayBody, type PayOutcome } from "./pay-core.js";
+import { PaySender, isPayable, payoffCents, readHostedToken, type PayBody, type PayOutcome } from "./pay-core.js";
 import { hostedFieldAddress } from "./hosted-field.js";
 import { invoiceDetailScreen, invoicesScreen, methodsScreen, sheetView, statementsScreen, type Load, type Sheet, type ViewState } from "./views.js";
 import { screenStyles } from "./styles.js";
@@ -455,7 +455,7 @@ export class ProPayApp extends HHElement {
 
   /** The advisory sum of the core's own payable cents. The core derives the amount it charges; the receipt shows it. */
   #sumOf(ids: readonly string[]): number {
-    return this.#invoices.filter((i) => ids.includes(i.id)).reduce((sum, i) => sum + payableCents(i), 0);
+    return this.#invoices.filter((i) => ids.includes(i.id)).reduce((sum, i) => sum + payoffCents(i), 0);
   }
 
   async #openSheet(ids: string[]): Promise<void> {

@@ -41,6 +41,7 @@ export const screenStyles = css`
   .inv-open { min-height: var(--hh-h-input); min-width: var(--hh-h-input); margin: -10px 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; display: inline-flex; align-items: center; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
   .inv-sub { position: relative; font-size: 0.8125rem; color: var(--hh-text-dim); }
   .inv-sub.late { color: var(--hh-danger); }
+  .inv-save { font-size: 0.8125rem; font-weight: 600; color: var(--hh-success); }
   .inv-amount { display: flex; flex-direction: column; align-items: flex-end; font-weight: 600; }
   .inv-of { font-weight: 400; font-size: 0.75rem; color: var(--hh-text-dim); }
   .box-gap { width: 24px; flex: none; }

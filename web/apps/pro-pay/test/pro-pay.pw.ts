@@ -191,6 +191,35 @@ test.describe("phone", () => {
     expect((await paymentsHeld(page, "ap")).length).toBe(3);
   });
 
+  test("an invoice inside its discount window shows the payoff and the savings, and Pay charges the payoff (TM-2b)", async ({ page }) => {
+    const control = await page.request.post("/_stub/control", { data: { discount: { invoice_no: "INV-20402", bps: 200, days: 3 } } });
+    expect(control.ok()).toBe(true);
+    const session = await page.request.post("/_stub/session", { data: { email: EMAIL("ap"), password: PASSWORD } });
+    const { token } = (await session.json()) as { token: string };
+    const listed = await page.request.get("/api/v1/tenant/invoices?limit=50", { headers: { Authorization: `Bearer ${token}` } });
+    const quoted = ((await listed.json()) as { items: { invoice_no: string; payoff_cents: number; discount_cents: number; balance_cents: number }[] }).items.find((i) => i.invoice_no === "INV-20402");
+    expect(quoted?.discount_cents).toBeGreaterThan(0);
+    const dollars = (cents: number): string => `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    await signIn(page, "ap");
+    const row = page.getByTestId("invoice-row").filter({ hasText: "INV-20402" });
+    await expect(row.getByTestId("inv-amount")).toContainText(dollars(quoted!.payoff_cents));
+    await expect(row.getByTestId("discount-line")).toHaveText(new RegExp(`^Pay by [A-Z][a-z]{2} \\d{1,2}, \\d{4} and save ${dollars(quoted!.discount_cents).replace("$", "\\$")}$`));
+    // A plain invoice carries no discount line.
+    await expect(page.getByTestId("invoice-row").filter({ hasText: "INV-20403" }).getByTestId("discount-line")).toHaveCount(0);
+    await shot(page, "pay-discount-home-phone");
+    await row.getByRole("checkbox").click();
+    await expect(page.getByTestId("pay-open")).toContainText(dollars(quoted!.payoff_cents));
+    await page.getByTestId("pay-open").click();
+    await expect(page.getByTestId("pay-confirm")).toContainText(dollars(quoted!.payoff_cents));
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    await expect(page.getByTestId("receipt-amount")).toHaveText(dollars(quoted!.payoff_cents));
+    await expect(page.getByTestId("receipt-differs")).toHaveCount(0);
+    const held = await paymentsHeld(page, "ap");
+    expect(held.some((p) => p.amount_cents === quoted!.payoff_cents)).toBe(true);
+  });
+
   test("closing a paid sheet by the scrim is Done: the invoices reload and show the paid ones as paid", async ({ page }) => {
     await signIn(page, "ap");
     await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox").click();
@@ -817,4 +846,38 @@ test.describe("desktop", () => {
     await state.getByRole("button", { name: "Try again" }).click();
     await expect(page.getByTestId("invoice-row").first()).toContainText("INV-");
   });
+});
+
+// The reader's shots of the discount screens (TM-2b): the home with the offer, the sheet and the receipt, light and charcoal,
+// at 1280 and 390. Taken only when PAY_SHOTS names a directory.
+test.describe("discount shots", () => {
+  test.skip(!process.env.PAY_SHOTS, "PAY_SHOTS names the directory the shots go to");
+  for (const [width, height] of [[1280, 800], [390, 844]] as const) {
+    for (const theme of ["light", "charcoal"] as const) {
+      test(`the discount home, sheet and receipt at ${width} in ${theme}`, async ({ page }) => {
+        await page.setViewportSize({ width, height });
+        await page.request.post("/_stub/control", { data: { discount: { invoice_no: "INV-20402", bps: 200, days: 3 } } });
+        const tone = async (): Promise<void> => {
+          await page.evaluate((t) => {
+            if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+            else document.documentElement.removeAttribute("data-theme");
+          }, theme);
+        };
+        await signIn(page, "ap");
+        const row = page.getByTestId("invoice-row").filter({ hasText: "INV-20402" });
+        await expect(row.getByTestId("discount-line")).toBeVisible();
+        await tone();
+        await shot(page, `w3-tm2b-home-${width}-${theme}`);
+        await row.getByRole("checkbox").click();
+        await page.getByTestId("pay-open").click();
+        await expect(page.getByTestId("pay-confirm")).toBeVisible();
+        await tone();
+        await shot(page, `w3-tm2b-sheet-${width}-${theme}`);
+        await page.getByTestId("pay-confirm").click();
+        await expect(page.getByTestId("receipt")).toBeVisible();
+        await tone();
+        await shot(page, `w3-tm2b-receipt-${width}-${theme}`);
+      });
+    }
+  }
 });

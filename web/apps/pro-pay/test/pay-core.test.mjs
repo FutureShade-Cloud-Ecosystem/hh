@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { ApiClient } from "@hardscapehouse/api-client";
 import {
   payableCents,
+  payoffCents,
+  discountOffer,
   isPayable,
   daysPastDue,
   agingBucket,
@@ -295,4 +297,19 @@ test("a hosted frame's token is accepted by shape, and anything that looks like 
   assert.equal(readHostedToken({ type: "hh-hosted-token", token: "4242-4242-4242-4242" }), null);
   assert.equal(readHostedToken("4242424242424242"), null);
   assert.equal(readHostedToken(null), null);
+});
+
+// ---- the payoff the portal quotes (TM-2b) ------------------------------------------------------------------------
+
+test("the payoff is the core's quote when it sends one, and the payable otherwise", () => {
+  assert.equal(payoffCents({ balance_cents: 100000, holdback_cents: 0, payoff_cents: 98000 }), 98000);
+  assert.equal(payoffCents({ balance_cents: 100000, holdback_cents: 0 }), 100000);
+  assert.equal(payoffCents({ balance_cents: 1000, holdback_cents: 200 }), 800);
+});
+
+test("a discount offer needs both the amount and its last day, and is otherwise none", () => {
+  assert.deepEqual(discountOffer({ discount_cents: 2000, discount_by: "2026-03-10" }), { cents: 2000, by: "2026-03-10" });
+  assert.equal(discountOffer({}), null);
+  assert.equal(discountOffer({ discount_cents: 2000 }), null);
+  assert.equal(discountOffer({ discount_cents: 0, discount_by: "2026-03-10" }), null);
 });

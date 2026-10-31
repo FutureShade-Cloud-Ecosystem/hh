@@ -18,11 +18,29 @@ interface Payable {
   status: string;
   balance_cents: number;
   holdback_cents: number;
+  /** The core's quote of what a payment today charges (the open amount less the early payment discount). */
+  payoff_cents?: number | undefined;
 }
 
 /** What one invoice can pay: the open balance less the legally retained holdback, never below zero. */
 export function payableCents(invoice: Pick<Payable, "balance_cents" | "holdback_cents">): number {
   return Math.max(invoice.balance_cents - invoice.holdback_cents, 0);
+}
+
+/**
+ * What paying this invoice today charges: the core's quote when it sends one (the payable less the early payment
+ * discount the invoice's terms allow today), else the payable. The core charges exactly its quote, so this is the figure
+ * the screen shows, the sums add up and the Pay button carries.
+ */
+export function payoffCents(invoice: Pick<Payable, "balance_cents" | "holdback_cents" | "payoff_cents">): number {
+  return invoice.payoff_cents ?? payableCents(invoice);
+}
+
+/** The early payment discount on offer: its amount and the last day it runs, or none. */
+export function discountOffer(invoice: { discount_cents?: number | undefined; discount_by?: string | undefined }): { cents: number; by: string } | null {
+  const cents = invoice.discount_cents ?? 0;
+  const by = invoice.discount_by ?? "";
+  return cents > 0 && by !== "" ? { cents, by } : null;
 }
 
 const OPEN_STATUSES = new Set(["FINALIZED", "PARTIALLY_PAID"]);

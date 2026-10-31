@@ -129,3 +129,47 @@ test("a stored method's listing carries display metadata only, never a card numb
     assert.match(m.last4, /^\d{4}$/);
   }
 });
+
+// ---- the payoff (TM-2b): the stub quotes and charges as the core does -------------------------------------------
+
+async function termsOn(invoiceNo, days) {
+  const r = await fetch(`${base}/_stub/control`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ discount: { invoice_no: invoiceNo, bps: 200, days } }) });
+  assert.equal(r.status, 200);
+}
+
+async function listed(client, invoiceNo) {
+  const page = await tenantBilling.tenantListInvoices(client, { limit: 200 });
+  return page.value.items.find((i) => i.invoice_no === invoiceNo);
+}
+
+test("an open invoice inside its discount window lists the payoff, the discount and its last day; the pay charges the payoff", async () => {
+  const { client } = await signedIn("ap");
+  const before = await listed(client, "INV-20402");
+  await termsOn("INV-20402", 3);
+  const row = await listed(client, "INV-20402");
+  const discount = Math.round(before.balance_cents * 0.02);
+  assert.equal(row.discount_cents, discount);
+  assert.equal(row.payoff_cents, before.balance_cents - discount);
+  assert.match(row.discount_by, /^\d{4}-\d{2}-\d{2}$/);
+  const sender = new PaySender(client, { canPay: () => true });
+  const outcome = await sender.pay({ invoiceIds: [row.id], nonce: "stub-nonce-ok-2" }, row.payoff_cents);
+  assert.equal(outcome.kind, "paid");
+  assert.equal(outcome.payment.amount_cents, row.payoff_cents);
+  assert.equal(outcome.differs, false, "the figure shown is the figure charged");
+  const after = await listed(client, "INV-20402");
+  assert.equal(after.status, "PAID");
+  assert.equal(after.balance_cents, 0, "the money and the discount close the invoice");
+});
+
+test("outside the window, or without terms, the payoff is the open amount and no discount is quoted", async () => {
+  const { client } = await signedIn("ap");
+  await termsOn("INV-20402", -1);
+  const late = await listed(client, "INV-20402");
+  assert.equal(late.payoff_cents, late.balance_cents);
+  assert.equal("discount_cents" in late, false);
+  assert.equal("discount_by" in late, false);
+  const plain = await listed(client, "INV-20403");
+  assert.equal(plain.payoff_cents, plain.balance_cents);
+  const paid = await listed(client, "INV-20401");
+  assert.equal("payoff_cents" in paid, false, "a paid invoice is not quoted");
+});

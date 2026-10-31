@@ -9,7 +9,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { TenantBillingSummary, TenantInvoice, TenantInvoiceDetail, TenantInvoiceLine, TenantPayment, TenantPaymentMethod } from "@hardscapehouse/api-client";
 import { money, calendarDay, houseMoment, qtyWithUnit, statusChip, NO_PRICE } from "@hardscapehouse/pro-kit";
-import { BUCKETS, BUCKET_WORDS, agingTotals, chargeFor, daysPastDue, isPayable, payableCents, type MethodKind } from "./pay-core.js";
+import { BUCKETS, BUCKET_WORDS, agingTotals, chargeFor, daysPastDue, discountOffer, isPayable, payoffCents, type MethodKind } from "./pay-core.js";
 import { SANDBOX_NOTE } from "./hosted-field.js";
 
 export type Phase = "choose" | "sending" | "unknown" | "declined" | "refused" | "paid";
@@ -89,13 +89,15 @@ function invoiceRow(invoice: TenantInvoice, state: ViewState): TemplateResult {
   const { words, late } = lateWords(invoice, state.today);
   const pickable = state.canPay && payable;
   const on = state.selected.has(invoice.id);
+  const offer = payable ? discountOffer(invoice) : null;
   return html`<li class="inv ${on ? "is-on" : ""}" data-testid="invoice-row" data-invoice="${invoice.invoice_no}" data-action="${pickable ? "toggle" : "open"}" data-id="${invoice.id}">
     ${pickable ? checkbox(on, invoice.id, `Select ${invoice.invoice_no}`) : html`<span class="box-gap"></span>`}
     <div class="inv-main">
       <span class="inv-top"><button type="button" class="inv-open mono inv-no" aria-label="Open statement for ${invoice.invoice_no}" data-action="open" data-id="${invoice.id}">${invoice.invoice_no}</button>${statusChip("invoice", invoice.status)}</span>
       <span class="inv-sub ${late ? "late" : ""}">${words}</span>
+      ${offer === null ? nothing : html`<span class="inv-save" data-testid="discount-line">Pay by ${calendarDay(offer.by)} and save <span class="mono">${money(offer.cents)}</span></span>`}
     </div>
-    <span class="inv-amount mono">${payable ? html`${money(payableCents(invoice))}<span class="inv-of">of ${money(invoice.total_cents)}</span>` : money(invoice.total_cents)}</span>
+    <span class="inv-amount mono" data-testid="inv-amount">${payable ? html`${money(payoffCents(invoice))}${offer === null ? html`<span class="inv-of">of ${money(invoice.total_cents)}</span>` : nothing}` : money(invoice.total_cents)}</span>
   </li>`;
 }
 
@@ -103,7 +105,7 @@ export function invoicesScreen(state: ViewState): TemplateResult {
   const totals = agingTotals(state.invoices, state.today);
   const payable = state.invoices.filter(isPayable);
   const picked = payable.filter((i) => state.selected.has(i.id));
-  const pickedCents = picked.reduce((sum, i) => sum + payableCents(i), 0);
+  const pickedCents = picked.reduce((sum, i) => sum + payoffCents(i), 0);
   const owed = state.summary === null ? NO_PRICE : money(state.summary.open_balance_cents);
   return html`
     <section class="owed" data-testid="owed">
@@ -141,7 +143,7 @@ export function invoiceDetailScreen(state: ViewState): TemplateResult {
   if (open.load === "error" || open.detail === null) return html`${back}<hh-pro-state data-state="error" data-testid="detail-state">This invoice did not load. Nothing was changed.</hh-pro-state>`;
   const d = open.detail;
   const row = state.invoices.find((i) => i.id === d.id);
-  const payNowCents = row !== undefined && isPayable(row) ? payableCents(row) : 0;
+  const payNowCents = row !== undefined && isPayable(row) ? payoffCents(row) : 0;
   // The generated detail type crosses InvoiceView with the ERP line shape; the wire carries the ERP lines.
   const lines = (d.lines ?? []) as unknown as readonly TenantInvoiceLine[];
   const { words, late } = row === undefined ? { words: "", late: false } : lateWords(row, state.today);

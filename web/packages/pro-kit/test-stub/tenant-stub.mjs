@@ -156,7 +156,30 @@ function cursorPage(res, url, rows, primaryOf, numberOf) {
 const userView = (u) => ({ id: u.id, customer_id: u.customer_id, email: u.email, name: u.name, role: u.role, status: u.status, notification_prefs: u.notification_prefs, created_at: u.created_at, updated_at: u.updated_at });
 const orderSummary = (o) => ({ id: o.id, order_no: o.order_no, customer_id: o.customer_id, quote_id: o.quote_id, status: o.status, fulfillment: o.fulfillment, requested_date: o.requested_date, subtotal_cents: o.subtotal_cents, tax_cents: o.tax_cents, total_cents: o.total_cents, created_at: o.created_at, has_backorder: o.has_backorder });
 const orderDetail = (o) => ({ ...orderSummary(o), lines: o.lines, delivery_instructions: o.delivery_instructions });
-const invoiceSummary = (i) => ({ id: i.id, invoice_no: i.invoice_no, customer_id: i.customer_id, order_id: i.order_id, status: i.status, issue_date: i.issue_date, due_date: i.due_date, subtotal_cents: i.subtotal_cents, tax_cents: i.tax_cents, holdback_cents: i.holdback_cents, total_cents: i.total_cents, balance_cents: i.balance_cents });
+// ---- the portal's payoff (TM-2b), following core/internal/payments PayableInvoices ----------------------------
+// An open invoice that carries discount terms (the control door's {discount}) and is inside its window quotes the payoff:
+// the open amount less the holdback, less the terms' percent of it, half to even. The list shows it and the pay charges it.
+const stubToday = () => new Date().toISOString().slice(0, 10);
+function halfEvenPercent(cents, bps) {
+  const n = cents * bps;
+  const q = Math.floor(n / 10_000);
+  const r = n % 10_000;
+  return r > 5_000 ? q + 1 : r === 5_000 ? q + (q % 2) : q;
+}
+function quoteOf(i) {
+  if (!["FINALIZED", "PARTIALLY_PAID"].includes(i.status)) return null;
+  const payable = Math.max(i.balance_cents - i.holdback_cents, 0);
+  if (payable <= 0) return null;
+  const inside = (i.discount_bps ?? 0) > 0 && typeof i.discount_by === "string" && stubToday() <= i.discount_by;
+  const discount = inside ? halfEvenPercent(payable, i.discount_bps) : 0;
+  return { payoff: payable - discount, discount, by: inside ? i.discount_by : "" };
+}
+function quoteFields(i) {
+  const q = quoteOf(i);
+  if (q === null) return {};
+  return q.discount > 0 ? { payoff_cents: q.payoff, discount_cents: q.discount, discount_by: q.by } : { payoff_cents: q.payoff };
+}
+const invoiceSummary = (i) => ({ ...quoteFields(i), id: i.id, invoice_no: i.invoice_no, customer_id: i.customer_id, order_id: i.order_id, status: i.status, issue_date: i.issue_date, due_date: i.due_date, subtotal_cents: i.subtotal_cents, tax_cents: i.tax_cents, holdback_cents: i.holdback_cents, total_cents: i.total_cents, balance_cents: i.balance_cents });
 const quoteSummary = (q) => ({ id: q.id, quote_no: q.quote_no, customer_id: q.customer_id, status: q.status, valid_until: q.valid_until, subtotal_cents: q.subtotal_cents, tax_cents: q.tax_cents, total_cents: q.total_cents, created_at: q.created_at });
 const quoteDetail = (q) => ({ ...quoteSummary(q), lines: q.lines });
 const lineView = (l) => ({ id: l.id, line_no: l.line_no, product_id: l.product_id, sku: l.sku, description: l.description, qty_entered: l.qty_entered, uom: l.uom, notes: l.notes, indicative_unit_price_cents: l.indicative_unit_price_cents, indicative_line_total_cents: l.indicative_line_total_cents, priced: l.priced });
@@ -294,7 +317,9 @@ H.tenantListInvoices = (ctx) => {
 H.tenantGetInvoice = (ctx) => {
   const inv = world.invoices.find((i) => i.id === ctx.params.id);
   if (!inv) return notFound(ctx.res);
-  ok(ctx.res, { ...invoiceSummary(inv), lines: inv.lines, payment_history: inv.payment_history });
+  // The detail carries no payoff fields, as the core's detail does not (the list is where the portal quotes).
+  const { payoff_cents, discount_cents, discount_by, ...summary } = invoiceSummary(inv);
+  ok(ctx.res, { ...summary, lines: inv.lines, payment_history: inv.payment_history });
 };
 
 H.tenantListPayments = (ctx) => ok(ctx.res, [...world.payments].sort((a, b) => (a.received_at < b.received_at ? 1 : -1)).map(paymentView));
@@ -325,7 +350,8 @@ H.tenantCreatePayment = async (ctx) => {
   // Card data never reaches this server: a hosted field hands over a token (a nonce). The stub's sandbox verdicts ride the nonce.
   if (nonce === "stub-nonce-declined") return refuse(ctx.res, 402, "payment declined");
   if (nonce === "stub-nonce-pending") return refuse(ctx.res, 409, "payment is pending, please retry");
-  const total = targets.reduce((s, i) => s + i.balance_cents, 0);
+  const quotes = targets.map((i) => ({ inv: i, ...quoteOf(i) }));
+  const total = quotes.reduce((s, q) => s + q.payoff, 0);
   const nowIso = new Date().toISOString();
   const method = methodId !== "" ? world.methods.find((m) => m.id === methodId) : null;
   const payment = {
@@ -337,13 +363,15 @@ H.tenantCreatePayment = async (ctx) => {
     status: "RECEIVED",
     gateway_ref: `stub-ref-${world.counters.payment}`,
     received_at: nowIso,
-    allocations: targets.map((i) => ({ invoice_id: i.id, amount_cents: i.balance_cents, created_at: nowIso })),
+    allocations: quotes.map((q) => ({ invoice_id: q.inv.id, amount_cents: q.payoff, created_at: nowIso })),
     idempotency_key: key,
   };
-  for (const inv of targets) {
-    inv.payment_history.push({ id: payment.id, amount_cents: inv.balance_cents, method: payment.method, status: payment.status, received_at: nowIso });
-    inv.balance_cents = 0;
-    inv.status = "PAID";
+  for (const q of quotes) {
+    const inv = q.inv;
+    inv.payment_history.push({ id: payment.id, amount_cents: q.payoff, method: payment.method, status: payment.status, received_at: nowIso });
+    // The money and the discount together close the open amount; a held back invoice keeps its holdback.
+    inv.balance_cents -= q.payoff + q.discount;
+    inv.status = inv.balance_cents === 0 ? "PAID" : "PARTIALLY_PAID";
   }
   world.payments.push(payment);
   world.recompute();
@@ -879,13 +907,21 @@ async function handle(req, res) {
   return H[route.operationId](ctx);
 }
 
-// POST /_stub/control {fault: {path, status}} | {delayMs} | {empty: "orders" | "invoices" | "projects" | "quotes"}
+// POST /_stub/control {fault: {path, status}} | {delayMs} | {discount: {invoice_no, bps, days}} | {empty: "orders" | "invoices" | "projects" | "quotes"}
 async function stubControl(req, res) {
   const body = await readJson(req, res);
   if (body === undefined) return;
   if (body?.fault) faults.push({ path: String(body.fault.path), status: Number(body.fault.status) });
   if (typeof body?.delayMs === "number") delayMs = Math.max(0, Math.min(5000, body.delayMs));
   const collections = { orders: "orders", invoices: "invoices", projects: "projects", quotes: "quotes" };
+  // {discount: {invoice_no, bps, days}}: the invoice carries discount terms whose last day is `days` from today.
+  if (body?.discount) {
+    const inv = world.invoices.find((i) => i.invoice_no === body.discount.invoice_no);
+    if (inv) {
+      inv.discount_bps = Number(body.discount.bps);
+      inv.discount_by = new Date(Date.now() + Number(body.discount.days) * 86_400_000).toISOString().slice(0, 10);
+    }
+  }
   if (body?.empty && collections[body.empty]) {
     world[collections[body.empty]] = [];
     world.recompute();
