@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"net/http"
 	"os"
 	"sync/atomic"
@@ -57,7 +58,7 @@ func intPool(t *testing.T) *pgxpool.Pool {
 	// Registered after pool.Close, so it runs before the pool closes. Cleanups run last in,
 	// first out, so a leg's own cleanups (added after this call) run first and this sweep
 	// catches what they left (cleanup_sweep_integration_test.go).
-	registerLegSweep(t, pool)
+	legsweep.Register(t, pool)
 	return pool
 }
 

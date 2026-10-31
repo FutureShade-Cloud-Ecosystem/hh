@@ -365,6 +365,11 @@ func fw1VerifyNonGLSites(coreRoot string, table []fw1NonGLWriterSite) ([]string,
 			if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {
 				return nil
 			}
+			// internal/testkit is test only tooling, treated like a _test.go file: never linked into
+			// the binary, imported only by _test.go files (TestTestkitIsImportedOnlyByTestFiles).
+			if strings.HasPrefix(rel, "core/internal/testkit/") {
+				return nil
+			}
 			fileAST, perr := parser.ParseFile(fset, path, nil, parser.ParseComments)
 			if perr != nil {
 				return fmt.Errorf("parse %s: %w", rel, perr)

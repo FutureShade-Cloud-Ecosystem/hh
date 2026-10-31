@@ -30,6 +30,7 @@ package pos
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"os"
 	"testing"
 
@@ -82,6 +83,11 @@ func counterTillFixture(t *testing.T) *pgxpool.Pool {
 	if err := testkit.VerifyBaseline(ctx, db); err != nil {
 		t.Fatalf("fixture baseline: %v", err)
 	}
+	// The leg sweep (plan row 0.43) is registered before the world is built and planted, so it
+	// runs after every cleanup below and deletes the world and every row the leg rung, children
+	// before parents. Without it each leg left an org, locations, users, customers, orders,
+	// invoices, payments and the rest behind on the core scratch database.
+	legsweep.Register(t, pool)
 	if err := testkit.Build(ctx, db); err != nil {
 		t.Fatalf("fixture build: %v", err)
 	}
@@ -117,8 +123,14 @@ func plantCounterTillRows(t *testing.T, pool *pgxpool.Pool) {
 	}
 	// The catalog rows go only when the world lets them go; the inserts below re-plant them
 	// otherwise, unchanged, by their fixed ids.
-	_, _ = pool.Exec(ctx, `DELETE FROM products WHERE id = '`+fxTillProductID+`'`)
-	_, _ = pool.Exec(ctx, `DELETE FROM product_categories WHERE id = '`+fxTillCategoryID+`'`)
+	for _, q := range []string{
+		`DELETE FROM products WHERE id = '` + fxTillProductID + `'`,
+		`DELETE FROM product_categories WHERE id = '` + fxTillCategoryID + `'`,
+	} {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			t.Fatalf("fixture re-plant delete: %v (%s)", err, q)
+		}
+	}
 	plants := []string{
 		// The pavers category, the Holland paver stand-in on it, SF throughout.
 		`INSERT INTO product_categories (id, code, name) VALUES ('` + fxTillCategoryID + `', 'FX-PAVERS', 'Fixture Pavers')
@@ -170,27 +182,8 @@ func plantCounterTillRows(t *testing.T, pool *pgxpool.Pool) {
 		`UPDATE products SET category_id = '`+fxTillCategoryID+`' WHERE id = '`+fxTillProductID+`'`); err != nil {
 		t.Fatalf("fixture plant re-point: %v", err)
 	}
-	t.Cleanup(func() {
-		cleanups := []string{
-			`DELETE FROM pos_parked_tickets WHERE notes = '` + fxTillParkNotes + `'`,
-			`DELETE FROM pricing_order_lines WHERE pricing_order_id IN
-				(SELECT id FROM pricing_orders WHERE branch_id = '` + testkit.BranchNorthAID + `' AND created_by = '` + testkit.UserInsideSalesID + `')`,
-			`DELETE FROM pricing_orders WHERE branch_id = '` + testkit.BranchNorthAID + `' AND created_by = '` + testkit.UserInsideSalesID + `'`,
-			`DELETE FROM user_branch_grants WHERE user_id = '` + fxKingstonUserID + `'`,
-			`DELETE FROM staff_role_grant WHERE id = '` + fxKingstonGrantID + `'`,
-			`DELETE FROM users WHERE id = '` + fxKingstonUserID + `'`,
-			`DELETE FROM pricing_rules WHERE id = '` + fxTillRuleID + `'`,
-			`DELETE FROM product_branch_costs WHERE product_id = '` + fxTillProductID + `'`,
-			`DELETE FROM pricing_category_policy WHERE category_id = '` + fxTillCategoryID + `'`,
-			`DELETE FROM pricing_list_prices WHERE product_id = '` + fxTillProductID + `'`,
-			`DELETE FROM product_uoms WHERE product_id = '` + fxTillProductID + `'`,
-			`DELETE FROM products WHERE id = '` + fxTillProductID + `'`,
-			`DELETE FROM product_categories WHERE id = '` + fxTillCategoryID + `'`,
-		}
-		for _, q := range cleanups {
-			_, _ = pool.Exec(context.Background(), q)
-		}
-	})
+	// No cleanup here: the leg sweep registered in counterTillFixture deletes everything this
+	// function planted, with the order it needs, and fails the leg on a refused delete.
 }
 
 // tillStaffCtx stamps a guard-shaped caller for a named fixture user, the way the RequireStaff

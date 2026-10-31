@@ -110,8 +110,10 @@ const w25TestHelperKey = "test_helpers|*|*"
 // reporting dataset tests each seed their product's product_branch_costs rows and clean them up: four
 // more sites, so the count is 110. Wave 3 item 0.12's late filed credit application test cleans up its
 // product's value rows too: 112. Wave 3 item 0.39's pos return values leg puts back the seeded branch cost
-// row it moves: 113.
-const w25TestHelperSiteCount = 113
+// row it moves: 113. Wave 3 item 0.43 removes the counter till fixture's own cleanup block (its
+// product_branch_costs delete, a value writer): the shared leg sweep now deletes that row, and the
+// sweep builds its SQL at run time so the scanner sees no site there: 112.
+const w25TestHelperSiteCount = 112
 
 // w25OnHandTestHelperKey is the allowance bucket for every on-hand writer found in *_test.go files.
 const w25OnHandTestHelperKey = "test_helpers_on_hand|*|*"
@@ -156,9 +158,12 @@ func w25RunStockValueCensus(coreRoot string) (w25CensusResult, error) {
 	return result, nil
 }
 
-// w25IsTestHelper reports whether a site lives in a Go test file (the aggregated test-helper bucket).
+// w25IsTestHelper reports whether a site lives in a Go test file or in the testkit tree (the
+// aggregated test-helper bucket). internal/testkit is test only tooling: it is never linked into
+// the binary and is imported only by _test.go files (TestTestkitIsImportedOnlyByTestFiles proves
+// the second half), so a writer there is a test helper exactly as one in a _test.go file is.
 func w25IsTestHelper(s w25InventoryWriterSite) bool {
-	return strings.HasSuffix(s.file, "_test.go")
+	return strings.HasSuffix(s.file, "_test.go") || strings.HasPrefix(s.file, "internal/testkit/")
 }
 
 // w25IsOnHandKind reports whether a site's kind is an on-hand write (a stock_balances statement or
