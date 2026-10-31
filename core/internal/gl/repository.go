@@ -708,6 +708,28 @@ func (r *Repository) GetJournal(ctx context.Context, id string) (Journal, error)
 	return j, nil
 }
 
+// JournalByKey answers the POSTED journal filed under an idempotency key with its legs, found false
+// when no POSTED journal carries the key (Service.JournalByKey is the seam's own doc).
+func (r *Repository) JournalByKey(ctx context.Context, key string) (Journal, bool, error) {
+	if r.pool == nil {
+		return Journal{}, false, errNoDB
+	}
+	j, err := scanJournal(r.pool.QueryRow(ctx,
+		`SELECT `+journalCols+` FROM gl_journals WHERE status = 'POSTED' AND idempotency_key = $1`, key))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Journal{}, false, nil
+	}
+	if err != nil {
+		return Journal{}, false, fmt.Errorf("gl: journal by key: %w", err)
+	}
+	lines, err := r.journalLines(ctx, j.ID)
+	if err != nil {
+		return Journal{}, false, err
+	}
+	j.Lines = lines
+	return j, true, nil
+}
+
 // JournalIsReversed says whether another journal names this one in reverses_journal_id.
 func (r *Repository) JournalIsReversed(ctx context.Context, id string) (bool, error) {
 	if r.pool == nil {

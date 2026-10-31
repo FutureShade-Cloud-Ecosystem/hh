@@ -201,6 +201,24 @@ func (a itGLWindow) PostingDateRefusal(ctx context.Context, at time.Time) (strin
 	return a.svc.PostingDateRefusal(ctx, at)
 }
 
+// itGLJournalReader mirrors the production wiring's posted journal read by idempotency key,
+// so the AP revaluation's replay judgement and reversal read the journal the run filed
+// exactly as w4cGLJournalReader answers it.
+type itGLJournalReader struct{ svc *gl.Service }
+
+func (a itGLJournalReader) JournalByKey(ctx context.Context, key string) (GLPostedJournal, bool, error) {
+	j, found, err := a.svc.JournalByKey(ctx, key)
+	if err != nil || !found {
+		return GLPostedJournal{}, found, err
+	}
+	out := GLPostedJournal{ID: j.ID, SourceRefID: j.SourceRefID, BranchID: j.BranchID, Memo: j.Memo,
+		Lines: make([]GLJournalLeg, len(j.Lines))}
+	for i, l := range j.Lines {
+		out.Lines[i] = GLJournalLeg{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return out, true, nil
+}
+
 func (a itGL) PostJournalTx(ctx context.Context, tx pgx.Tx, in GLJournal) (string, error) {
 	lines := make([]gl.ExternalLine, len(in.Lines))
 	for i, l := range in.Lines {
@@ -301,6 +319,7 @@ func newHarness(t *testing.T) *harness {
 		WithGLPoster(itGL{svc: glSvc}).
 		WithRuleResolver(itRules{svc: glSvc}).
 		WithGLJournalClock(itGLClock{svc: glSvc}).
+		WithGLJournalReader(itGLJournalReader{svc: glSvc}).
 		WithGLPostingWindow(itGLWindow{svc: glSvc}).
 		withCaller(func(context.Context) (identity.StaffContext, bool) { return globalCaller(user), true })
 

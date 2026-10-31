@@ -254,6 +254,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithLandedCoster(w4cLandedCoster{svc: landedcostSvc}).
 		WithLandedCostPayables(w4cLandedCoster{svc: landedcostSvc}).
 		WithGLJournalClock(w4cGLJournalClock{svc: spine.glSvc}).
+		WithGLJournalReader(w4cGLJournalReader{svc: spine.glSvc}).
 		WithGLPostingWindow(w4cGLPostingWindow{svc: spine.glSvc}).
 		WithGLPoster(w4cGLPoster{svc: spine.glSvc}).
 		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
@@ -2107,6 +2108,29 @@ func (a w4cGLJournalClock) JournalSourceRefByKey(ctx context.Context, key string
 
 func (a w4cGLJournalClock) JournalAmountByKey(ctx context.Context, key string) (int64, bool, error) {
 	return a.svc.JournalAmountByKey(ctx, key)
+}
+
+// w4cGLJournalReader satisfies purchasing.GLJournalReader over the gl service's own
+// journal read by idempotency key: the AP revaluation's replay judgement and its
+// reversal's legs read the journal the run itself filed, never a GL table.
+type w4cGLJournalReader struct{ svc *gl.Service }
+
+func (a w4cGLJournalReader) JournalByKey(ctx context.Context, key string) (purchasing.GLPostedJournal, bool, error) {
+	j, found, err := a.svc.JournalByKey(ctx, key)
+	if err != nil || !found {
+		return purchasing.GLPostedJournal{}, found, err
+	}
+	out := purchasing.GLPostedJournal{
+		ID:          j.ID,
+		SourceRefID: j.SourceRefID,
+		BranchID:    j.BranchID,
+		Memo:        j.Memo,
+		Lines:       make([]purchasing.GLJournalLeg, len(j.Lines)),
+	}
+	for i, l := range j.Lines {
+		out.Lines[i] = purchasing.GLJournalLeg{AccountCode: l.AccountCode, DebitCents: l.DebitCents, CreditCents: l.CreditCents, Memo: l.Memo}
+	}
+	return out, true, nil
 }
 
 // w4cGLPostingWindow satisfies purchasing.GLPostingWindow over the gl service's own posting
