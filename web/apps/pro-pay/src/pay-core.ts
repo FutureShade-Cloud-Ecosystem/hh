@@ -139,8 +139,9 @@ export function classifyPayment(result: Result<TenantPayment>, expectedCents = N
   if (status === 402) return { kind: "declined", words: "The payment was declined. No money moved." };
   if (status === 401) return { kind: "refused", status, words: "You are signed out. Sign in again. No money moved." };
   if (status === 403) return { kind: "refused", status, words: "Your role does not allow paying invoices. No money moved." };
-  // The core quoted a different amount than the sheet showed and refused before claiming anything: no money moved.
-  if (status === 409 && /amount to pay has changed/i.test(result.error)) return { kind: "changed", words: CHANGED_WORDS };
+  // The core quoted a different amount than the sheet showed and refused before claiming anything: no money
+  // moved. Matched on the machine code the 409 carries (quote_changed), never on its words.
+  if (status === 409 && result.code === "quote_changed") return { kind: "changed", words: CHANGED_WORDS };
   if (status === 400 && /balance changed/i.test(result.error)) return { kind: "unknown", words: UNKNOWN_WORDS };
   if (status !== undefined && status >= 400 && status < 500 && status !== 409) return { kind: "refused", status, words: CHECK_WORDS };
   return { kind: "unknown", words: UNKNOWN_WORDS };

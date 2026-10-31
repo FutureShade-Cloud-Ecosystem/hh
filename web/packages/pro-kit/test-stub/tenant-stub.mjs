@@ -343,6 +343,10 @@ H.tenantListPayments = (ctx) => ok(ctx.res, [...world.payments].sort((a, b) => (
 H.tenantCreatePayment = async (ctx) => {
   const body = await readJson(ctx.req, ctx.res);
   if (body === undefined) return;
+  // The core requires the amount the Pay button showed, before anything is quoted or claimed.
+  if (!Number.isInteger(body?.expected_cents) || body.expected_cents <= 0) {
+    return badRequest(ctx.res, "expected_cents is required: send the amount the Pay button showed, in cents, above zero");
+  }
   const ids = Array.isArray(body?.invoice_ids) ? body.invoice_ids : [];
   if (ids.length === 0) return badRequest(ctx.res, "at least one invoice is required");
   const methodId = body.payment_method_id ?? "";
@@ -369,8 +373,8 @@ H.tenantCreatePayment = async (ctx) => {
   const quotes = targets.map((i) => ({ inv: i, ...quoteOf(i) }));
   const total = quotes.reduce((s, q) => s + q.payoff, 0);
   // The amount the Pay button showed: the core quotes again at the tap and refuses before anything moves if it differs.
-  if (Number.isInteger(body.expected_cents) && body.expected_cents > 0 && body.expected_cents !== total) {
-    return refuse(ctx.res, 409, "The amount to pay has changed since you opened this. Please check the new amount and confirm again.");
+  if (body.expected_cents !== total) {
+    return send(ctx.res, 409, { error: "The amount to pay has changed since you opened this. Please check the new amount and confirm again.", code: "quote_changed" });
   }
   const nowIso = new Date().toISOString();
   const method = methodId !== "" ? world.methods.find((m) => m.id === methodId) : null;

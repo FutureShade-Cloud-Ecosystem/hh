@@ -83,10 +83,11 @@ test("a role that holds the capability pays once, and the payment is the core's 
   const ids = await openInvoiceIds(client);
   const sender = new PaySender(client, { canPay: () => true });
   const methods = await tenantPayments.tenantListPaymentMethods(client);
-  const outcome = await sender.pay({ invoiceIds: ids, methodId: methods.value[0].id }, 0);
+  const shown = await shownSum(client, ids);
+  const outcome = await sender.pay({ invoiceIds: ids, methodId: methods.value[0].id }, shown);
   assert.equal(outcome.kind, "paid");
   assert.equal(outcome.payment.allocations.length, ids.length);
-  assert.equal(outcome.differs, true, "the shown figure (0 here) is flagged when the books settle another");
+  assert.equal(outcome.differs, false, "the shown figure is what the books settled");
   const after = await tenantPayments.tenantListPayments(client);
   assert.equal(after.value.length, 3);
 });

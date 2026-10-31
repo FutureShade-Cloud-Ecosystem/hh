@@ -92,6 +92,10 @@ func (h *Handler) createPayment(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_json")
 		return
 	}
+	if err := payments.RequireShownAmount(req.ExpectedCents); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
 	ctx := r.Context()
 	caller := callerFrom(ctx)
 	p, err := h.paymentSvc.Pay(ctx, caller.CustomerID, req)

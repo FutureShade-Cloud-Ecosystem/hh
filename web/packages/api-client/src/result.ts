@@ -12,7 +12,7 @@
  * a domain refusal all reach the caller identically, as data.
  */
 
-export type Result<T> = { ok: true; value: T } | { ok: false; error: string; status?: number };
+export type Result<T> = { ok: true; value: T } | { ok: false; error: string; status?: number; code?: string };
 
 export function ok<T>(value: T): Result<T> {
   return { ok: true, value };
@@ -25,8 +25,9 @@ export function ok<T>(value: T): Result<T> {
  * success body carry no status, because either nothing answered or what
  * answered answered success.
  */
-export function err<T = never>(error: string, status?: number): Result<T> {
-  return status === undefined ? { ok: false, error } : { ok: false, error, status };
+export function err<T = never>(error: string, status?: number, code?: string): Result<T> {
+  const base = status === undefined ? { ok: false as const, error } : { ok: false as const, error, status };
+  return code === undefined ? base : { ...base, code };
 }
 
 export function isOk<T>(result: Result<T>): result is { ok: true; value: T } {

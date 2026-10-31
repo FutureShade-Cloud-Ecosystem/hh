@@ -107,9 +107,11 @@ test("a pay answer is read as paid, declined, refused or unknown, and a timeout 
 });
 
 test("a 409 that says the amount changed is its own outcome with words for a customer; any other 409 stays unknown", () => {
-  const out = classifyPayment({ ok: false, error: "The amount to pay has changed since you opened this. Please check the new amount and confirm again.", status: 409 });
+  const out = classifyPayment({ ok: false, error: "any words at all", status: 409, code: "quote_changed" });
   assert.equal(out.kind, "changed");
   assert.match(out.words, /No money moved/);
+  // The prose alone is not the signal: a 409 whose words match but carries no code is unknown.
+  assert.equal(classifyPayment({ ok: false, error: "The amount to pay has changed since you opened this.", status: 409 }).kind, "unknown");
   assert.equal(classifyPayment({ ok: false, error: "payment is pending, please retry", status: 409 }).kind, "unknown");
 });
 
