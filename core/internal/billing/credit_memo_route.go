@@ -490,11 +490,12 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 	if err != nil {
 		return CreditMemoRouteResult{}, err
 	}
-	revenue := accounts[RoleRevenue]
-	if revenue == "" {
-		// Refused, not guessed. A credit posted to an account nobody chose is worse than no credit:
-		// the books look complete and are wrong.
-		return CreditMemoRouteResult{}, httpx.BadRequestf("the posting rules for this branch have no revenue account, so a credit cannot be booked")
+	// The account the journal really debits: sales revenue for an ordinary invoice, finance charge
+	// income for a finance charge document (ReversingLegsFor). The check, the audit row and the
+	// answer all name it, so the record matches the ledger.
+	revenue, err := s.debitedAccount(ctx, accounts, strings.TrimSpace(req.InvoiceID))
+	if err != nil {
+		return CreditMemoRouteResult{}, err
 	}
 	named := strings.TrimSpace(req.GLAccount)
 	if named != "" && named != revenue {
@@ -553,7 +554,7 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 		}
 	}
 	if threshold > 0 && total >= threshold {
-		return s.park(ctx, in, plan, accounts, total, reason)
+		return s.park(ctx, in, plan, revenue, total, reason)
 	}
 
 	doc, err := s.w.IssueCreditMemo(ctx, in)
@@ -579,9 +580,34 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 	}, nil
 }
 
+// debitedAccount is the account a memo against this invoice debits. An invoice that cannot be read
+// (none named, or no such invoice) falls back to revenue: the plan refuses it in words a moment later.
+func (s *CreditMemoService) debitedAccount(ctx context.Context, accounts map[string]string, invoiceID string) (string, error) {
+	role := RoleRevenue
+	if invoiceID != "" {
+		var kind string
+		err := s.w.pool.QueryRow(ctx, `SELECT COALESCE(source_kind, '') FROM invoices WHERE id = $1::uuid`, invoiceID).Scan(&kind)
+		if err != nil && err != pgx.ErrNoRows {
+			return "", fmt.Errorf("billing: read the invoice's source kind: %w", err)
+		}
+		if err == nil && kind == SourceFinanceCharge {
+			role = RoleFinanceCharge
+		}
+	}
+	if accounts[role] == "" {
+		if role == RoleFinanceCharge {
+			return "", httpx.BadRequestf("the posting rules for this branch have no finance charge account, so a credit against a finance charge cannot be booked")
+		}
+		// Refused, not guessed. A credit posted to an account nobody chose is worse than no credit:
+		// the books look complete and are wrong.
+		return "", httpx.BadRequestf("the posting rules for this branch have no revenue account, so a credit cannot be booked")
+	}
+	return accounts[role], nil
+}
+
 // park holds an over-threshold credit: the memo document, the parked reversing journal and the
 // approval request, all in one transaction, and NOTHING that moves money.
-func (s *CreditMemoService) park(ctx context.Context, in CreditMemoInput, plan creditPlan, accounts map[string]string, total int64, reason string) (CreditMemoRouteResult, error) {
+func (s *CreditMemoService) park(ctx context.Context, in CreditMemoInput, plan creditPlan, account string, total int64, reason string) (CreditMemoRouteResult, error) {
 	if s.parker == nil {
 		// Fail closed. An over-threshold credit with nowhere to park is NOT a credit, and issuing
 		// it anyway would move money past the rail the dealer set.
@@ -596,7 +622,7 @@ func (s *CreditMemoService) park(ctx context.Context, in CreditMemoInput, plan c
 	if err != nil {
 		return CreditMemoRouteResult{}, err
 	}
-	s.record(ctx, InvoiceDoc{InvoiceID: parked.CreditMemoID, InvoiceNo: parked.CreditMemoNo, CustomerID: in.CustomerID, BranchID: in.BranchID}, in, total, accounts[RoleRevenue], reason)
+	s.record(ctx, InvoiceDoc{InvoiceID: parked.CreditMemoID, InvoiceNo: parked.CreditMemoNo, CustomerID: in.CustomerID, BranchID: in.BranchID}, in, total, account, reason)
 	return CreditMemoRouteResult{
 		Status:        CreditMemoAwaitingApproval,
 		CreditMemoID:  parked.CreditMemoID,
@@ -607,7 +633,7 @@ func (s *CreditMemoService) park(ctx context.Context, in CreditMemoInput, plan c
 		SubtotalCents: -plan.subtotal,
 		TaxCents:      -plan.tax,
 		TotalCents:    -total,
-		GLAccount:     accounts[RoleRevenue],
+		GLAccount:     account,
 		Reason:        reason,
 		ApprovalID:    parked.ApprovalID,
 		Message:       creditAwaitingWords(total),
