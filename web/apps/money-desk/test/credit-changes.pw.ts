@@ -1,0 +1,83 @@
+// The credit limit's change screens (CC-2) walked in a real browser against the stub.
+//
+// The Receivables desk asks for a new limit on one account and reads its history in words; the
+// approver's tab lists what waits and approves or rejects it. The tier, the roles and every
+// refusal are the core's: the stub carries the core's sentences, and the desk shows them.
+import { test, expect, openDesk } from "./helpers.js";
+import type { Page } from "@playwright/test";
+
+async function openCreditLimit(page: Page, name: string): Promise<void> {
+  await page.locator("[data-register-row]", { hasText: name }).first().getByRole("button").click();
+  await expect(page.getByRole("heading", { name })).toBeVisible();
+  await page.locator("button[data-action='sub'][data-choice='credit']").click();
+  await expect(page.locator("[data-credit-limit]")).toBeVisible();
+}
+
+test("a decrease takes effect at once and the history reads it in words", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openCreditLimit(page, "Granite Edge Landscaping");
+  await page.locator("[data-field='credit-limit-amount']").fill("1000.00");
+  await page.getByRole("button", { name: "Request the change" }).click();
+  // The reason is the core's own requirement, said in its words.
+  await expect(page.locator("[data-error]")).toContainText("reason");
+  await page.locator("[data-field='credit-limit-reason']").fill("Past due");
+  await page.getByRole("button", { name: "Request the change" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("The change is in place");
+  await expect(page.locator("[data-credit-limit-figure]")).toHaveText("$1,000.00");
+  const row = page.locator("[data-credit-history] [data-creditchange-row]").first();
+  await expect(row).toContainText("Took effect the day it was asked");
+  await expect(row).toContainText("Past due");
+});
+
+test("an increase waits, says what it waits for, and moves nothing", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openCreditLimit(page, "Granite Edge Landscaping");
+  const before = await page.locator("[data-credit-limit-figure]").innerText();
+  await page.locator("[data-field='credit-limit-amount']").fill("90000.00");
+  await page.locator("[data-field='credit-limit-reason']").fill("Two large jobs");
+  await page.getByRole("button", { name: "Request the change" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("waiting for two approvals");
+  await expect(page.locator("[data-notice]")).toContainText("Nothing has moved");
+  await expect(page.locator("[data-credit-limit-figure]")).toHaveText(before);
+  await expect(page.locator("[data-credit-pending]").first()).toContainText("Waiting for two approvals");
+});
+
+test("a requester who may not decide sees the waiting list without the controls", async ({ page, request }) => {
+  await openDesk(page, request);
+  // Payables and Receivables is admitted at the route, so it reads the list, but it may not decide.
+  await page.getByRole("button", { name: "Credit changes" }).click();
+  await expect(page.locator("[data-creditchanges]")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Reject/ })).toHaveCount(0);
+  await expect(page.locator("[data-creditchanges]")).toContainText("decides");
+});
+
+test("the approver sees what waits, approves one, and the first of two approvals is said", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await page.getByRole("button", { name: "Credit changes" }).click();
+  const rows = page.locator("[data-creditchanges] [data-creditchange-row]");
+  await expect(rows).toHaveCount(2);
+  // The one that waits for a single approval is approved and applies.
+  const single = rows.filter({ hasText: "The winter work" });
+  await single.getByRole("button", { name: "Approve" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Approved: the credit limit is now $32,000.00");
+  await expect(rows).toHaveCount(1);
+  // The one that already holds the first of two approvals shows it, and the same person is turned away
+  // in the server's own words.
+  await expect(rows.first()).toContainText("First of two approvals recorded");
+  await rows.first().getByRole("button", { name: "Approve" }).click();
+  await expect(page.locator("[data-error]")).toContainText("the same person cannot approve twice");
+});
+
+test("a rejection asks why and settles the request", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await page.getByRole("button", { name: "Credit changes" }).click();
+  const single = page.locator("[data-creditchanges] [data-creditchange-row]").filter({ hasText: "The winter work" });
+  await single.getByRole("button", { name: /^Reject/ }).click();
+  await page.getByRole("button", { name: "Reject the change" }).click();
+  await expect(page.locator("[data-error]")).toContainText("reason");
+  await page.locator("[data-field='credit-reject-reason']").fill("The balance is past due");
+  await page.getByRole("button", { name: "Reject the change" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("The request is rejected");
+  await expect(page.locator("[data-creditchanges] [data-creditchange-row]").filter({ hasText: "The winter work" })).toHaveCount(0);
+});

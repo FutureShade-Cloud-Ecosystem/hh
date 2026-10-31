@@ -14,12 +14,13 @@ import { html, type TemplateResult } from "lit";
 import type { BillingCustomerWorkspace, BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
-import { canLiftHolds, creditCheck, creditWords, dayInstant, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
+import { canDecideCreditChanges, canLiftHolds, canWorkCreditChanges, creditApproveWords, creditCheck, creditRefusalWords, creditRejectWords, creditRequestWords, creditWords, dayInstant, isUnpaidInvoice, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
 import { centsToField, formatMoney, parseAmountToCents } from "./ar-money.js";
 import { OfficeDesk, type OfficeHost } from "./office-desk.js";
 import { AttemptKeys, reminderRunWords, sweepWords } from "./office-logic.js";
 import {
   renderAccount,
+  renderCreditChanges,
   renderHolds,
   renderHome,
   renderLoadFailed,
@@ -31,6 +32,7 @@ import {
   shownInvoiceIds,
   type AccountModel,
   type BouncedWork,
+  type CreditChangesRead,
   type CreditForm,
   type DeskModel,
   type PayMethod,
@@ -173,6 +175,12 @@ export class ArDesk {
   // The Place-a-hold draft (Change 8 S4). Empty customerId means "no account chosen
   // yet"; the form refuses to submit while either field is empty. Reset on close.
   #placeHoldDraft: { customerId: string; reason: string } = { customerId: "", reason: "" };
+
+  // The credit change requests waiting for a decision in the caller's reach (CC-2), read when the
+  // Credit changes tab opens. Null before the first read; a failed read is said in words.
+  #creditChanges: CreditChangesRead | null = null;
+  // The row whose reject reason form is open, or null when no form is open.
+  #creditRejectFor: string | null = null;
 
   constructor(api: ArApi, host: DeskHost, who: DeskWho) {
     this.#api = api;
@@ -416,7 +424,7 @@ export class ArDesk {
         void this.#runStatements(null);
         return true;
       case "open-account":
-        void this.#openAccount(attr("data-customer-id"), attr("data-invoice-id") || null, (attr("data-right") || "receive") as RightMode, attr("data-sub") === "statement" ? "statement" : attr("data-sub") === "contacts" ? "contacts" : "invoices");
+        void this.#openAccount(attr("data-customer-id"), attr("data-invoice-id") || null, (attr("data-right") || "receive") as RightMode, attr("data-sub") === "statement" ? "statement" : attr("data-sub") === "contacts" ? "contacts" : attr("data-sub") === "credit" ? "credit" : "invoices");
         return true;
       case "back":
         this.#account = null;
@@ -426,8 +434,10 @@ export class ArDesk {
         this.#host.repaint();
         return true;
       case "sub":
-        if (this.#account !== null) this.#account = { ...this.#account, sub: choice === "statement" ? "statement" : choice === "contacts" ? "contacts" : "invoices" };
+        if (this.#account !== null) this.#account = { ...this.#account, sub: choice === "statement" ? "statement" : choice === "contacts" ? "contacts" : choice === "credit" ? "credit" : "invoices" };
         if (choice === "contacts" && this.#account !== null) void this.#office.ensureContact(this.#account.customerId);
+        // The credit limit tab reads its own history the way the contacts tab reads its contact.
+        if (choice === "credit" && this.#account !== null) void this.#loadAccountCreditChanges(this.#account.customerId);
         // A credit belongs to the view it was opened in: changing tab closes the form.
         this.#credit = null;
         this.#clearMessages();
@@ -571,6 +581,31 @@ export class ArDesk {
         return true;
       case "place-hold-go":
         void this.#placeHoldGo();
+        return true;
+      // The credit limit's changes (CC-2): the ask on an account's own tab, and the decisions on
+      // the Credit changes tab. Every press sends the core the two fields it requires and then says
+      // what the core answered, in the core's own words when it refused.
+      case "credit-limit-send":
+        void this.#sendCreditLimitRequest();
+        return true;
+      case "retry-credit-changes":
+        if (this.#account !== null && this.#account.sub === "credit") void this.#loadAccountCreditChanges(this.#account.customerId);
+        else void this.#loadCreditChanges();
+        return true;
+      case "credit-approve":
+        void this.#decideCreditChange(attr("data-credit-id"), "approve");
+        return true;
+      case "credit-reject":
+        this.#creditRejectFor = attr("data-credit-id");
+        this.#clearMessages();
+        this.#host.repaint();
+        return true;
+      case "credit-reject-cancel":
+        this.#creditRejectFor = null;
+        this.#host.repaint();
+        return true;
+      case "credit-reject-send":
+        void this.#decideCreditChange(attr("data-credit-id"), "reject");
         return true;
       case "run-sweep":
         void this.#runSweep();
@@ -805,12 +840,99 @@ export class ArDesk {
   async #goTab(tab: Tab): Promise<void> {
     this.#tab = tab;
     this.#account = null;
+    this.#creditRejectFor = null;
     this.#clearMessages();
     this.#host.repaint();
     if (tab === "statements") await Promise.all(this.#aging.map((a) => this.#loadStatement(a.customer_id)));
     if (tab === "reminders") await this.#office.openReminders();
     if (tab === "settings") await this.#office.openSettings();
     if (tab === "holds") await this.#office.openHolds();
+    if (tab === "creditchanges" && canWorkCreditChanges(this.#who.roleCode)) await this.#loadCreditChanges();
+  }
+
+  /** The credit changes waiting for a decision in the caller's reach (CC-2). */
+  async #loadCreditChanges(): Promise<void> {
+    this.#creditChanges = { state: "loading", items: [] };
+    this.#host.repaint();
+    const got = await this.#api.pendingCreditChanges();
+    this.#creditChanges = got.ok ? { state: "ready", items: got.value.items ?? [] } : { state: "failed", items: [] };
+    this.#host.repaint();
+  }
+
+  /** One account's credit change history, read when its Credit limit tab opens or is retried. */
+  async #loadAccountCreditChanges(customerId: string): Promise<void> {
+    const account = this.#account;
+    if (account === null || account.customerId !== customerId) return;
+    this.#account = { ...account, credit: { state: "loading", items: [] } };
+    this.#host.repaint();
+    const got = await this.#api.creditChanges(customerId);
+    // The operator may have left the account while the read was in flight.
+    if (this.#account === null || this.#account.customerId !== customerId) return;
+    this.#account = { ...this.#account, credit: got.ok ? { state: "ready", items: got.value.items ?? [] } : { state: "failed", items: [] } };
+    this.#host.repaint();
+  }
+
+  /**
+   * Sends the ask for a new credit limit. The core decides everything that is money: whether the
+   * change applies at once or waits, and how many approvals an increase needs. A refusal reads in
+   * the server's own words; an answer says what the core did with the ask.
+   */
+  async #sendCreditLimitRequest(): Promise<void> {
+    const account = this.#account;
+    if (account === null || this.#busy || !canWorkCreditChanges(this.#who.roleCode)) return;
+    const cents = parseAmountToCents(this.#host.field("credit-limit-amount"));
+    const reason = this.#host.field("credit-limit-reason").trim();
+    if (cents === null) return this.#stop("Enter the new limit as dollars and cents, such as 55000.00.");
+    if (reason === "") return this.#stop("Enter why the change is asked for; a request without a reason is refused.");
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const result = await this.#api.requestCreditChange({ customerId: account.customerId, newLimitCents: cents, reason });
+    this.#busy = false;
+    if (!result.ok) {
+      this.#notice = "";
+      this.#error = creditRefusalWords(result.error, result.status);
+      this.#reveal = "[data-error]";
+      this.#host.repaint();
+      return;
+    }
+    this.#notice = creditRequestWords(result.value);
+    this.#reveal = "[data-notice]";
+    await this.#loadAccountCreditChanges(account.customerId);
+    // The aging's limit figure is the server's now; a decrease has already moved it.
+    await this.#reloadBook();
+    this.#host.repaint();
+  }
+
+  /**
+   * Approves or rejects a waiting credit change. The core judges the request under one lock and
+   * rechecks the tier on the limit the account has now; a rising tier records the first of two
+   * approvals and moves nothing. A refusal reads in the server's own words, its 403s included.
+   */
+  async #decideCreditChange(id: string, kind: "approve" | "reject"): Promise<void> {
+    if (id === "" || this.#busy || !canDecideCreditChanges(this.#who.roleCode)) return;
+    let reason = "";
+    if (kind === "reject") {
+      reason = this.#host.field("credit-reject-reason").trim();
+      if (reason === "") return this.#stop("Enter why it is rejected; a rejection without a reason is refused.");
+    }
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const result = kind === "approve" ? await this.#api.approveCreditChange(id) : await this.#api.rejectCreditChange(id, reason);
+    this.#busy = false;
+    if (!result.ok) {
+      this.#notice = "";
+      this.#error = creditRefusalWords(result.error, result.status);
+      this.#reveal = "[data-error]";
+      this.#host.repaint();
+      return;
+    }
+    this.#notice = kind === "approve" ? creditApproveWords(result.value) : creditRejectWords(result.value);
+    this.#creditRejectFor = null;
+    this.#reveal = "[data-notice]";
+    await Promise.all([this.#loadCreditChanges(), this.#reloadBook()]);
+    this.#host.repaint();
   }
 
   /**
@@ -1035,7 +1157,7 @@ export class ArDesk {
 
   // ---- an account -------------------------------------------------------------------------------
 
-  async #openAccount(customerId: string, invoiceId: string | null, right: RightMode, sub: "invoices" | "statement" | "contacts"): Promise<void> {
+  async #openAccount(customerId: string, invoiceId: string | null, right: RightMode, sub: "invoices" | "statement" | "contacts" | "credit"): Promise<void> {
     if (customerId === "") return;
     const row = this.#aging.find((a) => a.customer_id === customerId);
     this.#clearMessages();
@@ -1064,6 +1186,7 @@ export class ArDesk {
       picked: [],
       preview: null,
       previewError: "",
+      credit: null,
     };
     this.#host.repaint();
     await this.#loadAccountInvoices(customerId, invoiceId, right);
@@ -1071,6 +1194,7 @@ export class ArDesk {
     if (invoiceId !== null && right === "invoice") await this.#selectInvoice(invoiceId);
     await this.#loadStatement(customerId);
     if (sub === "contacts") await this.#office.ensureContact(customerId);
+    if (sub === "credit") await this.#loadAccountCreditChanges(customerId);
   }
 
   /** Reads every invoice of the account (open and paid), prefills the payment from the arriving row, or says the read failed. */
@@ -1817,6 +1941,7 @@ export class ArDesk {
       asOf: this.#landing?.as_of ?? "",
       nowMs: Date.now(),
       roleCode: this.#who.roleCode,
+      userId: this.#who.userId,
       takenBy: this.#who.userName,
       canLift: canLiftHolds(this.#who.roleCode),
       landing: this.#landing,
@@ -1837,6 +1962,8 @@ export class ArDesk {
       liftChoice: this.#liftChoice,
       account: this.#account,
       credit: this.#credit,
+      creditChanges: this.#creditChanges,
+      creditRejectFor: this.#creditRejectFor,
       office: this.#office.model(),
       busy: this.#busy,
       error: this.#error,
@@ -1859,6 +1986,7 @@ export class ArDesk {
     if (model.tab === "reminders") return html`${renderReminders(model)}`;
     if (model.tab === "settings") return html`${renderSettings(model)}`;
     if (model.tab === "holds") return html`${renderHolds(model)}`;
+    if (model.tab === "creditchanges" && canWorkCreditChanges(model.roleCode)) return html`${renderCreditChanges(model)}`;
     return html`${renderHome(model)}`;
   }
 
