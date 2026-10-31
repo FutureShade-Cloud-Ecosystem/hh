@@ -18,7 +18,7 @@ import (
 
 func defaultRules() map[string]map[string]string {
 	return map[string]map[string]string{
-		"invoice.finalized":      {"ar": "1100", "revenue": "4000", "tax": "2200", "holdback": "1150", "customer_deposit": "2300"},
+		"invoice.finalized":      {"ar": "1100", "revenue": "4000", "tax": "2200", "holdback": "1150", "customer_deposit": "2300", "finance_charge": "4220"},
 		"payment.received":       {"cash": "1020", "ar": "1100", "card_clearing": "1010"},
 		"tax.relief.assessed":    {"hst_full": "2200", "fn_relief": "1165"},
 		"payment.bounced":        {"ar": "1100", "bank": "1000", "undeposited": "1020", "card_clearing": "1010", "fee_income": "4200", "hst": "2200"},
