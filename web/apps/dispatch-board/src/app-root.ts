@@ -22,6 +22,7 @@ import { AuthController, authHeaderProvider, SessionStore, type AccountSurface }
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { demoNote } from "./band-identity.js";
 import { entryStyles, renderEntry, type EntryView, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DispatchApi } from "./dispatch-api.js";
@@ -332,7 +333,7 @@ export class DispatchBoardApp extends HHElement {
       <main class="desk">
         ${this.#narrow ? this.#mobileTools() : html``}
         <h1>Dispatch and Load Building</h1>
-        <p class="dim">Build the day's loads, crew the trucks and send them out. Demo data only.</p>
+        <p class="dim">Build the day's loads, crew the trucks and send them out.${demoNote(servedConsoleConfig())}</p>
         ${renderEntry({ ...this.#entryView, flows: this.#entryFlows() }, { headline: "Who is dispatching?", intro: "Tap a role to open the dispatch board.", coming: false })}
       </main>
     `;

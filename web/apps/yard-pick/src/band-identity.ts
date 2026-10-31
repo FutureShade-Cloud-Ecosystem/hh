@@ -15,3 +15,8 @@ export function bandIdentity(served: ConsoleRuntimeConfig | null, tenantName: st
   const own = served === null ? "" : served.dealer.name.trim();
   return { org: own !== "" ? own : tenantName, demo: served === null };
 }
+
+/** The words a demo page adds to its page copy, with the space that joins them; a dealer's own box adds nothing. */
+export function demoNote(served: unknown): string {
+  return served === null ? " Demo data only." : "";
+}

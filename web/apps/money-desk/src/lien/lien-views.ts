@@ -7,6 +7,8 @@
 // boards (cards border first, no shadow, status as a word before a colour, a table that gives way to cards on a
 // phone), and the original app's Lien Cockpit tabs (triage, jobs, holdbacks, documents).
 import { html, nothing, type TemplateResult } from "lit";
+import { servedConsoleConfig } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { demoNote } from "../band-identity.js";
 import type { Branch, IdentityStaffMember, LienAgingRow, LienDocument, LienJob, LienTriageItem } from "@hardscapehouse/api-client";
 import { dueWords, type BannerView } from "../compliance/compliance-logic.js";
 import { bannerStrip, branchName, empty, loadFailed, loading, messages, pill, tabsNav } from "./lien-kit.js";
@@ -488,7 +490,7 @@ export function renderLiens(model: LiensModel): TemplateResult {
     <div data-liens>
       <header class="li-head">
         <h1>Liens</h1>
-        <p class="li-dim">Holdback, release and lien documents for the jobs we are on. Demo data only.</p>
+        <p class="li-dim">Holdback, release and lien documents for the jobs we are on.${demoNote(servedConsoleConfig())}</p>
       </header>
       ${model.phase === "loading"
         ? loading("Loading the liens.")
