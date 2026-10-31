@@ -927,8 +927,17 @@ func dollars(cents int64) string {
 	return s
 }
 
+// csvEscape makes one text cell safe for a CSV reader and for the spreadsheet a bookkeeper opens
+// the file in. A cell led by =, +, -, @, a tab or a carriage return is a formula to Excel and
+// Sheets, so it gets a leading single quote (the OWASP rule); a cell holding a comma, a quote, a
+// newline or a carriage return is quoted, with its quotes doubled. Money cells never come through
+// here. It serves the GP parity body (account name, memo), the mapped draft body (package account,
+// account name, memo) and the QBO body (account, description).
 func csvEscape(s string) string {
-	if strings.ContainsAny(s, ",\"\n") {
+	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
+		s = "'" + s
+	}
+	if strings.ContainsAny(s, ",\"\n\r") {
 		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 	}
 	return s
