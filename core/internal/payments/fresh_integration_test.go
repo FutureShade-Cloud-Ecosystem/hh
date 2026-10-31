@@ -21,7 +21,7 @@ func TestIntegration_Fresh_PaymentReversalReachesThePayersFeed(t *testing.T) {
 	cleanupIntents(t, rig)
 
 	pay, err := rig.svc.Pay(ctx, rig.customerID, PayRequest{
-		InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID,
+		InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID, ExpectedCents: 55000,
 	})
 	if err != nil {
 		t.Fatalf("seed payment: %v", err)

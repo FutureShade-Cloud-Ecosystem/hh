@@ -77,7 +77,7 @@ func TestAcceptance_GatewaySelector_RealFlagSelectsLiveAndSettles(t *testing.T) 
 	liveSvc := NewService(NewRepository(rig.pool), gw)
 
 	pay, err := liveSvc.Pay(ctx, rig.customerID, PayRequest{
-		InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID,
+		InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID, ExpectedCents: 40000,
 	})
 	if err != nil {
 		t.Fatalf("settle through the flag-selected live rail: %v", err)
@@ -134,7 +134,7 @@ func TestAcceptance_GatewaySelector_RealFlagSelectsLiveAndSettles(t *testing.T) 
 	// And a replay through the LIVE rail returns the original rather than charging again, the whole
 	// point of DIB-415 being that Run returns a fresh trans_id for a repeated request.
 	replay, err := liveSvc.Pay(ctx, rig.customerID, PayRequest{
-		InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID,
+		InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID, ExpectedCents: 40000,
 	})
 	if err != nil || replay.ID != pay.ID {
 		t.Fatalf("live replay = %s / %v, want the original payment %s", replay.ID, err, pay.ID)
@@ -162,7 +162,7 @@ func TestAcceptance_GatewaySelector_RealFlagDefaultsToStub(t *testing.T) {
 	rig := newPayRig(t, gw)
 	cleanupIntents(t, rig)
 	pay, err := rig.svc.Pay(context.Background(), rig.customerID, PayRequest{
-		InvoiceIDs: []string{rig.invoiceB}, PaymentMethodID: rig.methodID,
+		InvoiceIDs: []string{rig.invoiceB}, PaymentMethodID: rig.methodID, ExpectedCents: 15000,
 	})
 	if err != nil {
 		t.Fatalf("stub settle through the selector: %v", err)

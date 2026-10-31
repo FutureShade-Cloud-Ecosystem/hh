@@ -97,7 +97,7 @@ func TestAcceptance_Intent_UnstableRefGateway_CannotDoubleCharge(t *testing.T) {
 	rig := newPayRig(t, gw)
 	cleanupIntents(t, rig)
 
-	req := PayRequest{InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID}
+	req := PayRequest{InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID, ExpectedCents: 55000}
 
 	first, err := rig.svc.Pay(ctx, rig.customerID, req)
 	if err != nil {
@@ -172,7 +172,7 @@ func TestAcceptance_Intent_CrashWindowRetry_ResumesTheStampedChargeNeverRecharge
 	rig := newPayRig(t, gw)
 	cleanupIntents(t, rig)
 
-	req := PayRequest{InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID}
+	req := PayRequest{InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID, ExpectedCents: 40000}
 
 	// Reproduce the crash: claim the intent and stamp a processor ref, then stop, exactly the state
 	// a pod that died between the capture and the settle commit leaves behind.
@@ -230,7 +230,7 @@ func TestAcceptance_Intent_CrashWindowRetry_UnstampedRefusesRatherThanRecharges(
 	rig := newPayRig(t, gw)
 	cleanupIntents(t, rig)
 
-	req := PayRequest{InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID}
+	req := PayRequest{InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID, ExpectedCents: 40000}
 	repo := NewRepository(rig.pool)
 	if _, claimed, err := repo.ClaimIntent(ctx, IntentClaim{
 		Key: idempotencyKey(rig.customerID, req), CustomerID: rig.customerID, AmountCents: 40000,
@@ -260,7 +260,7 @@ func TestAcceptance_Intent_ConcurrentDuplicates_OnlyOneReachesTheGateway(t *test
 	rig := newPayRig(t, gw)
 	cleanupIntents(t, rig)
 
-	req := PayRequest{InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID}
+	req := PayRequest{InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID, ExpectedCents: 55000}
 
 	var wg sync.WaitGroup
 	results := make([]error, 2)
@@ -341,7 +341,7 @@ func TestAcceptance_Intent_SimultaneousClaim_UniqueIndexPicksOneWinner(t *testin
 	barrier := newBarrierStore(NewRepository(rig.pool), 2)
 	svc := NewService(barrier, gw)
 
-	req := PayRequest{InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID}
+	req := PayRequest{InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID, ExpectedCents: 55000}
 
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
@@ -391,7 +391,7 @@ func TestAcceptance_Intent_DeclineReleasesTheKeyForAGenuineRetry(t *testing.T) {
 		t.Fatalf("re-price for decline: %v", err)
 	}
 
-	req := PayRequest{InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID}
+	req := PayRequest{InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID, ExpectedCents: 55013}
 	if _, err := rig.svc.Pay(ctx, rig.customerID, req); !errors.Is(err, ErrDeclined) {
 		t.Fatalf("declined charge = %v, want ErrDeclined", err)
 	}
@@ -410,6 +410,7 @@ func TestAcceptance_Intent_DeclineReleasesTheKeyForAGenuineRetry(t *testing.T) {
 		`UPDATE invoices SET total_cents = 40000, balance_cents = 40000 WHERE id = $1::uuid`, rig.invoiceA); err != nil {
 		t.Fatalf("re-price for approval: %v", err)
 	}
+	req.ExpectedCents = 55000
 	p, err := rig.svc.Pay(ctx, rig.customerID, req)
 	if err != nil {
 		t.Fatalf("a retry after a decline must be allowed through: %v", err)

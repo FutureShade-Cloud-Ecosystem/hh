@@ -39,7 +39,7 @@ func payOnce(t *testing.T, svc *Service, store *fakeStore) (Payment, error) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID})
+	return svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID, ExpectedCents: 5000})
 }
 
 func TestPay_ChargesTheDealersCurrency(t *testing.T) {
@@ -95,7 +95,7 @@ func TestPay_ReplayAfterACurrencyChangeAnswersTheStoredPayment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID}
+	req := PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID, ExpectedCents: 5000}
 	first, err := svc.Pay(ctx, tenantA, req)
 	if err != nil {
 		t.Fatalf("first pay: %v", err)
