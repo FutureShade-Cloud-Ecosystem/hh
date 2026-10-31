@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { ReportingAccrual, ReportingAttributionCheck, ReportingCommissionComputeRequest, ReportingCommissionPeriod, ReportingCommissionPeriodPage, ReportingCommissionRule, ReportingCommissionRulePage, ReportingDatasetCatalog, ReportingDatasetQuery, ReportingDatasetResult, ReportingPrintRequest, ReportingResult, ReportingRun, ReportingRunPage, ReportingSavedView, ReportingSavedViewPage, ReportingSavedViewWrite, ReportingTemplate, ReportingTemplateCatalog } from "./types.js";
+import type { ReportingAccrual, ReportingAttributionCheck, ReportingCommissionComputeRequest, ReportingCommissionPeriod, ReportingCommissionPeriodPage, ReportingCommissionRule, ReportingCommissionRulePage, ReportingDatasetCatalog, ReportingDatasetQuery, ReportingDatasetResult, ReportingPrintRequest, ReportingResult, ReportingRun, ReportingRunPage, ReportingSavedReport, ReportingSavedReportDefinition, ReportingSavedReportList, ReportingSavedReportResult, ReportingSavedView, ReportingSavedViewPage, ReportingSavedViewWrite, ReportingTemplate, ReportingTemplateCatalog } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -249,6 +249,113 @@ export async function reportingGetRunDocument(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "reportingGetRunDocument",
+  });
+}
+
+export async function reportingListSavedReports(
+  client: ApiClient,
+  call?: ApiCallOptions
+): Promise<Result<ReportingSavedReportList>> {
+  return client.request<ReportingSavedReportList>({
+    method: "GET",
+    path: "/api/v1/reporting/saved-reports",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "reportingListSavedReports",
+  });
+}
+
+export async function reportingCreateSavedReport(
+  client: ApiClient,
+  body: ReportingSavedReportDefinition,
+  call?: ApiCallOptions
+): Promise<Result<ReportingSavedReport>> {
+  return client.request<ReportingSavedReport>({
+    method: "POST",
+    path: "/api/v1/reporting/saved-reports",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "reportingCreateSavedReport",
+  });
+}
+
+export async function reportingGetSavedReport(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<ReportingSavedReport>> {
+  return client.request<ReportingSavedReport>({
+    method: "GET",
+    path: "/api/v1/reporting/saved-reports/{id}",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "reportingGetSavedReport",
+  });
+}
+
+export async function reportingUpdateSavedReport(
+  client: ApiClient,
+  id: string | number,
+  body: ReportingSavedReportDefinition,
+  call?: ApiCallOptions
+): Promise<Result<ReportingSavedReport>> {
+  return client.request<ReportingSavedReport>({
+    method: "PUT",
+    path: "/api/v1/reporting/saved-reports/{id}",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "reportingUpdateSavedReport",
+  });
+}
+
+export async function reportingDeleteSavedReport(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<unknown>> {
+  return client.request<unknown>({
+    method: "DELETE",
+    path: "/api/v1/reporting/saved-reports/{id}",
+    pathParams: { id },
+    textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "reportingDeleteSavedReport",
+  });
+}
+
+export async function reportingExportSavedReportCsv(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<string>> {
+  return client.request<string>({
+    method: "GET",
+    path: "/api/v1/reporting/saved-reports/{id}/export.csv",
+    pathParams: { id },
+    textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "reportingExportSavedReportCsv",
+  });
+}
+
+export async function reportingRunSavedReport(
+  client: ApiClient,
+  id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<ReportingSavedReportResult>> {
+  return client.request<ReportingSavedReportResult>({
+    method: "POST",
+    path: "/api/v1/reporting/saved-reports/{id}/run",
+    pathParams: { id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "reportingRunSavedReport",
   });
 }
 

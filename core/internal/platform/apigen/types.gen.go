@@ -9412,6 +9412,39 @@ type ReportingDatasetResult struct {
 	RunAt    time.Time                `json:"run_at"`
 }
 
+type ReportingSavedReportSort struct {
+	Column string `json:"column"`
+	Desc   *bool  `json:"desc,omitempty"`
+}
+
+type ReportingSavedReportDefinition struct {
+	Name    string                      `json:"name"`
+	Dataset string                      `json:"dataset"`
+	Columns []string                    `json:"columns"`
+	Filters *[]ReportingDatasetFilter   `json:"filters,omitempty"`
+	GroupBy *[]string                   `json:"group_by,omitempty"`
+	AsOf    *string                     `json:"as_of,omitempty"`
+	Sort    *[]ReportingSavedReportSort `json:"sort,omitempty"`
+}
+
+type ReportingSavedReport struct {
+	ReportingSavedReportDefinition
+	Id          string    `json:"id"`
+	OwnerUserId string    `json:"owner_user_id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type ReportingSavedReportList struct {
+	Items []ReportingSavedReport `json:"items"`
+}
+
+type ReportingSavedReportResult struct {
+	ReportingDatasetResult
+	ReportId   string `json:"report_id"`
+	ReportName string `json:"report_name"`
+}
+
 type ReportingCommissionRule struct {
 	Id            string    `json:"id"`
 	RepUserId     string    `json:"rep_user_id"`
