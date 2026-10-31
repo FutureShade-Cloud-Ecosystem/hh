@@ -88,7 +88,10 @@ import { renderHotkeys, type HotkeysModel } from "./views-hotkeys.js";
 import { renderAudit, type AuditDetail, type AuditModel, type AuditTrail } from "./views-audit.js";
 import {
   renderRoleConfig,
+  allShapesOpen,
   cellKey,
+  curatedSurfaceCount,
+  shapeIsOpen,
   type ConfigEditor,
   type RoleConfigModel,
   type WorkspaceDraft,
@@ -167,6 +170,7 @@ const emptyRoleConfigModel = (): RoleConfigModel => ({
   words: "",
   roles: [],
   editor: null,
+  shapeOpen: new Map(),
 });
 
 const emptyConfigEditor = (surface: string, profile: string, config: CellConfig): ConfigEditor => ({
@@ -553,6 +557,28 @@ export class DealerAdminApp extends HHElement {
     }
     if (action === "open-config-editor") {
       this.#openConfigEditor(control?.getAttribute("data-surface") ?? "", control?.getAttribute("data-profile") ?? "");
+      return;
+    }
+    if (action === "toggle-config-shape") {
+      const profile = control?.getAttribute("data-profile") ?? "";
+      if (profile !== "") {
+        const next = new Map(this.#roleConfig.shapeOpen);
+        next.set(profile, !shapeIsOpen(this.#roleConfig, profile));
+        this.#patchRoleConfig({ shapeOpen: next });
+      }
+      return;
+    }
+    if (action === "toggle-config-all") {
+      const next = new Map<string, boolean>();
+      if (allShapesOpen(this.#roleConfig)) {
+        // Close all: a shape with a curation stays open, the others fold.
+        for (const shape of JOB_SHAPES) {
+          if ((curatedSurfaceCount(this.#roleConfig, shape.profile) ?? 0) === 0) next.set(shape.profile, false);
+        }
+      } else {
+        for (const shape of JOB_SHAPES) next.set(shape.profile, true);
+      }
+      this.#patchRoleConfig({ shapeOpen: next });
       return;
     }
     if (action === "close-config-editor") {

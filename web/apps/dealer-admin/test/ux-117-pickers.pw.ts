@@ -130,6 +130,7 @@ test("no dealer-admin form carries a raw id text input or asks the dealer to typ
   // 12. Role configuration editor
   await page.locator('.surface-link[data-surface="role-config"]').click();
   await expect(page.locator('[data-test="config-roles-count"]')).toBeVisible();
+  await openShape(page, "yard");
   await page.locator('[data-test="config-cell-counter-till-yard"]').click();
   await expect(page.locator('[data-test="config-editor"]')).toBeVisible();
   allViolations.push(...(await collectRawIdFields(page, "role-config")));
@@ -268,6 +269,7 @@ test("staff and channel pickers on Audit and Exports: choose by name and send th
 test("role curation item picker: pick from the surface's registered items by kind and name", async ({ page }) => {
   await signInAsDealerAdmin(page);
   await page.locator('.surface-link[data-surface="role-config"]').click();
+  await openShape(page, "yard");
   await page.locator('[data-test="config-cell-counter-till-yard"]').click();
 
   await page.locator('[data-action="config-add-kind"]').selectOption("column");
@@ -494,6 +496,7 @@ test("390 px phone layout: every picker input placeholder and hint fits its box 
 
   // 12. Role configuration editor
   await openSurfaceAt390(page, "role-config", '[data-test="config-roles-count"]');
+  await openShape(page, "yard");
   await page.locator('[data-test="config-cell-counter-till-yard"]').click();
   await expect(page.locator('[data-test="config-editor"]')).toBeVisible();
   clipped.push(...(await collectClippedPickerHints(page, "role-config")));
@@ -594,3 +597,10 @@ test("vendor picker lists only loaded vendors, says 'No vendors yet' when empty,
 
 
 
+
+// UX-119c: a job shape with nothing curated is one line until asked; open it before clicking one of its tiles.
+async function openShape(page: import("@playwright/test").Page, profile: string): Promise<void> {
+  const toggle = page.locator(`[data-test="config-shape-toggle-${profile}"]`);
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}

@@ -76,6 +76,8 @@ for (const size of SIZES) {
 
       // 2. Roles grid and editor
       await openSection(page, "role-config", '[data-test="config-roles-count"]');
+      // UX-119c: every job shape opens first, so the sweep measures every tile.
+      await page.locator('[data-test="config-toggle-all"]').click();
       await page.locator('[data-action="open-config-editor"]').first().click();
       await expect(page.locator('[data-test="config-editor"]')).toBeVisible();
       await take(page, "roles__grid", theme, size.width);

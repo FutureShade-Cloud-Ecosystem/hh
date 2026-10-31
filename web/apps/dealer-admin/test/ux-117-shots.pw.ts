@@ -131,9 +131,17 @@ for (const size of SIZES) {
 
       // 12. Role configuration editor
       await openSection(page, "role-config", '[data-test="config-roles-count"]');
+      await openShape(page, "yard");
       await page.locator('[data-test="config-cell-counter-till-yard"]').click();
       await expect(page.locator('[data-test="config-editor"]')).toBeVisible();
       await take(page, "roles__editor", theme, size.width);
     });
   }
+}
+
+// UX-119c: a job shape with nothing curated is one line until asked; open it before clicking one of its tiles.
+async function openShape(page: import("@playwright/test").Page, profile: string): Promise<void> {
+  const toggle = page.locator(`[data-test="config-shape-toggle-${profile}"]`);
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
 }

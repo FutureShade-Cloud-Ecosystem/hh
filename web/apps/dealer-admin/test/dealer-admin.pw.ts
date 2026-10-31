@@ -246,6 +246,14 @@ async function openRoleConfig(page: import("@playwright/test").Page): Promise<vo
   await page.locator('.surface-link[data-surface="role-config"]').click();
 }
 
+// UX-119c: a job shape with nothing curated is one line until asked, so a case that reads or clicks one of its
+// tiles opens the shape first.
+async function openShape(page: import("@playwright/test").Page, profile: string): Promise<void> {
+  const toggle = page.locator(`[data-test="config-shape-toggle-${profile}"]`);
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+
 test("the role grid reads every job shape on every surface, and the catalog names who holds each shape", async ({ page }) => {
   await openRoleConfig(page);
 
@@ -253,6 +261,7 @@ test("the role grid reads every job shape on every surface, and the catalog name
   // saved; the caption carries the core's own sentence about what curation
   // is and is not.
   await expect(page.locator("[data-test^=config-cell-]")).toHaveCount(130);
+  await openShape(page, "counter");
   await expect(page.locator("[data-test=config-cell-counter-till-counter]")).toHaveText("Standard view");
   await expect(page.locator("[data-test=config-caption]")).toContainText("never grants power");
 
@@ -266,6 +275,7 @@ test("the role grid reads every job shape on every surface, and the catalog name
 
 test("curate one cell, save, and the grid cell counts the row", async ({ page }) => {
   await openRoleConfig(page);
+  await openShape(page, "yard");
   await page.locator('[data-test="config-cell-counter-till-yard"]').click();
   await expect(page.locator("[data-test=config-editor]")).toContainText("What the Yard sees on Counter Till");
   await expect(page.locator("[data-test=config-draft-empty]")).toContainText("Nothing curated here yet");
@@ -289,6 +299,7 @@ test("curate one cell, save, and the grid cell counts the row", async ({ page })
 
 test("your own view saves to the my-items route and reset brings the dealer's back", async ({ page }) => {
   await openRoleConfig(page);
+  await openShape(page, "counter");
   await page.locator('[data-test="config-cell-counter-till-counter"]').click();
 
   await page.locator('[data-action="config-my-add-kind"]').selectOption("chip");
@@ -304,6 +315,7 @@ test("your own view saves to the my-items route and reset brings the dealer's ba
 
 test("the workspace save lands on the my-workspace route and the reset returns the dealer's defaults", async ({ page }) => {
   await openRoleConfig(page);
+  await openShape(page, "counter");
   await page.locator('[data-test="config-cell-quote-desk-counter"]').click();
 
   // The split rides the model; a value the core would refuse is refused in
@@ -334,6 +346,7 @@ test("a frontline caller is refused the role grid, in the core's own words", asy
 test("a refused curation write keeps the editor and says the server's words", async ({ page }) => {
   await page.request.post("/_stub/scenario", { data: { name: "refused-role-config" } });
   await openRoleConfig(page);
+  await openShape(page, "yard");
   await page.locator('[data-test="config-cell-counter-till-yard"]').click();
   await page.locator('[data-action="config-add-kind"]').selectOption("column");
   await page.locator('[data-field="config-add-id"]').selectOption("cost");
