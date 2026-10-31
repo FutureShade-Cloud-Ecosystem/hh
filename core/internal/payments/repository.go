@@ -1331,7 +1331,7 @@ func (r *Repository) checkQuotedDiscounts(ctx context.Context, tx pgx.Tx, allocs
 		allowed := min(roundHalfEvenCents(payable, int64(bps)), dctx.room(row))
 		if row.DiscountDate == nil || row.TermsCode == "" || bps <= 0 || a.DiscountCents < 0 ||
 			a.DiscountCents > allowed || a.AmountCents+a.DiscountCents != payable {
-			return httpx.BadRequestf("invoice %q balance changed; refresh and retry", a.InvoiceID)
+			return httpx.BadRequestf("invoice %q the discount quoted no longer holds; refresh and retry", a.InvoiceID)
 		}
 	}
 	return nil
