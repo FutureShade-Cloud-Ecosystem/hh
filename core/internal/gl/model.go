@@ -178,10 +178,13 @@ type RuleRef struct {
 	AccountOK   bool // resolves to an existing + active account
 }
 
-// ExportRow is one GP-parity export line.
+// ExportRow is one posted export line. PostedAt is the line's journal's posted day in the DEALER's
+// house zone, the day the export files date its entries by, never the UTC day.
 type ExportRow struct {
 	EntryNo     int
 	PostedAt    string
+	PeriodYear  int
+	PeriodMonth int
 	AccountCode string
 	AccountName string
 	DebitCents  int64
@@ -190,7 +193,7 @@ type ExportRow struct {
 }
 
 // The accounting package export's targets (W3 AX-1, decision 1.6): QuickBooks Online first, Sage 50
-// next. The words are the 0454 CHECK vocabulary verbatim; a third package is one more word there,
+// next. The words are the 0464 CHECK vocabulary verbatim; a third package is one more word there,
 // by a later forward migration.
 const (
 	TargetQuickBooksOnline = "QUICKBOOKS_ONLINE"
