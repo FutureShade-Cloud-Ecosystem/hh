@@ -17,9 +17,14 @@ import (
 func TestIntegration_W29AR2B_LandedPayableCountsFromPosting(t *testing.T) {
 	rig := newAPAgingRig(t)
 	reach := BranchReach{BranchIDs: []string{branchTRT}}
-	todayStr := time.Now().In(rig.zone).Format("2006-01-02")
+	// The bill's journal counts from the start of its document day in the house zone, and the
+	// stamps below sit up to three hours before now. Dated today, the bill's instant is the
+	// house midnight, after every stamp and as of instant between 00:00 and 03:00 house time;
+	// dated yesterday it sits before them all, in every window. A landed cost can only be
+	// applied to a posted bill, so the apply instant never precedes the bill's own.
+	billDay := time.Now().In(rig.zone).AddDate(0, 0, -1).Format("2006-01-02")
 
-	po, _ := rig.createReceivedPOAndPostBill(t, "r2b-lc", 40000, todayStr, todayStr)
+	po, _ := rig.createReceivedPOAndPostBill(t, "r2b-lc", 40000, billDay, billDay)
 	lcID := rig.createOpenLandedCost(t, po, 7500, 0)
 
 	// C: the landed cost is created (a DRAFT, nothing posted). A: the apply journal
