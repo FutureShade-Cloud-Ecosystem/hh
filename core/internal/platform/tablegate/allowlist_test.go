@@ -121,6 +121,21 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "billing",
+		file:   "core/internal/billing/finance_charge.go",
+		tables: []string{"customers", "locations", "payment_allocations", "payment_reapplications", "payments"},
+		// Wave 3 FC-1: the monthly finance charge run measures each
+		// customer's overdue balance by the aging's own dated rebuild (the
+		// payments module's allocations, contra allocations and
+		// reapplications, the same reconstruction credit_repository.go's
+		// aging runs, read only), checks the run's branch through the
+		// locations anchor, and the waiver doors check the customer exists.
+		// Its own finance_charge_runs, finance_charge_waivers, invoices and
+		// customer_transactions rows are billing's; the charge document
+		// itself rides the invoice writer's own statements.
+		reason: "the finance charge run's candidates read rebuilds each invoice's balance at the month end instant from the dated payment acts (the aging's own expression, read only), the run's branch resolves through the locations anchor, and the waiver doors' existence check reads the customer row; read only, the writes are billing's own tables and the writer's",
+	},
+	{
+		module: "billing",
 		file:   "core/internal/billing/ar_landing_store.go",
 		tables: []string{"credit_holds", "customer_contacts", "customers"},
 		// the file's own header: every read here is a projection for the

@@ -64,6 +64,21 @@ func (s *StaffService) CreateQuote(ctx context.Context, in QuoteCreate) (StaffQu
 	if !caller.CanAccessBranch(in.BranchID) {
 		return StaffQuoteView{}, ErrForbidden
 	}
+	// JA-2: a quote may name the job it is written for. The job is the customer module's own row,
+	// so the fence is asked through the seam: another customer's job, a CLOSED job and a job
+	// outside the caller's reach are refused there, in words, before this quote exists.
+	in.JobID = strings.TrimSpace(in.JobID)
+	if in.JobID != "" {
+		if !looksLikeUUID(in.JobID) {
+			return StaffQuoteView{}, httpx.BadRequestf("quote: job_id must be a job id, pick a job from the customer's jobs")
+		}
+		if s.jobFence == nil {
+			return StaffQuoteView{}, ErrJobFenceNotWired
+		}
+		if err := s.jobFence.JobForNewDocument(ctx, nil, in.CustomerID, in.JobID); err != nil {
+			return StaffQuoteView{}, err
+		}
+	}
 	vu, err := parseValidUntil(in.ValidUntil)
 	if err != nil {
 		return StaffQuoteView{}, err

@@ -58,8 +58,15 @@ const (
 // Fulfillment == "" means UNSPECIFIED, not PICKUP. The distinction is the whole point: unspecified
 // leaves the column out of the INSERT and lets 0008's DEFAULT 'PICKUP' apply, so a caller that never
 // heard of this field produces the identical row it produced before DIB-483.
+//
+// JobID is the JA-2 shape of the same rule: "" means the request named no job, and the QUOTE'S OWN
+// job rides to the order; a named job is fenced (job_fence.go) and wins over the quote's. Either
+// way, a conversion with no job at all writes no job_id, the row it wrote before JA-2.
 type ConvertOptions struct {
 	Fulfillment string
+	// JobID is the job the conversion's order is opened on (JA-2), resolved and fenced by
+	// resolveConvertJob before the store is reached.
+	JobID string
 
 	// IdempotencyKey is the staff door's optional Idempotency-Key (FROM-PRINCIPAL 121), a UUID as the
 	// handler read it. StaffService.ConvertQuote validates and lowercases it and hands the transactional
@@ -109,17 +116,21 @@ type convertStore interface {
 // else; there is exactly one `store.Convert(` call site in this package outside tests, and
 // convert_seam_test.go fails the build's intent if a second one appears.
 //
-// The two things it does beyond delegating are the two things that must not diverge between doors:
+// The three things it does beyond delegating are the three things that must not diverge between doors:
 //
 //   - it grades the fulfilment choice (so a bad value is the same 400 with the same words at both
 //     doors, not a 400 at one and a CHECK-constraint 500 at the other);
+//   - it fixes and fences the job the order is opened on (JA-2, job_fence.go): the named job, else
+//     the quote's own, held to the customer's own fence before anything is written, so a job that
+//     closed between the quote and its conversion refuses the conversion at either door;
 //   - it seeds the DIB-159 order-change history with the creation transition ""→DRAFT, best-effort,
 //     AFTER the conversion has committed. A counter-converted order and a portal-converted order
 //     therefore have the same timeline, which is the whole reason that history exists.
 //
-// actorID is who to attribute the creation row to: the customer for the portal door, the staff user
-// for the counter door. It never affects the write, only the audit attribution.
-func runConvert(ctx context.Context, store convertStore, rec audit.Recorder,
+// fence is the door's job fence; the staff door and the portal door each carry their own. actorID is
+// who to attribute the creation row to: the customer for the portal door, the staff user for the
+// counter door. It never affects the write, only the audit attribution.
+func runConvert(ctx context.Context, store convertStore, rec audit.Recorder, fence JobFence,
 	customerID, quoteID, actorID string, opt ConvertOptions) (ConvertResult, error) {
 
 	if customerID == "" || quoteID == "" {
@@ -130,6 +141,10 @@ func runConvert(ctx context.Context, store convertStore, rec audit.Recorder,
 		return ConvertResult{}, err
 	}
 	opt.Fulfillment = f
+	opt.JobID, err = resolveConvertJob(ctx, store, fence, customerID, quoteID, opt.JobID)
+	if err != nil {
+		return ConvertResult{}, err
+	}
 
 	res, err := store.Convert(ctx, customerID, quoteID, opt)
 	if err != nil {
@@ -196,6 +211,21 @@ func fulfillmentColumns(f string) (cols, vals string, err error) {
 	}
 }
 
+// jobColumns renders the job the conversion names into the two SQL fragments Repository.Convert
+// splices into its INSERT, beside the fulfilment fragments. No job named returns two empty
+// strings, so the statement is character-for-character the one that shipped before JA-2, the same
+// zero-delta property fulfillmentColumns carries and TestConvert_FulfillmentDefaultIsByteIdentical
+// pins.
+//
+// The value is a BOUND PARAMETER ($3, a uuid the fence already vouched for), never spliced text;
+// what is spliced is the constant column name only.
+func jobColumns(jobNamed bool) (cols, vals string) {
+	if !jobNamed {
+		return "", ""
+	}
+	return ", job_id", ", $3::uuid"
+}
+
 // convertInsertSQL builds the conversion's order-header INSERT.
 //
 // It is a named function rather than an inline string so the zero-delta test can hold it against a
@@ -227,10 +257,14 @@ func fulfillmentColumns(f string) (cols, vals string, err error) {
 //
 // The two new columns are spliced BEFORE the fulfilment splice points, so the positional pairing
 // fulfillmentColumns depends on is untouched.
-func convertInsertSQL(cols, vals string) string {
-	return `INSERT INTO orders (order_no, customer_id, branch_id, quote_id, subtotal_cents, tax_cents, total_cents, freight_cents, quoted_freight_cents, org_id` + cols + `)
+//
+// JA-2 adds the JOB splice, before the fulfilment points for the same reason: jobCols/jobVals are
+// empty when no job is named (the byte-identical baseline), and a named job is a bound parameter
+// spliced after the org anchor, keeping the fulfilment splice LAST in both lists.
+func convertInsertSQL(cols, vals, jobCols, jobVals string) string {
+	return `INSERT INTO orders (order_no, customer_id, branch_id, quote_id, subtotal_cents, tax_cents, total_cents, freight_cents, quoted_freight_cents, org_id` + jobCols + cols + `)
 		 SELECT next_order_no(branch_id), customer_id, branch_id, id, subtotal_cents, tax_cents, total_cents, delivery_fee_cents, delivery_fee_cents,
-		        (SELECT l.org_id FROM locations l WHERE l.id = quotes.branch_id)` + vals + `
+		        (SELECT l.org_id FROM locations l WHERE l.id = quotes.branch_id)` + jobVals + vals + `
 		 FROM quotes WHERE id=$2 AND customer_id=$1
 		 RETURNING id::text, order_no::text`
 }

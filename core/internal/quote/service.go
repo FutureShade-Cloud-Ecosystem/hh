@@ -34,6 +34,10 @@ type quoteStore interface {
 type Service struct {
 	store quoteStore
 	audit audit.Recorder
+	// jobFence is the customer module's job read (JA-2, job_fence.go). The portal door names no
+	// job itself; its conversions inherit the quote's own, and the fence holds that job to the
+	// open rule at the moment the order is opened. Nil refuses an inherited job in words.
+	jobFence JobFence
 }
 
 func NewService(store quoteStore) *Service { return &Service{store: store} }
@@ -93,7 +97,7 @@ func (s *Service) Reject(ctx context.Context, customerID, quoteID string) (Quote
 // opt carries the optional fulfilment choice (PICKUP / WILL_CALL). Its zero value is UNSPECIFIED, and
 // an unspecified conversion writes exactly the row it wrote before DIB-483.
 func (s *Service) Convert(ctx context.Context, customerID, quoteID string, opt ConvertOptions) (ConvertResult, error) {
-	return runConvert(ctx, s.store, s.audit, customerID, quoteID, customerID, opt)
+	return runConvert(ctx, s.store, s.audit, s.jobFence, customerID, quoteID, customerID, opt)
 }
 
 // validStatus reports whether status is one of the quotes CHECK values (0008).

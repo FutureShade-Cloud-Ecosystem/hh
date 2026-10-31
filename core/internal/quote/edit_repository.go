@@ -450,16 +450,44 @@ func (r *Repository) CreateQuote(ctx context.Context, in QuoteCreate) (id, quote
 		return "", "", errNoDB
 	}
 	err = r.pool.QueryRow(ctx, quoteSeqCTE+`
-		INSERT INTO quotes (quote_no, customer_id, branch_id, status, valid_until, created_by, salesperson_id, org_id, seq)
+		INSERT INTO quotes (quote_no, customer_id, branch_id, status, valid_until, created_by, salesperson_id, org_id, seq, job_id)
 		SELECT '#Q-' || nextval('quote_no_seq'), $1::uuid, $2::uuid, 'DRAFT', NULLIF($3,'')::date, NULLIF($4,'')::uuid,
 		       NULLIF($4,'')::uuid,
-		       (SELECT org_id FROM locations WHERE id = $2::uuid), (SELECT next_value FROM qseq)
+		       (SELECT org_id FROM locations WHERE id = $2::uuid), (SELECT next_value FROM qseq), NULLIF($5,'')::uuid
 		RETURNING id::text, quote_no::text`,
-		in.CustomerID, in.BranchID, in.ValidUntil, in.CreatedBy).Scan(&id, &quoteNo)
+		in.CustomerID, in.BranchID, in.ValidUntil, in.CreatedBy, in.JobID).Scan(&id, &quoteNo)
 	if err != nil {
 		return "", "", fmt.Errorf("create quote: %w", err)
 	}
 	return id, quoteNo, nil
+}
+
+// QuoteJobID reads the job a quote names, "" when it names none (JA-2). It is the read the
+// conversion's job resolution uses: a quote written for a job converts to an order on that job
+// unless the desk names another at the door.
+//
+// tx is the caller's transaction when the conversion runs inside one (the counter's payment door,
+// QD5); the read rides it, because a pool read there would wait for a second connection the pool
+// cannot give. nil reads the pool.
+func (r *Repository) QuoteJobID(ctx context.Context, tx pgx.Tx, quoteID string) (string, error) {
+	q := interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	}(r.pool)
+	if tx != nil {
+		q = tx
+	} else if r.pool == nil {
+		return "", errNoDB
+	}
+	var jobID string
+	err := q.QueryRow(ctx,
+		`SELECT COALESCE(job_id::text, '') FROM quotes WHERE id = $1`, quoteID).Scan(&jobID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("read the job of quote %q: %w", quoteID, err)
+	}
+	return jobID, nil
 }
 
 // - staff reads -

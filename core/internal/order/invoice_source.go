@@ -50,6 +50,9 @@ type InvoiceFacts struct {
 	OrderNo    string
 	CustomerID string
 	BranchID   string
+	// JobID is the job the order was opened on (JA-2), "" when it names none. The order's job
+	// reaches its invoice: billing writes it on the document and dates it by the job's own terms.
+	JobID string
 	// TermsDays is the customer's payment terms, passed through VERBATIM: 0 is the customer's own
 	// Cash On Demand answer and stays 0 (the invoice is due on issue); only a missing customer row
 	// resolves none, spelled negative, and billing applies its own default.
@@ -167,11 +170,11 @@ func orderBillingHeaderOn(ctx context.Context, q invoiceQuerier, orderID string)
 	var f InvoiceFacts
 	f.OrderID = orderID
 	err := q.QueryRow(ctx, `
-SELECT o.order_no::text, o.customer_id::text, o.branch_id::text,
+SELECT o.order_no::text, o.customer_id::text, o.branch_id::text, COALESCE(o.job_id::text, ''),
        COALESCE(c.payment_terms_days, -1)
   FROM orders o
   LEFT JOIN customers c ON c.id = o.customer_id
- WHERE o.id = $1`, orderID).Scan(&f.OrderNo, &f.CustomerID, &f.BranchID, &f.TermsDays)
+ WHERE o.id = $1`, orderID).Scan(&f.OrderNo, &f.CustomerID, &f.BranchID, &f.JobID, &f.TermsDays)
 	if err != nil {
 		return InvoiceFacts{}, fmt.Errorf("order: invoice header for %s: %w", orderID, err)
 	}

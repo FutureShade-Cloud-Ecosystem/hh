@@ -98,6 +98,10 @@ type CreditMemoJournal struct {
 	ARCents      int64
 	RevenueCents int64
 	TaxCents     int64
+	// ReversesSourceKind is the source kind of the invoice the memo reverses ("" for a standalone
+	// credit). A memo against a FINANCE_CHARGE document debits finance charge income, never sales
+	// revenue, because that is the account the charge credited. Every other kind is unchanged.
+	ReversesSourceKind string
 }
 
 // Journal roles a reversing entry moves. Roles, never account codes, see the header.
@@ -105,6 +109,9 @@ const (
 	RoleAR      = "ar"
 	RoleRevenue = "revenue"
 	RoleTax     = "tax"
+	// RoleFinanceCharge is the income role a finance charge document credited (posting rule
+	// invoice.finalized/finance_charge, account 4220); its reversal debits the same role.
+	RoleFinanceCharge = "finance_charge"
 )
 
 // SupplierDepositNotCreditable refuses a credit memo against a supplier
@@ -161,6 +168,9 @@ func (j CreditMemoJournal) ReversingLegs() []JournalLeg { return j.ReversingLegs
 // ("HST reversed", "Sales tax reversed"). The amounts and roles do not depend on the word.
 func (j CreditMemoJournal) ReversingLegsFor(taxWord string) []JournalLeg {
 	legs := []JournalLeg{{Role: RoleRevenue, DebitCents: j.RevenueCents, Memo: "revenue reversed"}}
+	if j.ReversesSourceKind == SourceFinanceCharge {
+		legs = []JournalLeg{{Role: RoleFinanceCharge, DebitCents: j.RevenueCents, Memo: "finance charge reversed"}}
+	}
 	if j.TaxCents != 0 {
 		legs = append(legs, JournalLeg{Role: RoleTax, DebitCents: j.TaxCents, Memo: taxWord + " reversed"})
 	}
@@ -175,6 +185,9 @@ type CreditMemoInput struct {
 	CustomerID string
 	BranchID   string
 	OrderID    string
+	// JobID is the job the credit is opened on (JA-2), "" when the credit belongs to the account
+	// as a whole. Fenced by the route before the memo is raised; carried onto the document.
+	JobID string
 	// ReversesInvoiceID selects REVERSAL mode: mirror this document, negated. Empty ⇒ ACCOMMODATION.
 	ReversesInvoiceID string
 	// AmountCents is a POSITIVE magnitude, the sign is this file's business, never the caller's, so
@@ -243,12 +256,13 @@ func (w *InvoiceWriter) IssueCreditMemo(ctx context.Context, in CreditMemoInput)
 	if w.glPoster != nil {
 		jid, perr := w.glPoster.PostCreditMemoJournal(ctx, CreditMemoJournal{
 			CreditMemoID: doc.InvoiceID, CreditMemoNo: doc.InvoiceNo, BranchID: in.BranchID,
-			IdempotencyKey: creditMemoJournalKey(doc.InvoiceID),
-			Memo:           "Credit memo " + doc.InvoiceNo,
-			OccurredAt:     w.now(),
-			ARCents:        plan.subtotal + plan.tax,
-			RevenueCents:   plan.subtotal,
-			TaxCents:       plan.tax,
+			IdempotencyKey:     creditMemoJournalKey(doc.InvoiceID),
+			Memo:               "Credit memo " + doc.InvoiceNo,
+			OccurredAt:         w.now(),
+			ARCents:            plan.subtotal + plan.tax,
+			RevenueCents:       plan.subtotal,
+			TaxCents:           plan.tax,
+			ReversesSourceKind: plan.origSourceKind,
 		})
 		if perr != nil {
 			// Reported, not fatal, see the doc comment. The memo exists; the journal is chaseable by
@@ -268,6 +282,8 @@ type creditPlan struct {
 	tax      int64
 	lines    []OrderInvoiceLine // positive magnitudes; negated at insert
 	origNo   string
+	// origSourceKind is the reversed invoice's source kind, carried to the memo's journal.
+	origSourceKind string
 	// THE ROOM: what the invoice has left to credit, before tax and with it (SF-2e). A credit
 	// against an invoice is capped at the room, so the room is the figure a person needs to see
 	// before typing an amount; the quote door answers it, and the desk shows it. Zero for a
@@ -359,6 +375,7 @@ SELECT invoice_no::text, doc_type, source_kind, customer_id::text, branch_id::te
 		// releases it, whole or not at all.
 		return creditPlan{}, &SupplierDepositNotCreditable{InvoiceNo: p.origNo}
 	}
+	p.origSourceKind = sourceKind
 	if in.CustomerID != "" && in.CustomerID != customerID {
 		return creditPlan{}, httpx.BadRequestf("the credit memo's customer must match the invoice it reverses")
 	}
@@ -540,16 +557,16 @@ func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput
 		// is drawn by 0422's trg_sync_seq_draw on this INSERT; no explicit draw is added here.
 		// Sign flipped HERE, once, for the whole file.
 		err := tx.QueryRow(ctx, `
-INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
+INSERT INTO invoices (invoice_no, customer_id, order_id, job_id, branch_id, status, issue_date, due_date,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
                       doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id, org_id)
-VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $3, 'FINALIZED', $4, $4,
+VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $12, $3, 'FINALIZED', $4, $4,
         $5, $6, $7, $7, now(), 'CREDIT_MEMO', $8, $9, FALSE, $10,
         $11)
 RETURNING id::text, invoice_no`,
 			customerID, nullUUID(in.OrderID), branchID, issueDate,
 			-plan.subtotal, -plan.tax, -total,
-			sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID), orgID,
+			sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID), orgID, nullUUID(in.JobID),
 		).Scan(&id, &no)
 		if err != nil {
 			return fmt.Errorf("insert credit memo: %w", err)

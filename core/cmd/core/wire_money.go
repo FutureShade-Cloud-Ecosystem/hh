@@ -240,7 +240,11 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithStockReserver(w5aQuoteStockReserver{svc: inventorySvc}).
 		WithAvailability(w5aQuoteAvailability{svc: inventorySvc}).
 		WithSoftHoldExpiry(w6cQuoteSoftHoldExpiry{svc: orderSvc}).
-		WithPositionGate(billing.NewAccountPositionGate(billing.NewRepository(pool)))
+		WithPositionGate(billing.NewAccountPositionGate(billing.NewRepository(pool))).
+		// Wave 3 JA-2: the job fence. A quote may name the job it is written for, and the
+		// conversion's order picks one; both are held to the customer module's own rules, on the
+		// caller's transaction when the payment door carries one.
+		WithJobFence(newQuoteJobFence(pool))
 	// QD-5: the counter's payment door on a converted quote's order. The quote module declares
 	// the two seams; the order and billing and payments modules answer them here and the quote
 	// package never imports any of the three.
@@ -892,7 +896,7 @@ func agreedFactsFor(f order.InvoiceFacts, err error) (billing.OrderInvoiceFacts,
 	}
 	out := billing.OrderInvoiceFacts{
 		OrderID: f.OrderID, OrderNo: f.OrderNo, CustomerID: f.CustomerID, BranchID: f.BranchID,
-		TermsDays: f.TermsDays, TaxReasonCode: f.TaxReasonCode, ClosesOrder: true,
+		JobID: f.JobID, TermsDays: f.TermsDays, TaxReasonCode: f.TaxReasonCode, ClosesOrder: true,
 		FreightCents: f.FreightCents, AgreedTaxCents: f.AgreedTaxCents,
 	}
 	out.Lines = make([]billing.OrderInvoiceLine, 0, len(f.Lines))

@@ -736,6 +736,7 @@ type BillingCreditMemoInput struct {
 	Reason         string  `json:"reason"`
 	GlAccount      *string `json:"gl_account,omitempty"`
 	IdempotencyKey *string `json:"idempotency_key,omitempty"`
+	JobId          *string `json:"job_id,omitempty"`
 }
 
 type BillingCreditMemoQuoteInput struct {
@@ -5881,6 +5882,7 @@ type PosSaleInput struct {
 	Notes                string               `json:"notes"`
 	PoJobRef             *string              `json:"po_job_ref,omitempty"`
 	SalespersonId        *string              `json:"salesperson_id,omitempty"`
+	JobId                *string              `json:"job_id,omitempty"`
 	JobAddress           *string              `json:"job_address,omitempty"`
 	JobReference         *string              `json:"job_reference,omitempty"`
 	CashTenderedCents    *int64               `json:"cash_tendered_cents,omitempty"`
@@ -8664,6 +8666,7 @@ type QuoteCreateRequest struct {
 	CustomerId string  `json:"customer_id"`
 	BranchId   string  `json:"branch_id"`
 	ValidUntil *string `json:"valid_until,omitempty"`
+	JobId      *string `json:"job_id,omitempty"`
 }
 
 type QuoteValidUntilWrite struct {
@@ -8777,6 +8780,7 @@ type QuoteDecisionResult struct {
 
 type QuoteConvertRequest struct {
 	Fulfillment *string `json:"fulfillment,omitempty"`
+	JobId       *string `json:"job_id,omitempty"`
 }
 
 type QuoteConvertResult struct {
@@ -8790,6 +8794,7 @@ type QuoteOrderPaymentRequest struct {
 	Reference      string  `json:"reference"`
 	IdempotencyKey string  `json:"idempotency_key"`
 	Fulfillment    *string `json:"fulfillment,omitempty"`
+	JobId          *string `json:"job_id,omitempty"`
 }
 
 type QuoteOrderPaymentResult struct {
