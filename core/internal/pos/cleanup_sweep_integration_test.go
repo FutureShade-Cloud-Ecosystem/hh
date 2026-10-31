@@ -3,7 +3,7 @@
 package pos
 
 // cleanup_sweep_integration_test.go, plan row 0.39: every integration leg in this package
-// leaves the shared database exactly as it found it.
+// leaves the shared database as it found it.
 //
 // Why: CI runs every package on one database in order. The pos legs plant customers, orders,
 // invoices, payments, journals and more, and their own cleanups either deleted the customer
@@ -11,12 +11,54 @@ package pos
 // deleted the rest at all. The rows left behind (18 zero day CONTRACTOR customers among them)
 // changed what later packages' legs picked first (printing, quoteassist).
 //
-// How: intPool(t) calls registerLegSweep, which records the primary key of every row in every
-// table that has one, and at cleanup deletes each row that was not there, children before
-// parents (the foreign key graph, read from the catalog), in one transaction. Any delete that
-// is refused fails the test loudly and names the table. The sweep is registered before a leg's
-// own cleanups, so it runs after them (cleanups run last in, first out): a leg's own deletes
-// still run first, and the sweep catches whatever they did not.
+// How: intPool(t) calls registerLegSweep, which records, for every table in a user schema that
+// has a primary key, the key of each row and a hash of the whole row (md5 of row_to_json). At
+// cleanup it deletes each row whose key was not there, children before parents (the foreign key
+// graph, read from the catalog), in one transaction. The sweep is registered before a leg's own
+// cleanups, so it runs after them (cleanups run last in, first out): a leg's own deletes still
+// run first, and the sweep catches whatever they did not.
+//
+// What the sweep guarantees, exactly:
+//   - Every row added since the snapshot, in a keyed table, is deleted. A delete the database
+//     refuses fails the leg and names the table.
+//   - After the sweep, a second full read is compared with the snapshot. A row that existed at
+//     the snapshot and has since been CHANGED (any column) or DELETED fails the leg, naming
+//     the table and the key. The sweep does not restore such a row: the leg must put it back
+//     itself, in its own cleanup, which runs first.
+//   - A row still present that was not there at the snapshot fails the leg too.
+//   - A short list of tables is RESTORED by the sweep rather than failed (sweepRestorable). Each
+//     is a table the code under test changes on purpose in nearly every leg, or that a freshly
+//     seeded database has changed under it once, so asking every leg to put it back would repeat
+//     the same cleanup in a hundred places:
+//     scope_sequences, order_no_sequences, gl_entry_no_sequences: the numbering counters;
+//     pos_policy: the settings row, whose updated_at moves on every save, even one that puts the
+//     values back; events_outbox: the dispatcher publishes every pending event, seeded ones
+//     included, whenever a leg finalizes an invoice; users, user_roles, user_branch_grants,
+//     locations: the Trenton world's StampOrgScope stamps the demo org onto the seeded rows the
+//     first time it runs on a freshly seeded database.
+//     The sweep writes back the row image it took at the snapshot, after it has deleted the
+//     added rows. Restoring a counter is safe because every row that took a number from it was
+//     added by the leg and is gone. Nothing else is restored.
+//   - A table with no primary key, and a partitioned parent, cannot be swept by a safe key.
+//     Those are covered by row count only: a leg that leaves such a table with a different
+//     count fails, naming it. They are never deleted from.
+//   - Only the sweep's own connection pool's database is covered, and only when legs run one at
+//     a time (go test -p 1, no t.Parallel): the sweep deletes EVERY row added since its snapshot,
+//     including a concurrent leg's live rows. registerLegSweep fails a leg that starts while
+//     another leg's sweep is live.
+//   - Data is compared as text and hashed, so a collision is possible in principle and the fast
+//     path (below) compares a count and a sum of hashes per table; neither is a cryptographic
+//     proof. It is a tripwire for ordinary test debris, not an audit.
+//
+// The final check re-reads only the tables that moved during the leg (the ones the sweep
+// touched). A table that did not move and is changed by the sweep's own deletes, through an
+// ON DELETE cascade or a trigger, is not re-read.
+//
+// Cost: the first leg reads every keyed table in full (keys and row hashes) and keeps the result.
+// Every leg then takes a per table fingerprint (count and sum of row hashes, 330 small rows
+// back, no keys shipped) at the start and the end. A leg whose end fingerprint equals its start
+// fingerprint did nothing the sweep must undo, and skips the full reads. A later leg whose
+// start fingerprint equals the kept full snapshot's reuses it instead of reading again.
 
 import (
 	"context"
@@ -26,37 +68,168 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type sweepTable struct {
-	name    string
-	keyExpr string // the row's primary key as one text value
+	name    string   // schema qualified, quoted for SQL
+	keyCols []string // quoted primary key columns
+	keyExpr string   // the row's primary key as one text value: ROW(k1, k2)::text
+	setCols []string // quoted non key columns, for the restore
+}
+
+// sweepRestorable names the tables the sweep restores from the snapshot's row image instead of
+// failing the leg (schema qualified, as the catalog names them). See the file header.
+var sweepRestorable = map[string]bool{
+	"public.scope_sequences":       true,
+	"public.order_no_sequences":    true,
+	"public.gl_entry_no_sequences": true,
+	"public.pos_policy":            true,
+	"public.events_outbox":         true,
+	"public.users":                 true,
+	"public.user_roles":            true,
+	"public.user_branch_grants":    true,
+	"public.locations":             true,
+}
+
+// keyExprOf is the key expression with every column qualified by alias.
+func (tb sweepTable) keyExprOf(alias string) string {
+	cols := make([]string, len(tb.keyCols))
+	for i, c := range tb.keyCols {
+		cols[i] = alias + "." + c
+	}
+	return "ROW(" + strings.Join(cols, ", ") + ")::text"
 }
 
 type sweepPlan struct {
-	tables []sweepTable // children before parents
+	tables    []sweepTable // keyed tables, children before parents
+	countOnly []string     // no primary key, or a partitioned parent: covered by row count
+}
+
+// sweepFP is a table's fingerprint: its row count and the sum of its row hashes (empty for the
+// count only tables).
+type sweepFP struct {
+	n    int64
+	hash string
+}
+
+type sweepSnap struct {
+	rows   map[string]map[string]string // table -> key -> row hash
+	images map[string]map[string]string // restorable table -> key -> row_to_json
+	fp     map[string]sweepFP
 }
 
 var (
 	sweepPlanOnce sync.Once
 	sweepPlanVal  *sweepPlan
 	sweepPlanErr  error
+
+	sweepMu   sync.Mutex
+	sweepLive = map[string]int{} // test name -> live sweeps, the tripwire for overlapping legs
+	sweepKept *sweepSnap         // the last full snapshot read, reused while the fingerprint matches
 )
 
-// sweepCatalog reads the tables that have a primary key and orders them children first.
+// sweepOrder orders the keyed tables children first. parentsOf maps a table to the tables its
+// foreign keys point at. A foreign key cycle emits only the tables that are on a cycle, so a
+// refused delete names a cycle member and never a table downstream of it.
+func sweepOrder(names []string, parentsOf map[string]map[string]bool) []string {
+	sort.Strings(names)
+	known := map[string]bool{}
+	for _, n := range names {
+		known[n] = true
+	}
+	pointedAtBy := map[string]int{}
+	for _, child := range names {
+		for parent := range parentsOf[child] {
+			if known[parent] {
+				pointedAtBy[parent]++
+			}
+		}
+	}
+	done := map[string]bool{}
+	var ordered []string
+	emit := func(n string) {
+		done[n] = true
+		ordered = append(ordered, n)
+		for parent := range parentsOf[n] {
+			if known[parent] {
+				pointedAtBy[parent]--
+			}
+		}
+	}
+	for len(ordered) < len(names) {
+		progressed := false
+		for _, n := range names {
+			if done[n] || pointedAtBy[n] > 0 {
+				continue
+			}
+			emit(n)
+			progressed = true
+		}
+		if progressed {
+			continue
+		}
+		// Stuck: every remaining table is pointed at by another remaining table. Emit the ones
+		// that lie on a cycle (they can reach themselves going child to parent through the
+		// remaining tables); the tables above the cycle then become ready.
+		var cycle []string
+		for _, n := range names {
+			if done[n] {
+				continue
+			}
+			seen := map[string]bool{}
+			stack := []string{n}
+			onCycle := false
+			for len(stack) > 0 && !onCycle {
+				cur := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				for p := range parentsOf[cur] {
+					if p == n {
+						onCycle = true
+						break
+					}
+					if known[p] && !done[p] && !seen[p] {
+						seen[p] = true
+						stack = append(stack, p)
+					}
+				}
+			}
+			if onCycle {
+				cycle = append(cycle, n)
+			}
+		}
+		if len(cycle) == 0 { // not reachable; never loop forever
+			for _, n := range names {
+				if !done[n] {
+					cycle = append(cycle, n)
+					break
+				}
+			}
+		}
+		for _, n := range cycle {
+			emit(n)
+		}
+	}
+	return ordered
+}
+
+// sweepCatalog reads the tables in every user schema and splits them into the keyed tables
+// (ordered children first) and the count only tables.
 func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
 	sweepPlanOnce.Do(func() {
+		const rel = `format('%I.%I', n.nspname, c.relname)`
+		const userSchema = `n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'`
 		keys := map[string][]string{}
 		rows, err := pool.Query(ctx, `
-			SELECT c.relname, a.attname
+			SELECT `+rel+`, a.attname
 			  FROM pg_class c
-			  JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+			  JOIN pg_namespace n ON n.oid = c.relnamespace AND `+userSchema+`
 			  JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary
 			  JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
 			  JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
-			 WHERE c.relkind = 'r' AND c.relname <> 'schema_migrations'
-			 ORDER BY c.relname, k.ord`)
+			 WHERE c.relkind = 'r' AND NOT (n.nspname = 'public' AND c.relname = 'schema_migrations')
+			 ORDER BY 1, k.ord`)
 		if err != nil {
 			sweepPlanErr = fmt.Errorf("read primary keys: %w", err)
 			return
@@ -76,11 +249,46 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
 			return
 		}
 
+		// Tables the sweep cannot delete from by a safe key: no primary key, or partitioned.
+		plan := &sweepPlan{}
+		crows, err := pool.Query(ctx, `
+			SELECT `+rel+`
+			  FROM pg_class c
+			  JOIN pg_namespace n ON n.oid = c.relnamespace AND `+userSchema+`
+			 WHERE c.relkind IN ('r', 'p')
+			   AND NOT (n.nspname = 'public' AND c.relname = 'schema_migrations')
+			   AND NOT (c.relkind = 'r' AND EXISTS
+			        (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary))
+			 ORDER BY 1`)
+		if err != nil {
+			sweepPlanErr = fmt.Errorf("read tables without a key: %w", err)
+			return
+		}
+		for crows.Next() {
+			var tbl string
+			if err := crows.Scan(&tbl); err != nil {
+				crows.Close()
+				sweepPlanErr = fmt.Errorf("scan tables without a key: %w", err)
+				return
+			}
+			plan.countOnly = append(plan.countOnly, tbl)
+		}
+		crows.Close()
+		if err := crows.Err(); err != nil {
+			sweepPlanErr = fmt.Errorf("tables without a key: %w", err)
+			return
+		}
+
 		// child -> parents among the keyed tables (self references do not order anything).
 		parentsOf := map[string]map[string]bool{}
 		frows, err := pool.Query(ctx, `
-			SELECT conrelid::regclass::text, confrelid::regclass::text
-			  FROM pg_constraint WHERE contype = 'f'`)
+			SELECT format('%I.%I', cn.nspname, cc.relname), format('%I.%I', pn.nspname, pc.relname)
+			  FROM pg_constraint f
+			  JOIN pg_class cc ON cc.oid = f.conrelid
+			  JOIN pg_namespace cn ON cn.oid = cc.relnamespace
+			  JOIN pg_class pc ON pc.oid = f.confrelid
+			  JOIN pg_namespace pn ON pn.oid = pc.relnamespace
+			 WHERE f.contype = 'f'`)
 		if err != nil {
 			sweepPlanErr = fmt.Errorf("read foreign keys: %w", err)
 			return
@@ -92,7 +300,6 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
 				sweepPlanErr = fmt.Errorf("scan foreign keys: %w", err)
 				return
 			}
-			child, parent = strings.TrimPrefix(child, "public."), strings.TrimPrefix(parent, "public.")
 			if child == parent {
 				continue
 			}
@@ -107,105 +314,242 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool) (*sweepPlan, error) {
 			return
 		}
 
-		// Children first: a table is ready to delete once every keyed table that points at it is done.
+		// The non key columns of the restorable tables, for the restore's UPDATE.
+		setCols := map[string][]string{}
+		for n := range sweepRestorable {
+			cr, err := pool.Query(ctx, `
+				SELECT a.attname FROM pg_attribute a
+				 WHERE a.attrelid = $1::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = ''
+				 ORDER BY a.attnum`, n)
+			if err != nil {
+				sweepPlanErr = fmt.Errorf("read columns of %s: %w", n, err)
+				return
+			}
+			isKey := map[string]bool{}
+			for _, k := range keys[n] {
+				isKey[k] = true
+			}
+			for cr.Next() {
+				var c string
+				if err := cr.Scan(&c); err != nil {
+					cr.Close()
+					sweepPlanErr = fmt.Errorf("scan columns of %s: %w", n, err)
+					return
+				}
+				if !isKey[c] {
+					setCols[n] = append(setCols[n], pgx.Identifier{c}.Sanitize())
+				}
+			}
+			cr.Close()
+			if err := cr.Err(); err != nil {
+				sweepPlanErr = fmt.Errorf("columns of %s: %w", n, err)
+				return
+			}
+			if _, ok := keys[n]; !ok {
+				sweepPlanErr = fmt.Errorf("restorable table %s has no primary key or does not exist", n)
+				return
+			}
+		}
+
 		names := make([]string, 0, len(keys))
 		for n := range keys {
 			names = append(names, n)
 		}
-		sort.Strings(names)
-		pointedAtBy := map[string]int{}
-		for _, child := range names {
-			for parent := range parentsOf[child] {
-				if _, ok := keys[parent]; ok {
-					pointedAtBy[parent]++
-				}
-			}
-		}
-		done := map[string]bool{}
-		var ordered []string
-		for len(ordered) < len(names) {
-			progressed := false
-			for _, n := range names {
-				if done[n] || pointedAtBy[n] > 0 {
-					continue
-				}
-				done[n] = true
-				ordered = append(ordered, n)
-				progressed = true
-				for parent := range parentsOf[n] {
-					if _, ok := keys[parent]; ok {
-						pointedAtBy[parent]--
-					}
-				}
-			}
-			if !progressed { // a cycle: take the rest in name order, a refused delete will say which
-				for _, n := range names {
-					if !done[n] {
-						done[n] = true
-						ordered = append(ordered, n)
-					}
-				}
-			}
-		}
-
-		plan := &sweepPlan{}
-		for _, n := range ordered {
+		for _, n := range sweepOrder(names, parentsOf) {
 			cols := make([]string, len(keys[n]))
 			for i, c := range keys[n] {
-				cols[i] = fmt.Sprintf(`%q::text`, c)
+				cols[i] = pgx.Identifier{c}.Sanitize()
 			}
+			// ROW(...)::text quotes and escapes each value, so no two keys can collide.
 			plan.tables = append(plan.tables, sweepTable{
-				name:    n,
-				keyExpr: "concat_ws('|', " + strings.Join(cols, ", ") + ")",
-			})
+				name: n, keyCols: cols, keyExpr: "ROW(" + strings.Join(cols, ", ") + ")::text", setCols: setCols[n]})
 		}
 		sweepPlanVal = plan
 	})
 	return sweepPlanVal, sweepPlanErr
 }
 
-// sweepSnapshot returns every keyed table's row keys in one round trip.
-func sweepSnapshot(ctx context.Context, pool *pgxpool.Pool, plan *sweepPlan) (map[string]map[string]struct{}, error) {
-	parts := make([]string, len(plan.tables))
-	for i, tb := range plan.tables {
-		parts[i] = fmt.Sprintf(`SELECT %d AS t, %s AS k FROM %q`, i, tb.keyExpr, tb.name)
+// sweepFingerprint reads every swept table's count and hash sum, and every count only table's
+// count, in one round trip. Nothing but one small row per table comes back.
+func sweepFingerprint(ctx context.Context, pool *pgxpool.Pool, plan *sweepPlan, only map[string]bool) (map[string]sweepFP, error) {
+	var parts []string
+	var names []string
+	for _, tb := range plan.tables {
+		if only != nil && !only[tb.name] {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf(
+			`SELECT %d AS i, count(*) AS n, coalesce(sum(hashtextextended(t::text, 0)::numeric), 0)::text AS h FROM %s t`, len(names), tb.name))
+		names = append(names, tb.name)
+	}
+	for _, n := range plan.countOnly {
+		if only != nil && !only[n] {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf(`SELECT %d AS i, count(*) AS n, '' AS h FROM %s`, len(names), n))
+		names = append(names, n)
 	}
 	rows, err := pool.Query(ctx, strings.Join(parts, " UNION ALL "))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	snap := make(map[string]map[string]struct{}, len(plan.tables))
+	fp := make(map[string]sweepFP, len(names))
 	for rows.Next() {
-		var ti int
-		var k string
-		if err := rows.Scan(&ti, &k); err != nil {
+		var i int
+		var f sweepFP
+		if err := rows.Scan(&i, &f.n, &f.hash); err != nil {
 			return nil, err
 		}
-		name := plan.tables[ti].name
-		if snap[name] == nil {
-			snap[name] = map[string]struct{}{}
+		fp[names[i]] = f
+	}
+	return fp, rows.Err()
+}
+
+// sweepSnapshot reads the row keys and row hashes (and, for the restorable tables, the row
+// image) of the named tables in one round trip. A nil only means every swept table.
+func sweepSnapshot(ctx context.Context, pool *pgxpool.Pool, plan *sweepPlan, only map[string]bool) (*sweepSnap, error) {
+	snap := &sweepSnap{rows: map[string]map[string]string{}, images: map[string]map[string]string{}}
+	var parts []string
+	var names []string
+	for _, tb := range plan.tables {
+		if only != nil && !only[tb.name] {
+			continue
 		}
-		snap[name][k] = struct{}{}
+		img := `''::text`
+		if sweepRestorable[tb.name] {
+			img = `row_to_json(t)::text`
+		}
+		parts = append(parts, fmt.Sprintf(`SELECT %d AS t, %s AS k, md5(row_to_json(t)::text) AS h, %s AS img FROM %s t`,
+			len(names), tb.keyExpr, img, tb.name))
+		names = append(names, tb.name)
+	}
+	if len(parts) == 0 {
+		return snap, nil
+	}
+	rows, err := pool.Query(ctx, strings.Join(parts, " UNION ALL "))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ti int
+		var k, h, img string
+		if err := rows.Scan(&ti, &k, &h, &img); err != nil {
+			return nil, err
+		}
+		name := names[ti]
+		if snap.rows[name] == nil {
+			snap.rows[name] = map[string]string{}
+		}
+		snap.rows[name][k] = h
+		if img != "" {
+			if snap.images[name] == nil {
+				snap.images[name] = map[string]string{}
+			}
+			snap.images[name][k] = img
+		}
 	}
 	return snap, rows.Err()
 }
 
+// sweepFPDiff lists the tables whose fingerprints differ.
+func sweepFPDiff(a, b map[string]sweepFP) []string {
+	var out []string
+	for n, fa := range a {
+		if b[n] != fa {
+			out = append(out, n)
+		}
+	}
+	for n := range b {
+		if _, ok := a[n]; !ok {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sweepClaim marks a leg's sweep live, or fails the leg when another leg's sweep is live. A leg
+// of a live leg (a subtest, named parent/child) may nest, and so may a second pool in one test.
+func sweepClaim(t *testing.T) {
+	t.Helper()
+	sweepMu.Lock()
+	defer sweepMu.Unlock()
+	for live := range sweepLive {
+		if live == t.Name() || strings.HasPrefix(t.Name(), live+"/") {
+			continue
+		}
+		t.Fatalf("leg sweep: %s started while the sweep of %s is still live. Pos legs must run one at a time "+
+			"(go test -p 1, no t.Parallel): a leg's sweep deletes every row added since its snapshot, which "+
+			"would include the other leg's live rows", t.Name(), live)
+	}
+	sweepLive[t.Name()]++
+}
+
+func sweepRelease(t *testing.T) {
+	sweepMu.Lock()
+	defer sweepMu.Unlock()
+	if sweepLive[t.Name()]--; sweepLive[t.Name()] <= 0 {
+		delete(sweepLive, t.Name())
+	}
+}
+
 // registerLegSweep records the database's rows now and deletes every row a leg added when the
-// leg ends. It fails the leg, naming the table, when a delete is refused.
+// leg ends. It fails the leg, naming the table, when a delete is refused, and names the table
+// and key of any row that existed at the start and was changed or deleted. See the file header
+// for the exact guarantee.
 func registerLegSweep(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
+	sweepClaim(t)
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			sweepRelease(t)
+		}
+	}
 	plan, err := sweepCatalog(ctx, pool)
 	if err != nil {
+		release()
 		t.Fatalf("leg sweep: read the catalog: %v", err)
 	}
-	before, err := sweepSnapshot(ctx, pool, plan)
+	startFP, err := sweepFingerprint(ctx, pool, plan, nil)
 	if err != nil {
-		t.Fatalf("leg sweep: snapshot: %v", err)
+		release()
+		t.Fatalf("leg sweep: fingerprint: %v", err)
+	}
+	sweepMu.Lock()
+	before := sweepKept
+	sweepMu.Unlock()
+	if before == nil || len(sweepFPDiff(before.fp, startFP)) > 0 {
+		before, err = sweepSnapshot(ctx, pool, plan, nil)
+		if err != nil {
+			release()
+			t.Fatalf("leg sweep: snapshot: %v", err)
+		}
+		before.fp = startFP
+		sweepMu.Lock()
+		sweepKept = before
+		sweepMu.Unlock()
 	}
 	t.Cleanup(func() {
-		after, err := sweepSnapshot(ctx, pool, plan)
+		defer release()
+		endFP, err := sweepFingerprint(ctx, pool, plan, nil)
+		if err != nil {
+			t.Errorf("leg sweep: fingerprint at the end: %v", err)
+			return
+		}
+		if len(sweepFPDiff(before.fp, endFP)) == 0 {
+			return // the leg left every table as it found it
+		}
+		// Only the tables whose fingerprint moved can hold an added row, so only those are read.
+		moved := map[string]bool{}
+		for _, n := range sweepFPDiff(before.fp, endFP) {
+			moved[n] = true
+		}
+		after, err := sweepSnapshot(ctx, pool, plan, moved)
 		if err != nil {
 			t.Errorf("leg sweep: read the rows left: %v", err)
 			return
@@ -218,8 +562,8 @@ func registerLegSweep(t *testing.T, pool *pgxpool.Pool) {
 		defer func() { _ = tx.Rollback(ctx) }()
 		for _, tb := range plan.tables {
 			var added []string
-			for k := range after[tb.name] {
-				if _, had := before[tb.name][k]; !had {
+			for k := range after.rows[tb.name] {
+				if _, had := before.rows[tb.name][k]; !had {
 					added = append(added, k)
 				}
 			}
@@ -227,13 +571,97 @@ func registerLegSweep(t *testing.T, pool *pgxpool.Pool) {
 				continue
 			}
 			if _, err := tx.Exec(ctx,
-				fmt.Sprintf(`DELETE FROM %q WHERE %s = ANY($1::text[])`, tb.name, tb.keyExpr), added); err != nil {
+				fmt.Sprintf(`DELETE FROM %s WHERE %s = ANY($1::text[])`, tb.name, tb.keyExpr), added); err != nil {
 				t.Errorf("leg sweep: delete %d leftover row(s) from %s: %v", len(added), tb.name, err)
 				return
 			}
 		}
+		// Put the restorable tables' changed rows back to the image taken at the snapshot.
+		for _, tb := range plan.tables {
+			for k, img := range before.images[tb.name] {
+				if h, ok := after.rows[tb.name][k]; !ok || h == before.rows[tb.name][k] {
+					continue
+				}
+				sets := make([]string, len(tb.setCols))
+				for i, c := range tb.setCols {
+					sets[i] = c + " = r." + c
+				}
+				if _, err := tx.Exec(ctx, fmt.Sprintf(
+					`UPDATE %s t SET %s FROM json_populate_record(NULL::%s, $2::json) r WHERE %s = $1`,
+					tb.name, strings.Join(sets, ", "), tb.name, tb.keyExprOf("t")), k, img); err != nil {
+					t.Errorf("leg sweep: restore row %s of %s: %v", k, tb.name, err)
+					return
+				}
+			}
+		}
 		if err := tx.Commit(ctx); err != nil {
 			t.Errorf("leg sweep: commit: %v", err)
+			return
+		}
+
+		// What the sweep must now find: the snapshot's database, table for table. The tables that
+		// moved are fingerprinted again; a match is the whole check, and a table that still
+		// differs is read to name its keys.
+		finalFP, err := sweepFingerprint(ctx, pool, plan, moved)
+		if err != nil {
+			t.Errorf("leg sweep: verify after the sweep: %v", err)
+			return
+		}
+		stillOff := map[string]bool{}
+		for n, f := range finalFP { // only the moved tables were read
+			if before.fp[n] != f {
+				stillOff[n] = true
+			}
+		}
+		if len(stillOff) == 0 {
+			return
+		}
+		final, err := sweepSnapshot(ctx, pool, plan, stillOff)
+		if err != nil {
+			t.Errorf("leg sweep: verify after the sweep: %v", err)
+			return
+		}
+		for _, tb := range plan.tables {
+			if !stillOff[tb.name] {
+				continue
+			}
+			var changed, deleted, extra []string
+			for k, h := range before.rows[tb.name] {
+				fh, ok := final.rows[tb.name][k]
+				switch {
+				case !ok:
+					deleted = append(deleted, k)
+				case fh != h:
+					changed = append(changed, k)
+				}
+			}
+			for k := range final.rows[tb.name] {
+				if _, had := before.rows[tb.name][k]; !had {
+					extra = append(extra, k)
+				}
+			}
+			for _, g := range []struct {
+				what string
+				keys []string
+			}{{"CHANGED (the leg must restore it)", changed}, {"DELETED (the leg must put it back)", deleted},
+				{"still present although added after the snapshot", extra}} {
+				if len(g.keys) == 0 {
+					continue
+				}
+				sort.Strings(g.keys)
+				shown := g.keys
+				if len(shown) > 5 {
+					shown = shown[:5]
+				}
+				t.Errorf("leg sweep: %d pre existing row(s) of %s %s; first keys: %s",
+					len(g.keys), tb.name, g.what, strings.Join(shown, " "))
+			}
+		}
+		for _, n := range plan.countOnly {
+			if stillOff[n] {
+				t.Errorf("leg sweep: %s has no primary key to sweep by (or is partitioned) and its row count went from %d to %d",
+					n, before.fp[n].n, finalFP[n].n)
+			}
 		}
 	})
 }
