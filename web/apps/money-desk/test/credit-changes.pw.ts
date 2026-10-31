@@ -81,3 +81,28 @@ test("a rejection asks why and settles the request", async ({ page, request }) =
   await expect(page.locator("[data-notice]")).toContainText("The request is rejected");
   await expect(page.locator("[data-creditchanges] [data-creditchange-row]").filter({ hasText: "The winter work" })).toHaveCount(0);
 });
+
+// A box the page drew, as numbers; the two never share a pixel when one ends before the other starts.
+type Box = { x: number; y: number; width: number; height: number };
+const apart = (a: Box, b: Box): boolean => a.x + a.width <= b.x + 0.5 || b.x + b.width <= a.x + 0.5 || a.y + a.height <= b.y + 0.5 || b.y + b.height <= a.y + 0.5;
+
+test("at 390 the approver list reads the name, then From, then To, and no box overprints another", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDesk(page, request, "controller");
+  await page.getByRole("button", { name: "Credit changes" }).click();
+  const rows = page.locator("[data-creditchanges] [data-creditchange-row]");
+  await expect(rows).toHaveCount(2);
+  // The longest seeded account name rides one of these rows.
+  await expect(rows.filter({ hasText: "Granite Edge Landscaping (demo)" })).toHaveCount(1);
+  for (let i = 0; i < 2; i += 1) {
+    const row = rows.nth(i);
+    const name = (await row.locator("button.link-row").boundingBox()) as Box;
+    const from = (await row.locator("td[data-card-label='From']").boundingBox()) as Box;
+    const to = (await row.locator("td[data-card-label='To']").boundingBox()) as Box;
+    expect(apart(name, from), "name and From").toBe(true);
+    expect(apart(name, to), "name and To").toBe(true);
+    expect(apart(from, to), "From and To").toBe(true);
+    expect(from.y, "From reads before To").toBeLessThan(to.y);
+    expect(name.y, "the name reads before From").toBeLessThan(from.y);
+  }
+});

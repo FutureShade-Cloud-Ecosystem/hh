@@ -327,17 +327,21 @@ const receivablesStyles = css`
     table.holdtbl td.act { text-align: start; }
     /* The credit change tables (CC-2) on a phone: one card per ask, the money figures keeping
        their own names and alignment, each decision a line of its own. */
-    table.credhist tr, table.credwait tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "who after" "why why" "before before" "decision decision" "act act"; }
-    table.credwait tbody td, table.credhist tbody td { display: block; padding: 0; border: 0; }
+    table.credhist tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "who after" "why why" "before before" "decision decision"; }
+    table.credwait tr { grid-template-columns: minmax(0, 1fr); grid-template-areas: "who" "why" "from" "to" "decision" "act"; }
+    table.credwait tbody td, table.credhist tbody td { display: block; padding: 0; border: 0; min-width: 0; overflow-wrap: anywhere; }
     table.credwait td:nth-child(1) { grid-area: who; }
     table.credwait td:nth-child(2), table.credhist td:nth-child(2) { grid-area: why; }
-    table.credwait td:nth-child(3), table.credhist td:nth-child(3) { grid-area: before; }
-    table.credwait td:nth-child(4), table.credhist td:nth-child(4) { grid-area: after; text-align: end; }
-    table.credwait td:nth-child(5), table.credhist td:nth-child(5) { grid-area: decision; }
+    table.credwait td:nth-child(3) { grid-area: from; }
+    table.credwait td:nth-child(4) { grid-area: to; }
+    table.credhist td:nth-child(3) { grid-area: before; }
+    table.credhist td:nth-child(4) { grid-area: after; text-align: end; }
+    table.credwait td:nth-child(5), table.credhist td:nth-child(5) { grid-area: decision; text-align: start; }
     table.credwait td:nth-child(6) { grid-area: act; text-align: start; }
     table.credhist td:nth-child(1) { grid-area: who; }
-    table.credhist td:nth-child(3), table.credhist td:nth-child(4), table.credwait td:nth-child(3), table.credwait td:nth-child(4), table.credhist td:nth-child(5), table.credwait td:nth-child(5) { display: flex; justify-content: space-between; align-items: baseline; gap: var(--hh-s-12); text-align: end; }
+    table.credhist td:nth-child(3), table.credhist td:nth-child(4), table.credwait td:nth-child(3), table.credwait td:nth-child(4) { display: flex; justify-content: space-between; align-items: baseline; gap: var(--hh-s-12); text-align: end; }
     table.credhist td:nth-child(3)::before, table.credhist td:nth-child(4)::before, table.credwait td:nth-child(3)::before, table.credwait td:nth-child(4)::before, table.credhist td:nth-child(5)::before, table.credwait td:nth-child(5)::before { content: attr(data-card-label); color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; text-align: start; }
+    table.credhist td:nth-child(5)::before, table.credwait td:nth-child(5)::before { display: block; margin-bottom: var(--hh-s-4); }
     table.credwait tr.credit-reject-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "form"; }
     table.credwait tr.credit-reject-row > td { grid-area: form; padding: var(--hh-s-8) 0 var(--hh-s-16); }
     .credit-limit-form { grid-template-columns: minmax(0, 1fr); }
