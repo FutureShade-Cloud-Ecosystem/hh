@@ -29,6 +29,7 @@ type ruleStore interface {
 	SetJobOverride(ctx context.Context, customerJobID, branchID string, pct *int, setBy string) error
 	ProvinceRule(ctx context.Context, province string) (ProvinceRule, bool, error)
 	JobOverride(ctx context.Context, customerJobID string) (*int, error)
+	LinkCustomerJob(ctx context.Context, lienJobID, customerJobID string) error
 }
 
 var _ ruleStore = (*Repository)(nil)
@@ -176,4 +177,40 @@ func (s *Service) HoldbackRuleForJob(ctx context.Context, customerJobID string) 
 		out.HoldbackPctBps, out.PctSource = *jo, PctFromJob
 	}
 	return out, nil
+}
+
+// LinkCustomerJob links a lien job to ONE customer job of the same customer, or unlinks it (an empty
+// customerJobID). The customer module's own rule for a new document decides: a job of another customer
+// and a closed job are refused in its words, and a job at a branch outside the caller's reach too. The
+// lien job itself must also sit inside the caller's reach, and a lien job with no customer cannot link.
+func (s *Service) LinkCustomerJob(ctx context.Context, lienJobID, customerJobID string) (Job, error) {
+	c, err := s.managerCaller(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	job, err := s.store.GetJob(ctx, lienJobID)
+	if err != nil {
+		return Job{}, err
+	}
+	if !c.CanAccessBranch(job.BranchID) {
+		return Job{}, forbidden("lien: that lien job sits at a branch outside your reach")
+	}
+	if customerJobID != "" {
+		if job.CustomerID == "" {
+			return Job{}, unprocessable("lien: that lien job has no customer, so it cannot link to a customer job")
+		}
+		if s.custJobs == nil {
+			return Job{}, clientErr(500, "lien: customer jobs not configured")
+		}
+		site, err := s.custJobs.JobForLink(ctx, job.CustomerID, customerJobID)
+		if err != nil {
+			return Job{}, err
+		}
+		customerJobID = site.JobID
+	}
+	if err := s.rules().LinkCustomerJob(ctx, lienJobID, customerJobID); err != nil {
+		return Job{}, err
+	}
+	job.CustomerJobID = customerJobID
+	return job, nil
 }

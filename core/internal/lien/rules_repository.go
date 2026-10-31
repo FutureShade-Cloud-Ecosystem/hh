@@ -135,3 +135,19 @@ func (r *Repository) JobOverride(ctx context.Context, customerJobID string) (*in
 	}
 	return &pct, nil
 }
+
+// LinkCustomerJob sets (customerJobID set) or clears ("") the customer job a lien job links to.
+func (r *Repository) LinkCustomerJob(ctx context.Context, lienJobID, customerJobID string) error {
+	q, err := r.q(ctx)
+	if err != nil {
+		return err
+	}
+	tag, err := q.Exec(ctx, `UPDATE lien_jobs SET customer_job_id = $2, updated_at = now() WHERE id = $1`, lienJobID, nullStr(customerJobID))
+	if err != nil {
+		return fmt.Errorf("lien: link the customer job: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errJobNotFound
+	}
+	return nil
+}

@@ -123,7 +123,7 @@ func s2Job(id string, in JobInput, created time.Time) Job {
 	}
 }
 
-const jobCols = `id::text, job_no::text, COALESCE(customer_id::text,''), branch_id::text, description,
+const jobCols = `id::text, job_no::text, COALESCE(customer_id::text,''), COALESCE(customer_job_id::text,''), branch_id::text, description,
 	contract_cents, holdback_pct_bps, substantial_perf_date, last_supply_date, status, metadata, created_at`
 
 func scanJob(row pgx.Row) (Job, error) {
@@ -131,7 +131,7 @@ func scanJob(row pgx.Row) (Job, error) {
 	var perf, lastSupply *time.Time
 	var meta []byte
 	var created time.Time
-	if err := row.Scan(&j.ID, &j.JobNo, &j.CustomerID, &j.BranchID, &j.Description, &j.ContractCents,
+	if err := row.Scan(&j.ID, &j.JobNo, &j.CustomerID, &j.CustomerJobID, &j.BranchID, &j.Description, &j.ContractCents,
 		&j.HoldbackPctBps, &perf, &lastSupply, &j.Status, &meta, &created); err != nil {
 		return Job{}, err
 	}
