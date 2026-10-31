@@ -351,6 +351,12 @@ func parseAsOfIn(zone houseday.Zone, s string) (time.Time, error) {
 	return t.Add(12 * time.Hour), nil
 }
 
+// ParseAsOfFor resolves the dealer's zone for one request, then reads the as-of day (YYYY-MM-DD, or
+// empty for now) in that calendar. A failed zone read refuses the request rather than guessing a calendar.
+func ParseAsOfFor(ctx context.Context, src houseday.Source, s string) (time.Time, error) {
+	return parseAsOfFor(ctx, src, s)
+}
+
 // parseAsOfFor resolves the dealer's zone for one request, then reads the as-of in it. A failed zone
 // read refuses the request rather than guessing a calendar.
 func parseAsOfFor(ctx context.Context, src houseday.Source, s string) (time.Time, error) {
