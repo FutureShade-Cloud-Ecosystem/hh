@@ -38,6 +38,7 @@ import (
 // Withholder is the holdback seam: the rule for a job and the ledger's row for a withholding.
 // *lien.Service satisfies it. Declared here so the writer names what it needs.
 type Withholder interface {
+	HasLinkedLienJob(ctx context.Context, customerJobID string) (bool, error)
 	HoldbackRuleForJob(ctx context.Context, customerJobID string) (lien.HoldbackRule, error)
 	BookRetention(ctx context.Context, b lien.RetentionBooking) (bool, error)
 	BookCreditReversal(ctx context.Context, r lien.CreditReversal) (bool, error)
@@ -71,7 +72,14 @@ func (w *InvoiceWriter) withheldCents(ctx context.Context, tx pgx.Tx, sourceKind
 	if w.holdback == nil || jobID == "" || sourceKind == SourceFinanceCharge || sourceKind == SourceSupplierDeposit {
 		return 0, nil
 	}
-	rule, err := w.holdback.HoldbackRuleForJob(customer.WithCallerTx(ctx, tx), jobID)
+	// Only a job a lien job is linked to withholds; any other job never reads the rule, so a province
+	// with no rule never refuses an ordinary sale.
+	ctx = customer.WithCallerTx(ctx, tx)
+	linked, err := w.holdback.HasLinkedLienJob(ctx, jobID)
+	if err != nil || !linked {
+		return 0, err
+	}
+	rule, err := w.holdback.HoldbackRuleForJob(ctx, jobID)
 	if err != nil {
 		return 0, err
 	}

@@ -48,6 +48,17 @@ func (s *Service) BookRetention(ctx context.Context, b RetentionBooking) (bool, 
 	return n > 0, nil
 }
 
+// HasLinkedLienJob answers whether a lien job (a RECEIVABLE one, not closed) is linked to the customer
+// job. Only such a job withholds: holdback is a construction contract's retention, and the lien job is
+// where the dealer says a job is one. It reads on the caller's transaction when one rides ctx.
+func (s *Service) HasLinkedLienJob(ctx context.Context, customerJobID string) (bool, error) {
+	if strings.TrimSpace(customerJobID) == "" {
+		return false, nil
+	}
+	_, ok, err := s.repo.LinkedLienJob(ctx, customerJobID)
+	return ok, err
+}
+
 // CreditReversal is the holdback part a credit memo took back from an invoice's retention.
 type CreditReversal struct {
 	InvoiceID   string // the invoice the memo reverses

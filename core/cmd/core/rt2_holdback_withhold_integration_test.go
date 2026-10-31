@@ -142,7 +142,10 @@ func mustEnv(t *testing.T, k string) string {
 
 // newJob plants a customer, one open job at the leg's branch and a lien job linked to it (link false
 // leaves the lien job out). Each call is a fresh customer, so the legs never share an invoice.
-func (l *rt2Leg) newJob(link bool) {
+func (l *rt2Leg) newJob(link bool) { l.newJobIn(link, "") }
+
+// newJobIn is newJob with the job's ship to province (empty leaves it unnamed, the dealer's own).
+func (l *rt2Leg) newJobIn(link bool, province string) {
 	l.t.Helper()
 	ctx := context.Background()
 	l.n++
@@ -152,10 +155,14 @@ func (l *rt2Leg) newJob(link bool) {
 		fmt.Sprintf("RT2-%d", l.n), fmt.Sprintf("RT2 Customer %d", l.n), l.branch).Scan(&l.cust); err != nil {
 		l.t.Fatalf("plant the customer: %v", err)
 	}
+	var shipTo map[string]any
+	if province != "" {
+		shipTo = map[string]any{"province": province}
+	}
 	repo := customer.NewRepository(l.pool)
 	job, err := repo.InsertJob(ctx, customer.JobWrite{
 		CustomerID: l.cust, BranchID: l.branch, JobNo: fmt.Sprintf("RT2-JOB-%d", l.n),
-		Fields: customer.JobFields{Name: "Driveway"},
+		Fields: customer.JobFields{Name: "Driveway", ShipToAddress: shipTo},
 	})
 	if err != nil {
 		l.t.Fatalf("plant the job: %v", err)
@@ -371,20 +378,41 @@ func TestRT2_AZeroRuleAndNoJobWithholdNothing(t *testing.T) {
 	l.ties("after the zero and jobless invoices")
 }
 
-// An invoice on a job no lien job holds still withholds (1150 holds it); the ledger has no row for it
-// and the tie names the gap until a lien job is linked and the sync books it.
-func TestRT2_AWithholdingNoLienJobHoldsIsNamedByTheTie(t *testing.T) {
+// Withholding is a construction contract's retention: only a job a lien job is linked to withholds. An
+// unlinked job (a retail patio) withholds nothing, reads no rule, and leaves the ledger and 1150 alone.
+func TestRT2_AnUnlinkedJobWithholdsNothing(t *testing.T) {
 	l := rt2Setup(t, "nolien")
 	l.newJob(false)
 	doc := l.invoice(100_000, 0)
-	eq(t, "holdback_cents", l.holdbackOf(doc.InvoiceID), int64(10_000))
-	eq(t, "the ledger has no row", l.ledgerRows(), 0)
-	res, err := TieHoldbackLedgerToGL1150(context.Background(), l.seams(), TieMonth{MonthEnd: time.Now().Add(24 * time.Hour)})
-	if err != nil {
-		t.Fatalf("tie: %v", err)
+	eq(t, "holdback_cents", l.holdbackOf(doc.InvoiceID), int64(0))
+	j := l.legs(doc.InvoiceID)
+	if _, has := j["1150"]; has {
+		t.Errorf("an unlinked job posts no 1150 leg")
 	}
-	if res.Pass || res.VarianceCents != -10_000 {
-		t.Errorf("the tie must name the 100.00 the ledger lacks: %+v", res)
+	eq(t, "1100 debit", j["1100"][0], int64(100_000))
+	eq(t, "the ledger has no row", l.ledgerRows(), 0)
+	l.ties("after the unlinked invoice")
+}
+
+// A linked job withholds (the legs above); an unlinked job outside any seeded province is invoiced
+// normally, never refused for want of a rule.
+func TestRT2_AnUnlinkedJobInAProvinceWithNoRuleInvoicesNormally(t *testing.T) {
+	l := rt2Setup(t, "noprov")
+	l.newJobIn(false, "XX")
+	doc := l.invoice(100_000, 0)
+	eq(t, "holdback_cents", l.holdbackOf(doc.InvoiceID), int64(0))
+	eq(t, "1100 debit", l.legs(doc.InvoiceID)["1100"][0], int64(100_000))
+	l.ties("after the invoice in a province with no rule")
+}
+
+// A linked lien job in a province with no rule is refused in words.
+func TestRT2_ALinkedJobInAProvinceWithNoRuleIsRefusedInWords(t *testing.T) {
+	l := rt2Setup(t, "linkednoprov")
+	l.newJobIn(true, "XX")
+	l.n++
+	_, err := l.writer(l.job, 100_000, 0).InvoiceOrder(context.Background(), fmt.Sprintf("rt2-order-%d", l.n))
+	if err == nil || !strings.Contains(err.Error(), "no holdback rule for the province") {
+		t.Fatalf("want the refusal in words, got %v", err)
 	}
 }
 
