@@ -2,7 +2,7 @@ package lien
 
 // rules.go, the holdback rule: province rules with a dealer override and a job override (wave 3 RT-1).
 //
-// THE READ ORDER (HoldbackRuleForJob, added with item 3): the job's override, else the dealer's, else the
+// THE READ ORDER (HoldbackRuleForJob): the job's override, else the dealer's, else the
 // province's. Only the percent is overridable; the preserve and perfect days are the province's.
 //
 // THE BOUNDS: a percent is basis points from 0 to 10000. Zero is a rule (no holdback), not an absence;
@@ -27,6 +27,8 @@ type ruleStore interface {
 	DealerRule(ctx context.Context) (DealerRule, error)
 	SetDealerOverride(ctx context.Context, pct *int, setBy string) (DealerRule, error)
 	SetJobOverride(ctx context.Context, customerJobID, branchID string, pct *int, setBy string) error
+	ProvinceRule(ctx context.Context, province string) (ProvinceRule, bool, error)
+	JobOverride(ctx context.Context, customerJobID string) (*int, error)
 }
 
 var _ ruleStore = (*Repository)(nil)
@@ -110,4 +112,68 @@ func (s *Service) SetJobOverride(ctx context.Context, customerJobID string, pct 
 		return err
 	}
 	return s.recordRuleSet(ctx, c, "lien.holdback_job_override", site.JobID, site.BranchID, pct)
+}
+
+// Where a rule's percent came from.
+const (
+	PctFromJob      = "JOB"
+	PctFromDealer   = "DEALER"
+	PctFromProvince = "PROVINCE"
+)
+
+// HoldbackRule is the rule that answers one job.
+type HoldbackRule struct {
+	HoldbackPctBps int    `json:"holdback_pct_bps"`
+	PreserveDays   int    `json:"preserve_days"`
+	PerfectDays    int    `json:"perfect_days"`
+	PctSource      string `json:"pct_source"` // JOB | DEALER | PROVINCE
+	Province       string `json:"province"`
+	ProvinceSource string `json:"province_source"` // SITE (the job's ship to province) | DEALER
+}
+
+// HoldbackRuleForJob answers the holdback rule for one customer job in one read: the job's override, else
+// the dealer's, else the province's. The province is the job's site province when its ship to address
+// names one, else the dealer's own. A province with no rule is refused in words, never guessed. The
+// whole read rides a caller's transaction (customer.WithCallerTx) so RT-2 can call it inside an
+// invoice's write. A staff caller must reach the job's branch; a context with no staff row (a worker
+// writing the invoice) is held by the document's own fence.
+func (s *Service) HoldbackRuleForJob(ctx context.Context, customerJobID string) (HoldbackRule, error) {
+	if s.custJobs == nil {
+		return HoldbackRule{}, clientErr(500, "lien: customer jobs not configured")
+	}
+	site, err := s.custJobs.JobSite(ctx, customerJobID)
+	if err != nil {
+		return HoldbackRule{}, err
+	}
+	if c, ok := s.callerFrom(ctx); ok && c.UserID != "" && !c.CanAccessBranch(site.BranchID) {
+		return HoldbackRule{}, clientErr(404, "that job was not found")
+	}
+	dealer, err := s.rules().DealerRule(ctx)
+	if err != nil {
+		return HoldbackRule{}, err
+	}
+	out := HoldbackRule{Province: site.Province, ProvinceSource: "SITE"}
+	if out.Province == "" {
+		out.Province, out.ProvinceSource = dealer.Province, "DEALER"
+	}
+	pr, ok, err := s.rules().ProvinceRule(ctx, out.Province)
+	if err != nil {
+		return HoldbackRule{}, err
+	}
+	if !ok {
+		return HoldbackRule{}, unprocessable("lien: there is no holdback rule for the province %s", out.Province)
+	}
+	out.HoldbackPctBps, out.PctSource = pr.HoldbackPctBps, PctFromProvince
+	out.PreserveDays, out.PerfectDays = pr.PreserveDays, pr.PerfectDays
+	if dealer.HoldbackPctBps != nil {
+		out.HoldbackPctBps, out.PctSource = *dealer.HoldbackPctBps, PctFromDealer
+	}
+	jo, err := s.rules().JobOverride(ctx, site.JobID)
+	if err != nil {
+		return HoldbackRule{}, err
+	}
+	if jo != nil {
+		out.HoldbackPctBps, out.PctSource = *jo, PctFromJob
+	}
+	return out, nil
 }

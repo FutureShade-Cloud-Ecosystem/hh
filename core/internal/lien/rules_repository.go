@@ -9,6 +9,7 @@ package lien
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -92,3 +93,45 @@ func (r *Repository) SetJobOverride(ctx context.Context, customerJobID, branchID
 	return nil
 }
 
+// ProvinceRule is one province's statutory holdback rule.
+type ProvinceRule struct {
+	Province       string `json:"province"`
+	HoldbackPctBps int    `json:"holdback_pct_bps"`
+	PreserveDays   int    `json:"preserve_days"`
+	PerfectDays    int    `json:"perfect_days"`
+}
+
+// ProvinceRule reads one province's rule; ok is false when the province has none.
+func (r *Repository) ProvinceRule(ctx context.Context, province string) (rule ProvinceRule, ok bool, err error) {
+	q, err := r.q(ctx)
+	if err != nil {
+		return ProvinceRule{}, false, err
+	}
+	err = q.QueryRow(ctx,
+		`SELECT province, holdback_pct_bps, preserve_days, perfect_days FROM holdback_province_rules WHERE province = $1`, province).
+		Scan(&rule.Province, &rule.HoldbackPctBps, &rule.PreserveDays, &rule.PerfectDays)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ProvinceRule{}, false, nil
+	}
+	if err != nil {
+		return ProvinceRule{}, false, fmt.Errorf("lien: read the province holdback rule: %w", err)
+	}
+	return rule, true, nil
+}
+
+// JobOverride reads a customer job's override; nil when the job has none.
+func (r *Repository) JobOverride(ctx context.Context, customerJobID string) (*int, error) {
+	q, err := r.q(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var pct int
+	err = q.QueryRow(ctx, `SELECT holdback_pct_bps FROM holdback_job_overrides WHERE customer_job_id = $1`, customerJobID).Scan(&pct)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lien: read the job holdback override: %w", err)
+	}
+	return &pct, nil
+}
