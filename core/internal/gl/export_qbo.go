@@ -108,10 +108,15 @@ func qboEntryDate(r ExportRow) (date, memo string) {
 	if r.PeriodMonth < 1 || r.PeriodMonth > 12 {
 		return r.PostedAt, memo
 	}
-	first := time.Date(r.PeriodYear, time.Month(r.PeriodMonth), 1, 0, 0, 0, 0, time.UTC)
-	last := first.AddDate(0, 1, -1)
+	// The period's days are calendar days, not instants: parsed from the date words, so no clock
+	// zone decides them.
+	first, ferr := time.Parse("2006-01-02", fmt.Sprintf("%04d-%02d-01", r.PeriodYear, r.PeriodMonth))
 	posted, err := time.Parse("2006-01-02", r.PostedAt)
-	if err != nil || (!posted.Before(first) && !posted.After(last)) {
+	if ferr != nil || err != nil {
+		return r.PostedAt, memo
+	}
+	last := first.AddDate(0, 1, -1)
+	if !posted.Before(first) && !posted.After(last) {
 		return r.PostedAt, memo
 	}
 	date = first.Format("2006-01-02")

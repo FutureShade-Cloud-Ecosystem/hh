@@ -55,8 +55,12 @@ func TestIntegration_Export_QBOARolledForwardEntryIsDatedInsideItsPeriod(t *test
 	if _, err := NewRepository(pool).ClosePeriod(ctx, periodID(t, pool, 2097, 6), user, "AX-2 fix roll forward", nil); err != nil {
 		t.Fatalf("close June: %v", err)
 	}
+	var branch string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations LIMIT 1`).Scan(&branch); err != nil {
+		t.Skipf("no seeded branch: %v", err)
+	}
 	if _, err := svc.PostExternal(ctx, ExternalJournal{
-		Source: SourceAdjustment, IdempotencyKey: "ax2fix-roll", Memo: "june payment",
+		Source: SourceAdjustment, IdempotencyKey: "ax2fix-roll", Memo: "june payment", BranchID: branch,
 		DocumentDate: time.Date(2097, 6, 28, 4, 0, 0, 0, time.UTC),
 		Lines:        []ExternalLine{{AccountCode: "1000", DebitCents: 4100}, {AccountCode: "4000", CreditCents: 4100}},
 	}); err != nil {
