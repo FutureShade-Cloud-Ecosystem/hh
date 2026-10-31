@@ -141,9 +141,10 @@ func lowerInvoiceHoldback(ctx context.Context, tx pgx.Tx, invoiceID string, part
 	if part <= 0 || invoiceID == "" {
 		return nil
 	}
-	tag, err := tx.Exec(ctx, creditFeedSeqCTE+`
+	// invoices is a trigger table: the trigger draws the change feed's seq, so no explicit draw here.
+	tag, err := tx.Exec(ctx, `
 UPDATE invoices
-   SET holdback_cents = holdback_cents - $2::bigint, updated_at = now(), seq = (SELECT next_value FROM iseq)
+   SET holdback_cents = holdback_cents - $2::bigint, updated_at = now()
  WHERE id = $1::uuid AND holdback_cents >= $2::bigint`, invoiceID, part)
 	if err != nil {
 		return fmt.Errorf("billing: lower the invoice's holdback by the credit's part: %w", err)
