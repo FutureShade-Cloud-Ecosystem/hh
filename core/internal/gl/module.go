@@ -738,6 +738,7 @@ var PostedTopics = []string{
 	"pos.return.written_off",
 	"ar.invoice.write_off",
 	"ar.invoice.write_off_reversed",
+	"ar.holdback.released",
 }
 
 // postEvent is the single outbox handler for all eight posted topics. It resolves the mapped posting rules,

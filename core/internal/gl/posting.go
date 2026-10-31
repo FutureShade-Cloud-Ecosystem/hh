@@ -92,6 +92,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildArInvoiceWriteOff(ctx, e.Payload)
 	case "ar.invoice.write_off_reversed":
 		draft, post, err = s.buildArInvoiceWriteOffReversed(ctx, e.Payload)
+	case "ar.holdback.released":
+		draft, post, err = s.buildArHoldbackReleased(ctx, e.Payload)
 	case "pos.sale.committed", "bank.recon.completed":
 		// No direct GL effect: a POS sale's revenue/cash post via its own invoice.finalized / payment.received
 		// events; bankrec posts its clearing journals directly through PostExternal. Ack to avoid double-count.
@@ -1843,6 +1845,7 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 		"pos.return.written_off":        {"expense", "cogs"},
 		"ar.invoice.write_off":          {"write_off_expense", "ar"},
 		"ar.invoice.write_off_reversed": {"write_off_expense", "ar"},
+		"ar.holdback.released":          {"ar", "holdback"},
 	}
 	for et, roles := range required {
 		for _, role := range roles {
@@ -2015,5 +2018,65 @@ func (s *Service) buildArInvoiceWriteOffReversed(ctx context.Context, payload []
 		BranchID:       a.BranchID,
 		OccurredAt:     p.OccurredAt,
 		Lines:          lines,
+	}, true, nil
+}
+
+// - the holdback release (wave 3 RT-3) -
+
+// arHoldbackReleasedPayload is the event billing emits beside an invoice's holdback release: which invoice,
+// which release row, how much, and the act's own instant (the journal dates by the act, never the consume).
+type arHoldbackReleasedPayload struct {
+	InvoiceID   string    `json:"invoice_id"`
+	ReleaseID   string    `json:"release_id"`
+	AmountCents int64     `json:"amount_cents"`
+	OccurredAt  time.Time `json:"occurred_at"`
+}
+
+// buildArHoldbackReleased posts the release of an invoice's holdback: DR AR (1100) / CR the holdback
+// receivable (1150), balanced at the released amount, on the release row's own key so a replayed event
+// posts nothing. The customer now owes the amount: it leaves 1150 and joins 1100, the same cents the
+// invoice's net grows by in the aging.
+func (s *Service) buildArHoldbackReleased(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p arHoldbackReleasedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.holdback.released payload: %w", err)
+	}
+	if p.InvoiceID == "" || p.ReleaseID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.holdback.released missing invoice_id or release_id")
+	}
+	if p.AmountCents <= 0 {
+		return journalDraft{}, false, fmt.Errorf("gl: ar.holdback.released has no amount")
+	}
+	if s.invoices == nil {
+		return journalDraft{}, false, fmt.Errorf("gl: invoice reader not configured")
+	}
+	a, err := s.invoices.InvoiceForGL(ctx, p.InvoiceID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	et := "ar.holdback.released"
+	rules, err := s.store.PostingAccounts(ctx, et, a.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	arCode, err := pick(rules, et, "ar")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	hbCode, err := pick(rules, et, "holdback")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourceInvoice,
+		SourceRefID:    p.InvoiceID,
+		IdempotencyKey: "ar.holdback.released:" + p.ReleaseID,
+		Memo:           "Holdback released " + a.InvoiceNo,
+		BranchID:       a.BranchID,
+		OccurredAt:     p.OccurredAt,
+		Lines: []draftLine{
+			dr(arCode, p.AmountCents, "holdback released to the customer's balance"),
+			cr(hbCode, p.AmountCents, "holdback receivable released"),
+		},
 	}, true, nil
 }

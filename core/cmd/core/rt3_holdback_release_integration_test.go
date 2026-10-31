@@ -115,21 +115,21 @@ func TestRT3_NothingIsDueBeforeTheDayAfterThePreservationPeriodEnds(t *testing.T
 		t.Fatalf("30 days in: want a not due refusal, got %v", err)
 	}
 
-	// The last day to preserve is the date plus 60: perf 60 days ago makes that day today.
-	l.rt3PerfOn(60)
-	lastDayLate := rt3Today().Add(23*time.Hour + 59*time.Minute)
+	// The last day to preserve is the date plus 60: perf 61 days ago makes that day yesterday.
+	l.rt3PerfOn(61)
+	lastDayLate := rt3Today().Add(-time.Minute) // yesterday 23:59, the house clock
 	_, err := l.rt3Service(lastDayLate).Release(context.Background(), l.rt3Input("r3a-2359"))
 	if rt3Refusal(err) != billing.RefusedNotDue {
 		t.Fatalf("the last day to preserve at 23:59: want a not due refusal, got %v", err)
 	}
-	if err == nil || !strings.Contains(err.Error(), rt3Today().Format("2006-01-02")) {
+	if err == nil || !strings.Contains(err.Error(), rt3Today().AddDate(0, 0, -1).Format("2006-01-02")) {
 		t.Errorf("the refusal must name the last day to preserve, got %v", err)
 	}
 	eq(t, "nothing moved by the refusals", l.holdbackOf(doc.InvoiceID), int64(10_000))
 	eq(t, "no release row", l.rt3Releases(doc.InvoiceID), 0)
 
 	// The house midnight that follows: due. (The evening guard shifts the clock; the day is the house day.)
-	midnight := rt3Today().AddDate(0, 0, 1)
+	midnight := rt3Today()
 	res, err := l.rt3Service(midnight).Release(context.Background(), l.rt3Input("r3a-midnight"))
 	if err != nil {
 		t.Fatalf("at the house midnight after the last day: %v", err)
@@ -247,7 +247,7 @@ func TestRT3_AWrittenOffThenReversedInvoice(t *testing.T) {
 	wo := billing.NewWriteOffService(holdBillingRepo(l.pool))
 	off, err := wo.WriteOff(ctx, billing.WriteOffInput{
 		InvoiceID: doc.InvoiceID, Reason: "dead account", ActorID: "d7000000-0000-4000-9000-000000000006",
-		IdempotencyKey: "r3e-wo", IsController: true,
+		IdempotencyKey: "r3e-wo", IsController: true, OrgID: "88a20000-0000-4000-8000-0000000000c2",
 	}, true)
 	if err != nil {
 		t.Fatalf("write off: %v", err)
@@ -262,7 +262,7 @@ func TestRT3_AWrittenOffThenReversedInvoice(t *testing.T) {
 	eq(t, "no release row", l.rt3Releases(doc.InvoiceID), 0)
 
 	if _, err := wo.Reverse(ctx, billing.ReverseWriteOffInput{
-		InvoiceID: doc.InvoiceID, WriteOffID: off.WriteOffID, Reason: "paid after all", ActorID: "d7000000-0000-4000-9000-000000000006",
+		InvoiceID: doc.InvoiceID, WriteOffID: off.WriteOffID, Reason: "paid after all", ActorID: "d7000000-0000-4000-9000-000000000006", OrgID: "88a20000-0000-4000-8000-0000000000c2",
 	}, true); err != nil {
 		t.Fatalf("reverse: %v", err)
 	}

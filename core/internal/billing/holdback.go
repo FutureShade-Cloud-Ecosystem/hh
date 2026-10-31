@@ -44,6 +44,12 @@ type Withholder interface {
 	BookRetention(ctx context.Context, b lien.RetentionBooking) (bool, error)
 	BookCreditReversal(ctx context.Context, r lien.CreditReversal) (bool, error)
 	BookHoldbackMove(ctx context.Context, m lien.HoldbackMove) (bool, error)
+	// The release (RT-3): the preservation facts that decide when a job's holdback is due, the invoice's
+	// RELEASE row, and the rows a request key already wrote.
+	PreservationFor(ctx context.Context, customerJobID string) (lien.Preservation, bool, error)
+	BookRelease(ctx context.Context, b lien.ReleaseBooking) (string, error)
+	ReleasesForKey(ctx context.Context, key string) ([]lien.ReleasedRow, error)
+	HasReleaseOnJob(ctx context.Context, customerJobID string) (bool, error)
 }
 
 // WithHoldback binds the holdback seam. Unbound, no invoice withholds (the writer as it was before RT-2).
@@ -133,21 +139,31 @@ var ErrNoHoldbackSeam = errors.New("billing: no holdback seam is bound, so the i
 // Zero is a no-op; a part above zero with no seam bound is refused (ErrNoHoldbackSeam) before anything
 // is touched.
 func (w *InvoiceWriter) lowerHoldbackAndLedger(ctx context.Context, tx pgx.Tx, reversesInvoiceID, memoNo, branchID string, part int64) error {
-	if part <= 0 || reversesInvoiceID == "" {
+	return lowerHoldbackAndLedger(ctx, tx, w.holdback, reversesInvoiceID, part, func(ctx context.Context) error {
+		if _, err := w.holdback.BookCreditReversal(ctx, lien.CreditReversal{
+			InvoiceID: reversesInvoiceID, MemoNo: memoNo, BranchID: branchID, AmountCents: part,
+		}); err != nil {
+			return fmt.Errorf("take the credit memo's holdback off the ledger: %w", err)
+		}
+		return nil
+	})
+}
+
+// lowerHoldbackAndLedger is the one call that moves an invoice's holdback down: the column and the
+// ledger row `book` writes, on the caller's transaction. A credit memo's reversal row and the RT-3 release
+// row both come through here, so neither can lower the column without the ledger, or the ledger without
+// the column. `book` runs with the transaction on the context the seam reads.
+func lowerHoldbackAndLedger(ctx context.Context, tx pgx.Tx, h Withholder, invoiceID string, part int64, book func(ctx context.Context) error) error {
+	if part <= 0 || invoiceID == "" {
 		return nil
 	}
-	if w.holdback == nil {
+	if h == nil {
 		return ErrNoHoldbackSeam
 	}
-	if err := lowerInvoiceHoldback(ctx, tx, reversesInvoiceID, part); err != nil {
+	if err := lowerInvoiceHoldback(ctx, tx, invoiceID, part); err != nil {
 		return err
 	}
-	if _, err := w.holdback.BookCreditReversal(customer.WithCallerTx(ctx, tx), lien.CreditReversal{
-		InvoiceID: reversesInvoiceID, MemoNo: memoNo, BranchID: branchID, AmountCents: part,
-	}); err != nil {
-		return fmt.Errorf("take the credit memo's holdback off the ledger: %w", err)
-	}
-	return nil
+	return book(customer.WithCallerTx(ctx, tx))
 }
 
 // lowerInvoiceHoldback is the column half of lowerHoldbackAndLedger and is called by nothing else. It takes a finalized credit memo's holdback part off the invoice it reverses, so the
