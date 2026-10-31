@@ -1467,7 +1467,7 @@ paths:
         - staff-billing
       x-addition: Wave 3 RT-3 holdback release, one RELEASE row per invoice, Controller only; no ERP source route
       summary: Release the due holdback of one customer job, invoice by invoice
-      description: "The Controller's action (the caller's own role; a manager who is not the Controller is refused with 403). For each open invoice on the job that still withholds: one RELEASE row on the invoice in the holdback ledger and the invoice's holdback column lowered in the same call, and the journal DR 1100 / CR 1150, so the customer now owes the amount on the same invoice (its net grows; no new invoice is raised, which would count it twice). Refused with 409, in words, before the day it falls due, while a lien is preserved and not discharged, with no date to count from, when nothing is held and when it was already released. Idempotent on idempotency_key: a retry answers the first result with 200."
+      description: "The Controller's action (the caller's own role; a manager who is not the Controller is refused with 403). For each open invoice on the job that still withholds: one RELEASE row on the invoice in the holdback ledger and the invoice's holdback column lowered in the same call, and the journal DR 1100 / CR 1150, so the customer now owes the amount on the same invoice (its net grows; no new invoice is raised, which would count it twice). Refused with 409, in words, before the day it falls due, while a lien is preserved and not discharged, with no date to count from, when nothing is held and when it was already released (including by the old job level release route). A job is released whole: a caller who does not reach every branch its held invoices sit at is refused with 403, in words. An idempotency key names one release: used on a second job it is refused. Idempotent on idempotency_key: a retry answers the first result with 200."
       x-role: requireManager
       x-access:
         surfaces:
@@ -1500,6 +1500,50 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/ar/holdback/releases/{releaseID}/reversal:
+    post:
+      operationId: billingReverseHoldbackRelease
+      tags:
+        - staff-billing
+      x-addition: "Wave 3 RT-3 fix: the Controller's reversal of a release made in error; no ERP source route"
+      summary: Reverse a holdback release made in error
+      description: The Controller's action (403 for anyone else), with a reason that is recorded. The invoice's holdback column goes up by the released amount and a positive RETENTION row restores the ledger beside the kept RELEASE row, in one transaction; the GL reverses the release (DR 1150 / CR 1100). The holdback can then be released again. Refused with 409 when the release was already reversed or the customer has paid part of the released amount, 404 when there is no such release.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: releaseID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingHoldbackReversalInput"
+      responses:
+        "200":
+          description: Release reversed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingHoldbackReversal"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
   /api/v1/ar/credit-changes:
@@ -30512,7 +30556,7 @@ paths:
       tags:
         - staff-lien
       summary: Release a job's holdback and post the release journal
-      description: "Posts the release journal (DR 2350 / CR 1150) through the GL provider and registers the release on the compliance calendar. The route gate is RequireManager; inside the service a four-eyes dual gate runs on top: the initiating gatekeeper must hold the general-manager authority and the co-signer named in the body is resolved server-side and must currently hold a finance authority, never trusting the role asserted in the request. A PAYABLE-direction holdback is recordable but its release is refused. The co-signer body is optional to decode; an empty approval fails the dual gate."
+      description: "Posts the release journal (DR 2350 / CR 1150) through the GL provider and registers the release on the compliance calendar. The route gate is RequireManager; inside the service a four-eyes dual gate runs on top: the initiating gatekeeper must hold the general-manager authority and the co-signer named in the body is resolved server-side and must currently hold a finance authority, never trusting the role asserted in the request. A PAYABLE-direction holdback is recordable but its release is refused. A lien job linked to a customer job is refused with 422 in words: its holdback is released by the Controller's holdback release (POST /api/v1/ar/holdback/releases), because this route would credit the holdback receivable a second time. The co-signer body is optional to decode; an empty approval fails the dual gate."
       x-role: requireManager
       x-access:
         surfaces:
@@ -30697,6 +30741,100 @@ paths:
           $ref: "#/components/responses/NotFound"
         "422":
           description: The percent is outside 0 to 100 percent, or the field is missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/lien/jobs/{id}/preserved-lien:
+    post:
+      operationId: lienRecordPreservedLien
+      tags:
+        - staff-lien
+      x-addition: "Wave 3 RT-3 fix: record a preserved lien, which blocks the holdback release; no ERP source route"
+      summary: Record that a lien was preserved on a lien job
+      description: Sets the date and a note. While a lien is preserved and not discharged the job's holdback is not released. Recorded in the audit trail with the actor. A manager inside the lien job's branch reach.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LienPreservedLienInput"
+      responses:
+        "200":
+          description: The lien job with its preserved lien
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: The date is missing or not a date
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/lien/jobs/{id}/preserved-lien/discharge:
+    post:
+      operationId: lienDischargeLien
+      tags:
+        - staff-lien
+      x-addition: "Wave 3 RT-3 fix: discharge a preserved lien, which lifts the block on the holdback release; no ERP source route"
+      summary: Record that a preserved lien was discharged
+      description: Sets the discharge date and a note; the block on the holdback release lifts. A lien never preserved, or a discharge dated before the preservation, is refused with 422. Recorded in the audit trail.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LienDischargeInput"
+      responses:
+        "200":
+          description: The lien job with its discharge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: Nothing was preserved, or the date is missing, not a date, or before the preservation
           content:
             application/json:
               schema:
@@ -33266,6 +33404,7 @@ components:
         basis:
           type: string
           enum:
+            - CSP_PUBLICATION
             - SUBSTANTIAL_PERFORMANCE
             - COMPLETION
             - NONE
@@ -33351,6 +33490,37 @@ components:
         amount_cents:
           type: integer
           format: int64
+    BillingHoldbackReversalInput:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          description: Why the release was made in error; recorded
+    BillingHoldbackReversal:
+      type: object
+      required:
+        - release_id
+        - invoice_id
+        - invoice_no
+        - restored_cents
+        - reversed_on
+      properties:
+        release_id:
+          type: string
+          format: uuid
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        restored_cents:
+          type: integer
+          format: int64
+        reversed_on:
+          type: string
+          description: House day, YYYY-MM-DD
     BillingHoldbackRelease:
       type: object
       required:
@@ -64921,6 +65091,17 @@ components:
         last_supply_date:
           type: string
           format: date
+        csp_published_on:
+          type: string
+          format: date
+        lien_preserved_on:
+          type: string
+          format: date
+        lien_preserved_note:
+          type: string
+        lien_discharged_on:
+          type: string
+          format: date
         status:
           type: string
           enum:
@@ -65066,6 +65247,10 @@ components:
         last_supply_date:
           type: string
           format: date
+        csp_published_on:
+          type: string
+          format: date
+          description: Publication of the certificate of substantial performance, when known (optional)
         holdback_direction:
           type: string
           enum:
@@ -65073,6 +65258,26 @@ components:
             - PAYABLE
         hst_on_holdback:
           type: boolean
+    LienPreservedLienInput:
+      type: object
+      required:
+        - preserved_on
+      properties:
+        preserved_on:
+          type: string
+          format: date
+        note:
+          type: string
+    LienDischargeInput:
+      type: object
+      required:
+        - discharged_on
+      properties:
+        discharged_on:
+          type: string
+          format: date
+        note:
+          type: string
     LienJobPage:
       type: object
       required:

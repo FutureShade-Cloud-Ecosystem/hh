@@ -601,7 +601,10 @@ paths:
         CR 1150, so the customer now owes the amount on the same invoice (its net grows; no new invoice is
         raised, which would count it twice). Refused with 409, in words, before the day it falls due, while a
         lien is preserved and not discharged, with no date to count from, when nothing is held and when it was
-        already released. Idempotent on idempotency_key: a retry answers the first result with 200.
+        already released (including by the old job level release route). A job is released whole: a caller who
+        does not reach every branch its held invoices sit at is refused with 403, in words. An idempotency key
+        names one release: used on a second job it is refused. Idempotent on idempotency_key: a retry answers
+        the first result with 200.
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
@@ -630,6 +633,46 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ar/holdback/releases/{releaseID}/reversal:
+    post:
+      operationId: billingReverseHoldbackRelease
+      tags: [staff-billing]
+      x-addition: "Wave 3 RT-3 fix: the Controller's reversal of a release made in error; no ERP source route"
+      summary: Reverse a holdback release made in error
+      description: >-
+        The Controller's action (403 for anyone else), with a reason that is recorded. The invoice's holdback
+        column goes up by the released amount and a positive RETENTION row restores the ledger beside the kept
+        RELEASE row, in one transaction; the GL reverses the release (DR 1150 / CR 1100). The holdback can then
+        be released again. Refused with 409 when the release was already reversed or the customer has paid part
+        of the released amount, 404 when there is no such release.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: releaseID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingHoldbackReversalInput"
+      responses:
+        "200":
+          description: Release reversed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingHoldbackReversal"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
   /api/v1/ar/credit-changes:
     get:
@@ -3249,7 +3292,7 @@ components:
         holdback_cents: { type: integer, format: int64 }
         basis:
           type: string
-          enum: [SUBSTANTIAL_PERFORMANCE, COMPLETION, NONE]
+          enum: [CSP_PUBLICATION, SUBSTANTIAL_PERFORMANCE, COMPLETION, NONE]
         basis_date: { type: string, description: "House day the preservation period counts from, YYYY-MM-DD" }
         preserve_days: { type: integer }
         last_day_to_preserve: { type: string, description: "House day, YYYY-MM-DD" }
@@ -3303,6 +3346,20 @@ components:
         branch_id: { type: string, format: uuid }
         release_id: { type: string, format: uuid }
         amount_cents: { type: integer, format: int64 }
+    BillingHoldbackReversalInput:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, description: "Why the release was made in error; recorded" }
+    BillingHoldbackReversal:
+      type: object
+      required: [release_id, invoice_id, invoice_no, restored_cents, reversed_on]
+      properties:
+        release_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        restored_cents: { type: integer, format: int64 }
+        reversed_on: { type: string, description: "House day, YYYY-MM-DD" }
     BillingHoldbackRelease:
       type: object
       required:

@@ -65,11 +65,12 @@ test("every generated operation's signature returns Promise<Result<...>>", (t) =
   // reportingDeleteSavedReport, reportingRunSavedReport and reportingExportSavedReportCsv), plus RT-1's five holdback rule routes
   // (lienListProvinceRules, lienGetJobHoldbackRule, lienSetDealerHoldbackOverride, lienSetJobHoldbackOverride and lienLinkCustomerJob): 835 / 834 / 835, plus FX-2b's three AP revaluation routes (purchasingRunAPRevaluation,
   // purchasingReverseAPRevaluation and purchasingListAPRevaluations): 838 / 837 / 838, plus RT-3's two holdback release routes
-  // (billingListHoldbackDueToRelease and billingReleaseHoldback): 840 / 839 / 840.
-  assert.equal(operations, 840, "the document's operation count minus the excluded stream, plus the declared body variant");
-  assert.equal(emitted.length, 839, "the document's operation count minus the excluded stream");
+  // (billingListHoldbackDueToRelease and billingReleaseHoldback): 840 / 839 / 840, plus the RT-3 fix round's three doors
+  // (billingReverseHoldbackRelease, lienRecordPreservedLien and lienDischargeLien): 843 / 842 / 843.
+  assert.equal(operations, 843, "the document's operation count minus the excluded stream, plus the declared body variant");
+  assert.equal(emitted.length, 842, "the document's operation count minus the excluded stream");
   assert.deepEqual(variants, ["feedbackCreateMultipart"], "the only multi content type body is feedbackCreate's multipart form");
-  assert.equal(ROUTES.length, 840, "the manifest census keeps the full route table");
+  assert.equal(ROUTES.length, 843, "the manifest census keeps the full route table");
 });
 
 test("each declared body variant resolves to a live generated function beside its operation", (t) => {
