@@ -887,8 +887,10 @@ export const dealerStyles = css`
      chip, the Show surfaces button) and opens its ten tiles on demand. The
      button is the page's own aria-expanded recipe, as the phone Settings
      control wears it (UX-104). A folded shape's tile row is hidden outright,
-     so its buttons leave the tab order. */
-  .config-grid-table tbody tr[hidden] {
+     so its buttons leave the tab order. It folds by class, not by ?hidden or a
+     bound id, because the template position gate allows neither in an app
+     (so there is no aria-controls: no per-shape id can be bound). */
+  .config-grid-table tbody tr.is-folded {
     display: none;
   }
   .shape-state {

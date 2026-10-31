@@ -253,7 +253,6 @@ function renderShape(model: RoleConfigModel, profile: string, word: string, what
   const total = CONFIG_SURFACES.length;
   const curated = curatedSurfaceCount(model, profile);
   const open = shapeIsOpen(model, profile);
-  const tilesId = `config-tiles-${profile}`;
   const state =
     curated === null
       ? "Checking surfaces"
@@ -275,13 +274,12 @@ function renderShape(model: RoleConfigModel, profile: string, word: string, what
               data-profile=${profile}
               data-test="config-shape-toggle-${profile}"
               aria-expanded=${open ? "true" : "false"}
-              aria-controls=${tilesId}
               ?disabled=${curated === null}
             >${open ? "Hide surfaces" : "Show surfaces"}</button>
           </div>
         </th>
       </tr>
-      <tr data-profile=${profile} id=${tilesId} class="shape-tiles" ?hidden=${!open}>
+      <tr data-profile=${profile} class="shape-tiles${open ? "" : " is-folded"}">
         ${CONFIG_SURFACES.map((s) => renderCell(model, s.id, profile, s.word))}
       </tr>
     </tbody>
