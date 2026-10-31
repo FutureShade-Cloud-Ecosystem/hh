@@ -138,3 +138,35 @@ func NormalizeBillingAddressFor(country string, m map[string]any) (map[string]an
 	}
 	return normalizeMapAddress(country, m)
 }
+
+// provinceForms maps the full names and common short forms of each Canadian province or territory to its
+// ISO code, keyed by the lower case form with dots and runs of spaces removed.
+var provinceForms = map[string]string{
+	"alberta": "AB", "alta": "AB",
+	"british columbia": "BC", "britishcolumbia": "BC",
+	"manitoba": "MB", "man": "MB",
+	"new brunswick": "NB", "newbrunswick": "NB",
+	"newfoundland and labrador": "NL", "newfoundland": "NL", "labrador": "NL", "nfld": "NL", "newfoundland & labrador": "NL",
+	"nova scotia": "NS", "novascotia": "NS",
+	"northwest territories": "NT", "nwt": "NT",
+	"nunavut": "NU",
+	"ontario": "ON", "ont": "ON",
+	"prince edward island": "PE", "pei": "PE",
+	"quebec": "QC", "qu\u00e9bec": "QC", "que": "QC", "pq": "QC",
+	"saskatchewan": "SK", "sask": "SK",
+	"yukon": "YT", "yukon territory": "YT",
+}
+
+// ProvinceCode maps a province written as a code ("on"), a name ("Ontario") or a common form ("ont.")
+// to its two letter ISO code. ok is false when it names none of them; the caller decides what to do.
+func ProvinceCode(raw string) (string, bool) {
+	k := strings.ToLower(strings.Join(strings.Fields(strings.ReplaceAll(raw, ".", "")), " "))
+	if k == "" {
+		return "", false
+	}
+	if up := strings.ToUpper(k); provinces[up] {
+		return up, true
+	}
+	code, ok := provinceForms[k]
+	return code, ok
+}

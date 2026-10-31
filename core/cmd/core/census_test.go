@@ -32,7 +32,7 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	// 732: the base's 695 staff operations, the wave 3 train's own doors (the two write off doors,
+	// 737: the base's 695 staff operations, the wave 3 train's own doors (the two write off doors,
 	// taxGetWorksheet, the four vendor credit doors, the five payment run doors, landedCostSettle,
 	// JA-1's five job doors and W3-CC1's five credit change request and approval doors:
 	// billingListCreditChanges, billingRequestCreditChange, billingGetCreditChange,
@@ -42,10 +42,11 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 	// (reportingListDatasets and reportingReadDataset), and W3-RW2's seven saved report doors
 	// (reportingListSavedReports, reportingCreateSavedReport, reportingGetSavedReport,
 	// reportingUpdateSavedReport, reportingDeleteSavedReport, reportingRunSavedReport and
-	// reportingExportSavedReportCsv). Both sides'
+	// reportingExportSavedReportCsv), and W3-RT1's five holdback rule doors
+	// (lienListProvinceRules, lienGetJobHoldbackRule, lienSetDealerHoldbackOverride, lienSetJobHoldbackOverride and lienLinkCustomerJob). Both sides'
 	// routes are kept; the count is what merge.mjs reports on the assembled document.
-	if staff != 732 {
-		t.Fatalf("census staff operations: %d, want the document's 732", staff)
+	if staff != 737 {
+		t.Fatalf("census staff operations: %d, want the document's 737", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }

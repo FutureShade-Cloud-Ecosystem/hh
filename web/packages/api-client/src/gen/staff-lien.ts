@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { LienAgingRowPage, LienDocument, LienDocumentInput, LienDocumentPage, LienJob, LienJobInput, LienJobPage, LienReleaseApproval, LienReleaseResult, LienSyncResult, LienTriageItemPage } from "./types.js";
+import type { LienAgingRowPage, LienCustomerJobLinkInput, LienDealerRule, LienDocument, LienDocumentInput, LienDocumentPage, LienHoldbackOverrideInput, LienHoldbackRule, LienJob, LienJobInput, LienJobPage, LienProvinceRuleList, LienReleaseApproval, LienReleaseResult, LienSyncResult, LienTriageItemPage } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -51,6 +51,66 @@ export async function lienGetHoldbackAging(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "lienGetHoldbackAging",
+  });
+}
+
+export async function lienSetDealerHoldbackOverride(
+  client: ApiClient,
+  body: LienHoldbackOverrideInput,
+  call?: ApiCallOptions
+): Promise<Result<LienDealerRule>> {
+  return client.request<LienDealerRule>({
+    method: "PUT",
+    path: "/api/v1/lien/holdback/dealer-rule",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "lienSetDealerHoldbackOverride",
+  });
+}
+
+export async function lienSetJobHoldbackOverride(
+  client: ApiClient,
+  customerJobID: string | number,
+  body: LienHoldbackOverrideInput,
+  call?: ApiCallOptions
+): Promise<Result<LienHoldbackRule>> {
+  return client.request<LienHoldbackRule>({
+    method: "PUT",
+    path: "/api/v1/lien/holdback/jobs/{customerJobID}/override",
+    pathParams: { customerJobID },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "lienSetJobHoldbackOverride",
+  });
+}
+
+export async function lienGetJobHoldbackRule(
+  client: ApiClient,
+  customerJobID: string | number,
+  call?: ApiCallOptions
+): Promise<Result<LienHoldbackRule>> {
+  return client.request<LienHoldbackRule>({
+    method: "GET",
+    path: "/api/v1/lien/holdback/jobs/{customerJobID}/rule",
+    pathParams: { customerJobID },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "lienGetJobHoldbackRule",
+  });
+}
+
+export async function lienListProvinceRules(
+  client: ApiClient,
+  call?: ApiCallOptions
+): Promise<Result<LienProvinceRuleList>> {
+  return client.request<LienProvinceRuleList>({
+    method: "GET",
+    path: "/api/v1/lien/holdback/province-rules",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "lienListProvinceRules",
   });
 }
 
@@ -113,6 +173,23 @@ export async function lienGetJob(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "lienGetJob",
+  });
+}
+
+export async function lienLinkCustomerJob(
+  client: ApiClient,
+  id: string | number,
+  body: LienCustomerJobLinkInput,
+  call?: ApiCallOptions
+): Promise<Result<LienJob>> {
+  return client.request<LienJob>({
+    method: "PUT",
+    path: "/api/v1/lien/jobs/{id}/customer-job",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "lienLinkCustomerJob",
   });
 }
 
