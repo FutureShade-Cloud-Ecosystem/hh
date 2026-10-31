@@ -8479,6 +8479,9 @@ export type TenantInvoice = {
   holdback_cents: number;
   total_cents: number;
   balance_cents: number;
+  payoff_cents?: number;
+  discount_cents?: number;
+  discount_by?: string;
 };
 export type TenantInvoiceLine = {
   line_no: number;

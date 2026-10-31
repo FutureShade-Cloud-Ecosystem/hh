@@ -1,12 +1,14 @@
 package portal
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -55,7 +57,56 @@ func (h *Handler) listInvoices(w http.ResponseWriter, r *http.Request) {
 		items = items[:p.Limit]
 		next = items[len(items)-1].IssueDate.Format("2006-01-02") + "/" + items[len(items)-1].InvoiceNo
 	}
-	httpx.WriteCursorPage(w, items, next, p.Limit)
+	rows, err := h.withPayoffs(ctx, caller.CustomerID, items)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteCursorPage(w, rows, next, p.Limit)
+}
+
+// portalInvoice is an invoice with what a payment today would charge (TM-2b). The three extra
+// fields appear only on an open invoice the portal can pay: payoff_cents is the amount charged,
+// discount_cents the early payment discount inside the terms' window (absent outside it), and
+// discount_by the last house day the discount runs.
+type portalInvoice struct {
+	billing.Invoice
+	PayoffCents   *int64 `json:"payoff_cents,omitempty"`
+	DiscountCents *int64 `json:"discount_cents,omitempty"`
+	DiscountBy    string `json:"discount_by,omitempty"`
+}
+
+// withPayoffs attaches the payoff quote to each open invoice. With no payment service wired the
+// rows go out as they were.
+func (h *Handler) withPayoffs(ctx context.Context, customerID string, items []billing.Invoice) ([]portalInvoice, error) {
+	out := make([]portalInvoice, 0, len(items))
+	var open []string
+	for _, it := range items {
+		if it.Status == "FINALIZED" || it.Status == "PARTIALLY_PAID" {
+			open = append(open, it.ID)
+		}
+	}
+	var quotes map[string]payments.PayoffQuote
+	if h.paymentSvc != nil && len(open) > 0 {
+		var err error
+		if quotes, err = h.paymentSvc.Payoffs(ctx, customerID, open); err != nil {
+			return nil, err
+		}
+	}
+	for _, it := range items {
+		row := portalInvoice{Invoice: it}
+		if q, ok := quotes[it.ID]; ok {
+			payoff := q.PayoffCents
+			row.PayoffCents = &payoff
+			if q.DiscountCents > 0 {
+				d := q.DiscountCents
+				row.DiscountCents = &d
+				row.DiscountBy = q.DiscountDay
+			}
+		}
+		out = append(out, row)
+	}
+	return out, nil
 }
 
 // parseInvoiceCursor decodes a minted tenant invoice-list key (issue_date /

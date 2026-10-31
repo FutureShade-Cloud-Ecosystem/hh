@@ -1669,6 +1669,23 @@ components:
         holdback_cents: { type: integer, format: int64 }
         total_cents: { type: integer, format: int64 }
         balance_cents: { type: integer, format: int64, description: The open amount }
+        payoff_cents:
+          type: integer
+          format: int64
+          description: >-
+            What a payment today would charge: the open amount less the
+            holdback, less the early payment discount the invoice's own terms
+            allow on the dealer's day. Present only on an open invoice the
+            portal can pay. The pay flow charges exactly this amount.
+        discount_cents:
+          type: integer
+          format: int64
+          description: >-
+            The early payment discount inside payoff_cents. Present only
+            inside the discount window.
+        discount_by:
+          type: string
+          description: The last day of the dealer's calendar the discount runs (YYYY-MM-DD). Present with discount_cents.
 
     TenantInvoiceLine:
       type: object

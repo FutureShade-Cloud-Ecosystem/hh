@@ -223,6 +223,34 @@ func (s *Service) ListPayments(ctx context.Context, customerID string) ([]Paymen
 	return s.store.ListPayments(ctx, customerID)
 }
 
+// PayoffQuote is what the portal shows beside an open invoice (TM-2b): the amount a payment today
+// would charge, the early payment discount inside it and the last house day that discount runs.
+type PayoffQuote struct {
+	PayoffCents   int64
+	DiscountCents int64
+	DiscountDay   string
+}
+
+// Payoffs quotes the payoff of each named invoice, by invoice id. It is the same read the pay flow
+// charges on, so what the screen shows is what the card is charged. An invoice that is not payable
+// (not open, or fully held back) is left out.
+func (s *Service) Payoffs(ctx context.Context, customerID string, invoiceIDs []string) (map[string]PayoffQuote, error) {
+	if customerID == "" {
+		return nil, httpx.BadRequestf("customer id is required")
+	}
+	allocs, err := s.store.PayableInvoices(ctx, customerID, invoiceIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]PayoffQuote, len(allocs))
+	for _, a := range allocs {
+		if a.AmountCents > 0 && isPayableStatus(a.Status) {
+			out[a.InvoiceID] = PayoffQuote{PayoffCents: a.AmountCents, DiscountCents: a.DiscountCents, DiscountDay: a.DiscountDay}
+		}
+	}
+	return out, nil
+}
+
 // Pay runs the multi-invoice pay flow: validate the selection, derive the summed payable
 // amount server-side (EXCLUDING holdback), run ONE gateway charge under a server-bound
 // idempotency key, then atomically split the settled amount across allocations.

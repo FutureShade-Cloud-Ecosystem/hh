@@ -9806,6 +9806,9 @@ type TenantInvoice struct {
 	HoldbackCents int64     `json:"holdback_cents"`
 	TotalCents    int64     `json:"total_cents"`
 	BalanceCents  int64     `json:"balance_cents"`
+	PayoffCents   *int64    `json:"payoff_cents,omitempty"`
+	DiscountCents *int64    `json:"discount_cents,omitempty"`
+	DiscountBy    *string   `json:"discount_by,omitempty"`
 }
 
 type TenantInvoiceLine struct {
