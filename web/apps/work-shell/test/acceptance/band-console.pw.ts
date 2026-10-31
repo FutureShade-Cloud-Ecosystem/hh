@@ -39,7 +39,8 @@ test("a shell served no console config stays DEMO", async ({ page, shellUrl }) =
 // UX-127: every frame is served the console config too (the door frame and a framed app). The shell band names
 // the dealer with no DEMO, a framed app wears no second band, and its page copy has no "Demo data only". The
 // copy check bites on the real desk bundles (WS_DIST names an assembled dist); the composed fixture pages have none.
-test("a console box serves its config to every frame: dealer band, no second band, no demo-data words", async ({ page, shellUrl }) => {
+for (const appId of ["buying-and-stock", "manager-home"]) {
+test(`a console box serves its config to every frame: dealer band, no second band, no demo-data words (${appId})`, async ({ page, shellUrl }) => {
   await useConsole(page, shellUrl);
   await page.route("**/config.json", (route) => route.fulfill({ json: CONSOLE_CONFIG }));
   await page.route("https://console.invalid/**", (route) => route.abort());
@@ -50,8 +51,8 @@ test("a console box serves its config to every frame: dealer band, no second ban
   await expect(band).toContainText("Acme Stone");
   await expect(band.getByText(/^demo$/i)).toHaveCount(0);
   await page.locator("hh-shell-header button.selector").click();
-  await page.locator('hh-shell-header .panel .mi[data-app="buying-and-stock"]').click();
-  await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-current-app", "buying-and-stock");
+  await page.locator(`hh-shell-header .panel .mi[data-app="${appId}"]`).click();
+  await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-current-app", appId);
   const frames = page.frames().filter((f) => f !== page.mainFrame());
   expect(frames.length).toBeGreaterThan(0);
   for (const frame of frames) {
@@ -59,3 +60,4 @@ test("a console box serves its config to every frame: dealer band, no second ban
     await expect(frame.locator("body")).not.toContainText("Demo data only");
   }
 });
+}
