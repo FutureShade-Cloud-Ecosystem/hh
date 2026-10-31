@@ -555,6 +555,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	).WithUserLinker(link).RegisterRoutes(r, g)
 	billing.NewWriteOffHandler(billing.NewWriteOffService(billingRepo).WithAudit(auditSvc), log).
 		WithUserLinker(link).RegisterRoutes(r, g)
+	// RT-3: the holdback release. The repository carries the lien seam (holdBillingRepo), so the column and
+	// the ledger move together; the act is the Controller's.
+	billing.NewHoldbackReleaseHandler(billingRepo, billing.NewHoldbackReleaseService(billingRepo).WithAudit(auditSvc), log).
+		WithUserLinker(link).RegisterRoutes(r, g)
 
 	// The dispatch gate seam (W3-C closes at the union): Swarm B's billing
 	// predicate through dispatch's consumer-declared gate.

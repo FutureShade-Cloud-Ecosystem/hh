@@ -639,6 +639,56 @@ type BillingWriteOffReversed struct {
 	Replayed                 bool   `json:"replayed"`
 }
 
+type BillingHoldbackDueRow struct {
+	InvoiceId         string  `json:"invoice_id"`
+	InvoiceNo         string  `json:"invoice_no"`
+	CustomerId        string  `json:"customer_id"`
+	CustomerJobId     string  `json:"customer_job_id"`
+	LienJobId         *string `json:"lien_job_id,omitempty"`
+	LienJobNo         *string `json:"lien_job_no,omitempty"`
+	BranchId          string  `json:"branch_id"`
+	HoldbackCents     int64   `json:"holdback_cents"`
+	Basis             *string `json:"basis,omitempty"`
+	BasisDate         *string `json:"basis_date,omitempty"`
+	PreserveDays      *int    `json:"preserve_days,omitempty"`
+	LastDayToPreserve *string `json:"last_day_to_preserve,omitempty"`
+	ReleasableOn      *string `json:"releasable_on,omitempty"`
+	Due               bool    `json:"due"`
+	BlockedKind       *string `json:"blocked_kind,omitempty"`
+	BlockedReason     *string `json:"blocked_reason,omitempty"`
+}
+
+type BillingHoldbackBranchDue struct {
+	BranchId string `json:"branch_id"`
+	DueCents int64  `json:"due_cents"`
+}
+
+type BillingHoldbackDueToRelease struct {
+	Items    []BillingHoldbackDueRow    `json:"items"`
+	Branches []BillingHoldbackBranchDue `json:"branches"`
+}
+
+type BillingHoldbackReleaseInput struct {
+	CustomerJobId  string `json:"customer_job_id"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type BillingHoldbackReleasedInvoice struct {
+	InvoiceId   string `json:"invoice_id"`
+	InvoiceNo   string `json:"invoice_no"`
+	BranchId    string `json:"branch_id"`
+	ReleaseId   string `json:"release_id"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+type BillingHoldbackRelease struct {
+	CustomerJobId string                           `json:"customer_job_id"`
+	ReleasedOn    string                           `json:"released_on"`
+	TotalCents    int64                            `json:"total_cents"`
+	Items         []BillingHoldbackReleasedInvoice `json:"items"`
+	Replayed      bool                             `json:"replayed"`
+}
+
 type BillingCreditApplication struct {
 	ApplicationId        string                         `json:"application_id"`
 	CreditKind           string                         `json:"credit_kind"`

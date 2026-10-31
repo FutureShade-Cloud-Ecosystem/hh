@@ -39,8 +39,9 @@ test("two fresh generations are byte-identical and match the committed tree", ()
     // reportingUpdateSavedReport, reportingDeleteSavedReport, reportingRunSavedReport and
     // reportingExportSavedReportCsv), plus RT-1's five holdback rule routes, plus FX-2b's three AP
     // revaluation routes (purchasingRunAPRevaluation, purchasingReverseAPRevaluation and
-    // purchasingListAPRevaluations): 837.
-    if (!out1.includes("837 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
+    // purchasingListAPRevaluations), plus RT-3's billingListHoldbackDueToRelease and
+    // billingReleaseHoldback: 839.
+    if (!out1.includes("839 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
     const a = snapshot(one);
     const b = snapshot(two);
     const c = snapshot(committed);
