@@ -226,6 +226,15 @@ func (w *InvoiceWriter) IssueCreditMemo(ctx context.Context, in CreditMemoInput)
 	if doc, ok, err := w.findByKey(ctx, in.IdempotencyKey); err != nil {
 		return InvoiceDoc{}, err
 	} else if ok {
+		// The fast path answers with the memo the key named only when it is the same credit; a racing loser whose
+		// pre check ran before the winner committed lands here, and must get the same 409 as the fallback below.
+		same, cerr := w.sameCreditBody(ctx, doc, in)
+		if cerr != nil {
+			return InvoiceDoc{}, cerr
+		}
+		if !same {
+			return InvoiceDoc{}, &creditMemoKeyConflict{msg: "this idempotency key already named a different credit; a key belongs to the credit that first used it"}
+		}
 		doc.Reused = true
 		return doc, nil
 	}
