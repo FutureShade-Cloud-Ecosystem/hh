@@ -250,3 +250,14 @@ test('assist is off by default: a host with no panel gets no dead Ask TanyAI but
   assert.equal((markup.match(/data-action="assist"/g) ?? []).length, 0);
   assert.equal(new ShellHeader().assist, false);
 });
+
+test('a pinned pin in its disabled state carries a non-brand ring and filled pin head so pinned reads without brand colour', () => {
+  const disabledPinned = declsFor(headerRules, ".icon-btn[aria-pressed='true']:disabled");
+  assert.equal(
+    disabledPinned['box-shadow'],
+    'inset 0 0 0 2px var(--hh-disabled-ink)',
+    'the disabled pinned button carries a 2px inset ring in --hh-disabled-ink',
+  );
+  const head = declsFor(headerRules, ".icon-btn[aria-pressed='true'] svg path:last-child");
+  assert.equal(head['fill'], 'currentColor', 'the pinned icon fills its head in currentColor');
+});

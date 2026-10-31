@@ -150,8 +150,13 @@ export const payBalanceStyles = [heldOrderStyles, css`
     flex: 1 1 0;
     min-width: 0;
   }
+  .pay-balance .tenders button .picked {
+    margin-left: 5px;
+    font-weight: 700;
+  }
   .pay-balance .tenders button[aria-pressed="true"] {
     border-color: var(--hos-stone-amber);
+    background: color-mix(in srgb, var(--hos-stone-amber) 22%, transparent);
     font-weight: 600;
   }
   /* A tender tile that is chosen and held is a disabled control. The selected
@@ -162,6 +167,7 @@ export const payBalanceStyles = [heldOrderStyles, css`
     background: var(--hh-disabled-fill);
     border-color: var(--hh-disabled-line);
     color: var(--hh-disabled-ink);
+    box-shadow: inset 0 0 0 1px var(--hh-disabled-ink);
     opacity: 1;
     cursor: not-allowed;
   }
@@ -328,7 +334,7 @@ function renderOrder(flow: PayBalanceFlow, order: OwingOrder): TemplateResult {
               aria-pressed=${flow.method === m ? "true" : "false"}
               ?disabled=${flow.taking}
             >
-              ${m === "CARD" ? "Card" : "Cash"}
+              ${m === "CARD" ? "Card" : "Cash"}${flow.method === m ? html`<span class="picked" aria-hidden="true">&#10003;</span>` : nothing}
             </button>`,
           )}
         </div>
