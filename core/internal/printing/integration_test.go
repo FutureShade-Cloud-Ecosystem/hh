@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"os"
 	"strings"
 	"testing"
@@ -41,6 +42,9 @@ func intPool(t *testing.T) *pgxpool.Pool {
 		fail("integration DB not reachable: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	// Registered after pool.Close, so it runs before the pool closes; a leg's own cleanups
+	// (added later) run first and the sweep deletes what they left (plan row 0.43).
+	legsweep.Register(t, pool)
 	return pool
 }
 

@@ -1,6 +1,4 @@
-//go:build integration
-
-package pos
+package legsweep
 
 import (
 	"reflect"
