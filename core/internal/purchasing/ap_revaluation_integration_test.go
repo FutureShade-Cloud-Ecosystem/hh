@@ -47,12 +47,22 @@ func fx2Instant(day, hour, min int) time.Time {
 	return time.Date(2026, 9, day, hour, min, 0, 0, fx2Loc())
 }
 
-// fx2Wipe removes every revaluation journal in either test branch, before the world is
-// posted and again after the test ends, so a rerun against the same database starts clean.
-func fx2Wipe(rig *apAgingTestRig) {
+// fx2Wipe removes every revaluation run record and journal in either test branch, before the
+// world is posted and again after the test ends, so a rerun against the same database starts
+// clean. The records go first (they point at the journals), the lines before their headers, and
+// every delete fails the test naming its table.
+func fx2Wipe(t *testing.T, rig *apAgingTestRig) {
+	t.Helper()
 	bg := context.Background()
-	_, _ = rig.pool.Exec(bg, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE idempotency_key LIKE 'purchasing.ap.revaluation:%')`)
-	_, _ = rig.pool.Exec(bg, `DELETE FROM gl_journals WHERE idempotency_key LIKE 'purchasing.ap.revaluation:%'`)
+	for _, step := range []struct{ table, sql string }{
+		{"ap_revaluation_runs", `DELETE FROM ap_revaluation_runs`},
+		{"gl_journal_lines", `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE idempotency_key LIKE 'purchasing.ap.revaluation:%')`},
+		{"gl_journals", `DELETE FROM gl_journals WHERE idempotency_key LIKE 'purchasing.ap.revaluation:%'`},
+	} {
+		if _, err := rig.pool.Exec(bg, step.sql); err != nil {
+			t.Errorf("cleanup: delete from %s: %v", step.table, err)
+		}
+	}
 }
 
 // fx2Rig is the aging rig with the revaluation journals' cleanup registered.
@@ -61,8 +71,8 @@ func fx2Rig(t *testing.T) *apAgingTestRig {
 	rig := newAPAgingRig(t)
 	rig.ensurePeriod(t, 2026, 9)
 	rig.ensurePeriod(t, 2026, 10)
-	fx2Wipe(rig)
-	t.Cleanup(func() { fx2Wipe(rig) })
+	fx2Wipe(t, rig)
+	t.Cleanup(func() { fx2Wipe(t, rig) })
 	return rig
 }
 
@@ -247,8 +257,8 @@ func TestIntegration_W3FX2_RevaluationRun(t *testing.T) {
 		if legs["2100"] != ([2]int64{0, fx2RunDiff}) {
 			t.Fatalf("W3-FX2 red: journal 2100 = %v, want CR %d (the liability grew at the month end rate)", legs["2100"], fx2RunDiff)
 		}
-		if legs["6310"] != ([2]int64{fx2RunDiff, 0}) {
-			t.Fatalf("W3-FX2 red: journal FX = %v, want DR %d against 2100", legs["6310"], fx2RunDiff)
+		if legs["6315"] != ([2]int64{fx2RunDiff, 0}) {
+			t.Fatalf("W3-FX2 red: journal FX = %v, want DR %d against 2100 on the unrealised account 6315", legs["6315"], fx2RunDiff)
 		}
 
 		var memo, postedAtUTC, fxMemo, apMemo string
@@ -434,8 +444,8 @@ func TestIntegration_W3FX2_ReversalOnTheNextHouseDay(t *testing.T) {
 		if legs["2100"] != ([2]int64{fx2RunDiff, 0}) {
 			t.Fatalf("W3-FX2 red: reversal 2100 = %v, want DR %d (the run's credit swapped)", legs["2100"], fx2RunDiff)
 		}
-		if legs["6310"] != ([2]int64{0, fx2RunDiff}) {
-			t.Fatalf("W3-FX2 red: reversal FX = %v, want CR %d", legs["6310"], fx2RunDiff)
+		if legs["6315"] != ([2]int64{0, fx2RunDiff}) {
+			t.Fatalf("W3-FX2 red: reversal FX = %v, want CR %d on 6315", legs["6315"], fx2RunDiff)
 		}
 
 		var memo, postedAtUTC, periodMonth string

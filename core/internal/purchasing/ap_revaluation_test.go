@@ -148,8 +148,8 @@ func TestW3FX2_RevaluationLegs(t *testing.T) {
 	if len(up) != 2 || up[0].AccountCode != glAccountAPCode || up[0].CreditCents != 10_000 || up[0].DebitCents != 0 {
 		t.Fatalf("liability up legs = %+v, want 2100 CR 10000 first", up)
 	}
-	if up[1].AccountCode != glAccountFXGainLoss || up[1].DebitCents != 10_000 || up[1].CreditCents != 0 {
-		t.Fatalf("liability up FX leg = %+v, want the FX account DR 10000", up)
+	if up[1].AccountCode != glAccountFXUnrealised || up[1].DebitCents != 10_000 || up[1].CreditCents != 0 {
+		t.Fatalf("liability up FX leg = %+v, want the unrealised FX account 6315 DR 10000", up)
 	}
 	down := revaluationLegs(-4_000, "2026-09")
 	if down[0].DebitCents != 4_000 || down[0].CreditCents != 0 {
@@ -157,6 +157,15 @@ func TestW3FX2_RevaluationLegs(t *testing.T) {
 	}
 	if down[1].CreditCents != 4_000 || down[1].DebitCents != 0 {
 		t.Fatalf("liability down FX leg = %+v, want the FX account CR 4000", down)
+	}
+	// The old path is gone: the revaluation's FX leg never rides the realised account.
+	if glAccountFXUnrealised != "6315" || glAccountFXUnrealised == glAccountFXGainLoss {
+		t.Fatalf("the unrealised account = %q, want 6315 and not the realised %q", glAccountFXUnrealised, glAccountFXGainLoss)
+	}
+	for _, l := range append(up, down...) {
+		if l.AccountCode == glAccountFXGainLoss {
+			t.Fatalf("a revaluation leg rides the realised FX account %s: %+v", glAccountFXGainLoss, l)
+		}
 	}
 	if got := postedLegsDifference(up); got != 10_000 {
 		t.Fatalf("postedLegsDifference(up) = %d, want 10000", got)

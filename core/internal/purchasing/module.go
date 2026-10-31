@@ -435,6 +435,11 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// the post beside it, and the replay key rides the Idempotency-Key header.
 	r.Handle("POST /api/v1/purchasing/bills/{id}/payments", g.RequireManager(h.staff(h.payBill)))
 	r.Handle("GET /api/v1/purchasing/ap-aging", g.RequireManager(h.staff(h.apAging)))
+	// W3 FX-2b. The month end revaluation is the Controller's: the leadership tier gate, narrowed to
+	// the Controller roles in the handler, because the rate is a Controller's input.
+	r.Handle("POST /api/v1/purchasing/ap-revaluations", g.RequireAdmin(h.staff(h.runAPRevaluation)))
+	r.Handle("GET /api/v1/purchasing/ap-revaluations", g.RequireAdmin(h.staff(h.listAPRevaluations)))
+	r.Handle("POST /api/v1/purchasing/ap-revaluations/{month}/reversal", g.RequireAdmin(h.staff(h.reverseAPRevaluation)))
 	// The T5018 report and its CSV: the same door as the payables board beside it, because the
 	// report IS a payables read (the year's payments to the flagged subcontractors), and the same
 	// report must not be a wider door in its file form than in its screen form.

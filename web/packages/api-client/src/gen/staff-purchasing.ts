@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { PurchasingAPAgingPage, PurchasingAddLineRequest, PurchasingApplyVendorCreditRequest, PurchasingApplyWarrantyCreditRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingCreateVendorCreditRequest, PurchasingCreateVendorRequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPayBillRequest, PurchasingPaymentRun, PurchasingPaymentRunPage, PurchasingPaymentRunStatus, PurchasingPolicy, PurchasingPostBillRequest, PurchasingProposePaymentRunRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingSetVendorT5018Request, PurchasingT5018Report, PurchasingTolerance, PurchasingTransitionRequest, PurchasingUpdateLineRequest, PurchasingUpdatePaymentRunRequest, PurchasingUpdateVendorRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorCreditDetail, PurchasingVendorCreditPage, PurchasingVendorCreditStatus, PurchasingVendorMaster, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
+import type { PurchasingAPAgingPage, PurchasingAPRevaluationReversal, PurchasingAPRevaluationRun, PurchasingAPRevaluationRunList, PurchasingAddLineRequest, PurchasingApplyVendorCreditRequest, PurchasingApplyWarrantyCreditRequest, PurchasingAttachLandedCostRequest, PurchasingBillDetail, PurchasingBillPage, PurchasingBillStatus, PurchasingCreateBillRequest, PurchasingCreatePORequest, PurchasingCreateVendorCreditRequest, PurchasingCreateVendorRequest, PurchasingIncomingLinePage, PurchasingMatchState, PurchasingPO, PurchasingPOCosts, PurchasingPODetail, PurchasingPOPage, PurchasingPOSend, PurchasingPOSendPage, PurchasingPOStatus, PurchasingPayBillRequest, PurchasingPaymentRun, PurchasingPaymentRunPage, PurchasingPaymentRunStatus, PurchasingPolicy, PurchasingPostBillRequest, PurchasingProposePaymentRunRequest, PurchasingReceipt, PurchasingReceiveRequest, PurchasingReverseAPRevaluationRequest, PurchasingRunAPRevaluationRequest, PurchasingSendPORequest, PurchasingSetDeliveryMethodRequest, PurchasingSetExpectedDateRequest, PurchasingSetPolicyRequest, PurchasingSetToleranceRequest, PurchasingSetVendorT5018Request, PurchasingT5018Report, PurchasingTolerance, PurchasingTransitionRequest, PurchasingUpdateLineRequest, PurchasingUpdatePaymentRunRequest, PurchasingUpdateVendorRequest, PurchasingVendorContactResult, PurchasingVendorContactWrite, PurchasingVendorCreditDetail, PurchasingVendorCreditPage, PurchasingVendorCreditStatus, PurchasingVendorMaster, PurchasingVendorPage, PurchasingVendorSKU, PurchasingVendorSKUPage, PurchasingVendorSKUWrite, PurchasingWorklistItemPage } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions, type ApiKeyedCallOptions } from "../http.js";
 
@@ -19,6 +19,53 @@ export async function purchasingGetAPAging(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "purchasingGetAPAging",
+  });
+}
+
+export async function purchasingListAPRevaluations(
+  client: ApiClient,
+  opts: { branch_id: string },
+  call?: ApiCallOptions
+): Promise<Result<PurchasingAPRevaluationRunList>> {
+  return client.request<PurchasingAPRevaluationRunList>({
+    method: "GET",
+    path: "/api/v1/purchasing/ap-revaluations",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingListAPRevaluations",
+  });
+}
+
+export async function purchasingRunAPRevaluation(
+  client: ApiClient,
+  body: PurchasingRunAPRevaluationRequest,
+  call?: ApiCallOptions
+): Promise<Result<PurchasingAPRevaluationRun>> {
+  return client.request<PurchasingAPRevaluationRun>({
+    method: "POST",
+    path: "/api/v1/purchasing/ap-revaluations",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingRunAPRevaluation",
+  });
+}
+
+export async function purchasingReverseAPRevaluation(
+  client: ApiClient,
+  month: string | number,
+  body: PurchasingReverseAPRevaluationRequest,
+  call?: ApiCallOptions
+): Promise<Result<PurchasingAPRevaluationReversal>> {
+  return client.request<PurchasingAPRevaluationReversal>({
+    method: "POST",
+    path: "/api/v1/purchasing/ap-revaluations/{month}/reversal",
+    pathParams: { month },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "purchasingReverseAPRevaluation",
   });
 }
 
