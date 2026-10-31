@@ -264,3 +264,36 @@ func TestSortDatasetRows_IsTotalSoAReRunIsTheSameRows(t *testing.T) {
 		t.Fatalf("descending by total: %v", a)
 	}
 }
+
+func TestCompareCells_AMismatchedCellSortsFirstAndARerunIsEqual(t *testing.T) {
+	cols := []DatasetColumn{
+		datasetColumn("total_cents", "Balance", KindCents, false, false, true),
+		datasetColumn("is_open", "Open", KindBool, false, false, false),
+	}
+	mk := func() [][]any {
+		return [][]any{{int64(3), true}, {nil, false}, {int64(1), nil}, {nil, nil}, {int64(2), true}}
+	}
+	if compareCells(KindCents, nil, int64(-5)) >= 0 || compareCells(KindCents, int64(-5), nil) <= 0 {
+		t.Fatalf("a nil cell sorts before any typed cell")
+	}
+	if compareCells(KindBool, nil, false) >= 0 || compareCells(KindBool, false, nil) <= 0 {
+		t.Fatalf("a nil bool cell sorts before false")
+	}
+	if compareCells(KindCents, nil, nil) != 0 {
+		t.Fatalf("two mismatched cells are equal")
+	}
+	a, b := mk(), mk()
+	// a second order of the same rows
+	b[0], b[4] = b[4], b[0]
+	b[1], b[3] = b[3], b[1]
+	sortDatasetRows(cols, a, nil)
+	sortDatasetRows(cols, b, nil)
+	for i := range a {
+		if a[i][0] != b[i][0] || a[i][1] != b[i][1] {
+			t.Fatalf("a nil cell broke rerun equality: %v vs %v", a, b)
+		}
+	}
+	if a[0][0] != nil || a[1][0] != nil {
+		t.Fatalf("nil cells sort first: %v", a)
+	}
+}

@@ -247,8 +247,14 @@ func sortDatasetRows(cols []DatasetColumn, rows [][]any, keys []SavedReportSort)
 
 // compareCells orders two cells of one kind. A cell that is not the kind's Go type sorts first.
 func compareCells(kind string, a, b any) int {
-	if c, ok := datasetCompare(kind, a, b); ok {
-		return c
+	av, bv := cellIsKind(kind, a), cellIsKind(kind, b)
+	switch {
+	case !av && !bv:
+		return 0
+	case !av:
+		return -1
+	case !bv:
+		return 1
 	}
 	if kind == KindBool {
 		ab, _ := a.(bool)
@@ -261,7 +267,18 @@ func compareCells(kind string, a, b any) int {
 		}
 		return 1
 	}
-	return 0
+	c, _ := datasetCompare(kind, a, b)
+	return c
+}
+
+// cellIsKind reports whether v is the Go type the kind's cells carry.
+func cellIsKind(kind string, v any) bool {
+	if kind == KindBool {
+		_, ok := v.(bool)
+		return ok
+	}
+	_, ok := datasetCompare(kind, v, v)
+	return ok
 }
 
 // renderDatasetCSV writes one run as RFC 4180 CSV: the column labels, one record per row in the run's
