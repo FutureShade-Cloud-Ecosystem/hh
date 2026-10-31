@@ -1436,6 +1436,16 @@ export class PricingApi {
     return { ok: true, value: page(answer.value).map(toPricingAuditRow) };
   }
 
+  /** One product's dealer words (name, else SKU) for the audit's entity cell; "" when the read cannot name it. */
+  async productName(id: string): Promise<Result<string>> {
+    const answer = await staffProduct.productGet(this.#client, id);
+    if (!answer.ok) return answer;
+    const row = answer.value as unknown as Bag;
+    const name = typeof row.name === "string" ? row.name : "";
+    const sku = typeof row.sku === "string" ? row.sku : "";
+    return { ok: true, value: name !== "" ? name : sku };
+  }
+
   /** The change log, filtered by product or batch. */
   async changeLog(query: ChangeLogQuery = {}): Promise<Result<readonly ChangeLogRow[]>> {
     const answer = await staffPricing.pricingListChangeLog(this.#client, {

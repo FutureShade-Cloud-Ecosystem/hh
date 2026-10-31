@@ -5,9 +5,27 @@
 // development and test double only; the real routes are the core's, and the
 // staff identity admin family is contract-only there until the auth lane
 // lands it.
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
 const port = Number(process.env.DA_STUB_PORT ?? 56610);
+
+// The demo seed's own id derivation (core/cmd/core/demoseed_ids.go:62): a
+// UUIDv5 over the seed's fixed namespace, so a fixture row can carry the very
+// id the seed writes on a demo box. The pricing audit's margin enforcement
+// rows name an uncategorised product by exactly this id
+// (core/cmd/core/demoseed_quotes.go:363), and the staff ids below are the
+// demo populate's pinned literals (core/internal/demo/populate.go:70-78).
+const DEMO_SEED_NAMESPACE = "d3305eed-0000-4000-9000-000000000000";
+
+function demoSeedId(key) {
+  const ns = Buffer.from(DEMO_SEED_NAMESPACE.replace(/-/g, ""), "hex");
+  const h = createHash("sha1").update(ns).update(Buffer.from(key, "utf8")).digest();
+  h[6] = (h[6] & 0x0f) | 0x50;
+  h[8] = (h[8] & 0x3f) | 0x80;
+  const s = h.toString("hex");
+  return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20, 32)}`;
+}
 
 // The real flows route lists the closed table's logins; this app's door
 // draws a card per flow it answers here. Two: the dealer admin (the
@@ -111,9 +129,33 @@ function buildStaff() {
       branch_ids: [],
     },
     {
+      // The demo populate's Sales manager login (populate.go managerUserID),
+      // the persona the demo seed names on the pricing audit's bypass rows.
+      user_id: "de110000-0000-4000-9000-000000000002",
+      email: "sales.manager@hh-demo.invalid",
+      display_name: "Sales manager (demo)",
+      role_code: "SALES_MANAGER",
+      role_name: "Sales Manager",
+      tier: 2,
+      scope: "BRANCH",
+      branch_ids: [PLM],
+    },
+    {
       user_id: USERS["inside-sales"].user_id,
       email: USERS["inside-sales"].email,
       display_name: USERS["inside-sales"].display_name,
+      role_code: "INSIDE_SALES",
+      role_name: "Inside Sales",
+      tier: 3,
+      scope: "BRANCH",
+      branch_ids: [PLM],
+    },
+    {
+      // The demo populate's Sales login (populate.go salesUserID), the owner
+      // persona the demo seed names on the pricing audit's update rows.
+      user_id: "de110000-0000-4000-9000-000000000001",
+      email: "sales@hh-demo.invalid",
+      display_name: "Sales (demo)",
       role_code: "INSIDE_SALES",
       role_name: "Inside Sales",
       tier: 3,
@@ -375,14 +417,45 @@ function buildProducts() {
       is_featured: false,
       is_special_order: false,
       contractor_pricing_event_discount: false,
-      full_skid_quantity: 144,
-      layer_quantity: 36,
-      pallet_count: 4,
+      full_skid_quantity: null,
+      layer_quantity: null,
+      pallet_count: null,
       minimum_order_qty: null,
       is_active: true,
       metadata: {},
       list_price_cents: null,
       list_price_uom: "",
+    },
+    {
+      // The demo seed's Brussels paver (demoseed_plan.go P02), under the very
+      // id the seed mints for it, so the pricing audit's product entity reads
+      // the way it reads on a demo box.
+      id: demoSeedId("product:P02"),
+      sku: "DEMO-PAV-BRUSSELS",
+      name: "Brussels Dimensional, Sandstone (demo)",
+      description: "Seeded demo catalogue item.",
+      manufacturer: "",
+      collection: "",
+      color: "Sandstone",
+      color_family: "Sand",
+      finish: "",
+      application: "Paver",
+      texture: "",
+      product_size: "",
+      sold_by: "PC",
+      base_uom: "PC",
+      dimensions_lwh: "",
+      is_featured: false,
+      is_special_order: false,
+      contractor_pricing_event_discount: false,
+      full_skid_quantity: 400,
+      layer_quantity: null,
+      pallet_count: null,
+      minimum_order_qty: null,
+      is_active: true,
+      metadata: { demo_seed: "hos-demoseed-v1" },
+      list_price_cents: 745,
+      list_price_uom: "PC",
     },
   ];
 }
@@ -1965,7 +2038,7 @@ async function handle(req, res) {
       {
         id: "0e110000-0000-4000-9000-0000000000a2",
         entity_type: "customer_override",
-        entity_id: "8a110000-0000-4000-9000-0000000000a1",
+        entity_id: "ca7a0000-0000-4000-9000-0000000000a2",
         action: "BYPASS",
         field_name: "",
         old_value: "",
@@ -1973,6 +2046,34 @@ async function handle(req, res) {
         user_id: "da110000-0000-4000-9000-000000000002",
         created_at: ago(1),
         bypass_reason: "APPROVED_OVERRIDE",
+      },
+      {
+        // Two rows in the demo seed's own shapes (demoseed_quotes.go:365-391):
+        // a bypass the Sales manager cleared against the category, and a rule
+        // price row whose entity is the product's own seeded id, as the floor
+        // seam writes it when the line names no category.
+        id: "0e110000-0000-4000-9000-0000000000a3",
+        entity_type: "margin_enforcement",
+        entity_id: "ca7a0000-0000-4000-9000-0000000000a1",
+        action: "BYPASS",
+        field_name: "line_1",
+        old_value: "rule 745 at 12%",
+        new_value: "net 655 margin 1189 floor 2000",
+        user_id: "de110000-0000-4000-9000-000000000002",
+        created_at: ago(2),
+        bypass_reason: "MANAGER_SCOPE_OVERRIDE",
+      },
+      {
+        id: "0e110000-0000-4000-9000-0000000000a4",
+        entity_type: "margin_enforcement",
+        entity_id: demoSeedId("product:P02"),
+        action: "UPDATE",
+        field_name: "line_1",
+        old_value: "rule 745 at 0%",
+        new_value: "net 745 margin 1189 floor 2000",
+        user_id: "de110000-0000-4000-9000-000000000001",
+        created_at: ago(2),
+        bypass_reason: "",
       },
     ].filter((e) => (entityType === "" || e.entity_type === entityType) && (action === "" || e.action === action));
     return json(res, { items: scenario === "empty-pricing" ? [] : items, next_cursor: null, limit: 200 });

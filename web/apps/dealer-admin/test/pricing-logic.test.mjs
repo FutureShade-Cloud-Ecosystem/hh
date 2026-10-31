@@ -585,3 +585,15 @@ test("pricing audit bypass reason maps server enums to plain words and unknown c
   assert.equal(pricingLogic.bypassReasonWord?.("FUTURE_SERVER_CODE"), "Unknown reason");
   assert.equal(pricingLogic.bypassReasonWord?.(""), "");
 });
+
+test("pricing audit change deltas format is_active booleans, starts_at/ends_at timestamps, and price_uom in dealer words (UX-120)", () => {
+  assert.equal(pricingLogic.pricingAuditFieldWord?.("is_active"), "state");
+  assert.equal(pricingLogic.pricingAuditFieldWord?.("starts_at"), "start date");
+  assert.equal(pricingLogic.pricingAuditFieldWord?.("ends_at"), "end date");
+  assert.equal(pricingLogic.pricingAuditFieldWord?.("price_uom"), "price unit");
+  assert.equal(deltaWords("true", "false", "is_active"), "Active to Retired");
+  assert.equal(deltaWords("false", "true", "is_active"), "Retired to Active");
+  assert.equal(deltaWords("2026-06-01T00:00:00Z", "2026-08-31T00:00:00Z", "starts_at"), "Jun 1 to Aug 31");
+  assert.equal(deltaWords("2026-08-31T23:59:59Z", "2026-09-30T23:59:59Z", "ends_at"), "Aug 31 to Sep 30");
+  assert.equal(deltaWords("SF", "PLT", "price_uom"), "square foot (SF) to pallet (PLT)");
+});

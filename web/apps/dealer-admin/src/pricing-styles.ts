@@ -193,6 +193,17 @@ export const pricingStyles = css`
     color: var(--hh-accent-text);
     border-color: var(--hh-accent-text);
   }
+  .cell-chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: var(--hh-s-4);
+    align-items: center;
+  }
+  @media (min-width: 901px) {
+    .cell-chips {
+      flex-wrap: nowrap;
+    }
+  }
 
   /* -- the editor's row of buttons and its hint ------------------------------------------ */
 
