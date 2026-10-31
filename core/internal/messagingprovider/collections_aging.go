@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // collections_aging.go, the read-only aging projection that feeds the AR sweep.
@@ -77,7 +79,7 @@ func (a *PgARAging) OverdueInvoices(ctx context.Context, asOf time.Time, minDays
 		WHERE x.bal > 0 AND ($1::date - x.due)::int >= $2
 		GROUP BY q.id, q.invoice_no, q.customer_id, q.name
 		ORDER BY days_past_due DESC, SUM(x.bal) DESC
-		LIMIT $3`, asOf.UTC(), minDays, limit, asOf)
+		LIMIT $3`, houseday.DefaultZone().Today(func() time.Time { return asOf }), minDays, limit, asOf)
 	if err != nil {
 		return nil, fmt.Errorf("messagingprovider: aging query: %w", err)
 	}
