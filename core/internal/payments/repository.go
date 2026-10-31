@@ -1301,7 +1301,8 @@ func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID str
 
 // checkQuotedDiscounts holds a portal quote to the invoice's own terms: a discount may be taken
 // only on an invoice that carries discount terms, may not pass the terms' percent of the payable
-// nor the room the running cap leaves, and with the money may not pass the payable.
+// nor the room the running cap leaves, and with the money must settle the whole open payable (the portal
+// always pays the whole open amount, so a payable that grew or shrank since the quote is refused).
 func (r *Repository) checkQuotedDiscounts(ctx context.Context, tx pgx.Tx, allocs []Allocation, rows []applyInvoiceRow) error {
 	var any bool
 	for _, a := range allocs {
@@ -1329,7 +1330,7 @@ func (r *Repository) checkQuotedDiscounts(ctx context.Context, tx pgx.Tx, allocs
 		bps := dctx.bps[row.TermsCode]
 		allowed := min(roundHalfEvenCents(payable, int64(bps)), dctx.room(row))
 		if row.DiscountDate == nil || row.TermsCode == "" || bps <= 0 || a.DiscountCents < 0 ||
-			a.DiscountCents > allowed || a.AmountCents+a.DiscountCents > payable {
+			a.DiscountCents > allowed || a.AmountCents+a.DiscountCents != payable {
 			return httpx.BadRequestf("invoice %q balance changed; refresh and retry", a.InvoiceID)
 		}
 	}
