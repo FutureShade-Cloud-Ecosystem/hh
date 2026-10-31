@@ -279,30 +279,50 @@ func renderDatasetCSV(res DatasetResult) []byte {
 		}
 		return text
 	}
+	// The TOTAL label goes in the first column that carries no total. When every column carries one, the
+	// file gets a leading label column (empty above the total row), so no total is ever dropped.
+	hasTotals := len(res.Totals) > 0 && len(res.Columns) > 0
+	labelAt := -1
+	if hasTotals {
+		for i, c := range res.Columns {
+			if _, ok := res.Totals[c.Name]; !ok {
+				labelAt = i
+				break
+			}
+		}
+	}
+	lead := hasTotals && labelAt < 0
+	put := func(rec []string) {
+		if lead {
+			rec = append([]string{""}, rec...)
+		}
+		_ = w.Write(rec)
+	}
 	headers := make([]string, len(res.Columns))
 	for i, c := range res.Columns {
 		headers[i] = csvsafe.Cell(c.Label)
 	}
-	_ = w.Write(headers)
+	put(headers)
 	for _, row := range res.Rows {
 		rec := make([]string, len(res.Columns))
 		for i, c := range res.Columns {
 			rec[i] = cell(c, row[i])
 		}
-		_ = w.Write(rec)
+		put(rec)
 	}
-	if len(res.Totals) > 0 && len(res.Columns) > 0 {
+	if hasTotals {
 		rec := make([]string, len(res.Columns))
-		rec[0] = "TOTAL"
 		for i, c := range res.Columns {
-			if i == 0 {
-				continue
-			}
 			if v, ok := res.Totals[c.Name]; ok {
 				rec[i] = formatCell(c.Kind, v)
 			}
 		}
-		_ = w.Write(rec)
+		if lead {
+			_ = w.Write(append([]string{"TOTAL"}, rec...))
+		} else {
+			rec[labelAt] = "TOTAL"
+			_ = w.Write(rec)
+		}
 	}
 	w.Flush()
 	return buf.Bytes()

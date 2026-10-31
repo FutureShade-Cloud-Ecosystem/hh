@@ -151,6 +151,50 @@ func TestRenderDatasetCSV_IsTheRunRowForRowWithMoneyAsTwoDecimals(t *testing.T) 
 	}
 }
 
+func csvTotalsRun() DatasetResult {
+	return DatasetResult{
+		Columns: []DatasetColumn{
+			datasetColumn("total_cents", "Balance", KindCents, false, false, true),
+			datasetColumn("customer_name", "Customer", KindText, false, true, false),
+			datasetColumn("current_cents", "Current", KindCents, false, false, true),
+		},
+		Rows: [][]any{
+			{int64(-1238), "Alpha", int64(5)},
+			{int64(100), "Beta", int64(7)},
+		},
+		RowCount: 2,
+		Totals:   map[string]any{"total_cents": int64(-1138), "current_cents": int64(12)},
+	}
+}
+
+func TestRenderDatasetCSV_AMoneyFirstColumnKeepsItsTotalAndTheLabelGoesToTheFirstColumnWithNoTotal(t *testing.T) {
+	recs := parseCSV(t, renderDatasetCSV(csvTotalsRun()))
+	last := recs[len(recs)-1]
+	if strings.Join(last, "|") != "-11.38|TOTAL|0.12" {
+		t.Fatalf("the total row must carry every money total, got %q", last)
+	}
+}
+
+func TestRenderDatasetCSV_EveryColumnMoneyGetsALeadingLabelColumn(t *testing.T) {
+	res := csvTotalsRun()
+	res.Columns = []DatasetColumn{res.Columns[0], res.Columns[2]}
+	res.Rows = [][]any{{int64(-1238), int64(5)}, {int64(100), int64(7)}}
+	recs := parseCSV(t, renderDatasetCSV(res))
+	want := []string{"TOTAL", "-11.38", "0.12"}
+	last := recs[len(recs)-1]
+	if strings.Join(last, "|") != strings.Join(want, "|") {
+		t.Fatalf("total row = %q, want %q", last, want)
+	}
+	for i, r := range recs {
+		if len(r) != 3 {
+			t.Fatalf("record %d has %d fields, the file must stay rectangular: %q", i, len(r), r)
+		}
+	}
+	if recs[0][0] != "" || recs[1][0] != "" || recs[1][1] != "-12.38" {
+		t.Fatalf("the label column is empty above the total and the run is otherwise unchanged: %q", recs)
+	}
+}
+
 func TestRenderDatasetCSV_NeutralisesEveryFormulaLeader(t *testing.T) {
 	res := DatasetResult{
 		Columns: []DatasetColumn{
