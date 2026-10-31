@@ -84,7 +84,7 @@ func TestIntegration_Round2_CompletionRechecksTheJournalMatchesOfTheMonth(t *tes
 	ctx := context.Background()
 	stamp := time.Now().UnixNano()
 	j := w.plantJournal(t, "sf2j2-cmp-"+itoa(stamp), "", "POSTED", []jl{{"1000", 7300, 0}, {"4950", 0, 7300}})
-	line := insertLine(t, w.pool, w.account, time.Now().UTC().Truncate(24*time.Hour).AddDate(0, -1, 0), "R2 COMPLETION", "R2 COMPLETION", 7300)
+	line := insertLine(t, w.pool, w.account, closedMonthDay(time.Now()), "R2 COMPLETION", "R2 COMPLETION", 7300)
 	if code, body := w.post(w.callerAB, w.manualOf(line, "JOURNAL", j, 7300)); code != http.StatusCreated {
 		t.Fatalf("setup: the journal match answered %d %s", code, body)
 	}

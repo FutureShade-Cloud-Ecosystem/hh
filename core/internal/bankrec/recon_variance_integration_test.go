@@ -22,7 +22,7 @@ func (m *movingBalance) GLBalanceCents(_ context.Context, _ string, _, _ int, _ 
 
 func (w *reachWorld) closedMonthLine(t *testing.T, desc string, cents int64) string {
 	t.Helper()
-	return insertLine(t, w.pool, w.account, time.Now().UTC().Truncate(24*time.Hour).AddDate(0, -1, 0), desc, desc, cents)
+	return insertLine(t, w.pool, w.account, closedMonthDay(time.Now()), desc, desc, cents)
 }
 
 func varianceWorld(t *testing.T) (*reachWorld, *Service, *movingBalance, Reconciliation, string) {
