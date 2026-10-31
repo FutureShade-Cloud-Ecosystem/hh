@@ -131,7 +131,7 @@ test("an invalid CRA business number message sits directly under the CRA busines
     is_active: true,
     is_t5018_subcontractor: false,
   };
-  const html = flat(
+  const markup = flat(
     renderVendors({
       phase: "ready",
       vendors: [vendor],
@@ -156,11 +156,11 @@ test("an invalid CRA business number message sits directly under the CRA busines
       notice: "",
     }),
   );
-  const bnPos = html.indexOf("data-v-bn");
-  const errPos = html.indexOf("data-error");
-  const hintPos = html.indexOf("Nine digits, with RC0001 after them");
-  const savePos = html.indexOf("Save the T5018 record");
+  const bnPos = markup.indexOf("data-v-bn");
+  const errPos = markup.indexOf("data-error");
+  const hintPos = markup.indexOf("Nine digits, with RC0001 after them");
+  const savePos = markup.indexOf("Save the T5018 record");
   assert.ok(bnPos > 0 && errPos > bnPos, "the invalid number message must sit under the CRA business number input");
   assert.ok(errPos < hintPos && hintPos < savePos, "the invalid number message must sit above the hint and the T5018 save button");
-  assert.equal([...html.matchAll(/data-error/g)].length, 1, "the invalid number message is rendered once");
+  assert.equal([...markup.matchAll(/data-error/g)].length, 1, "the invalid number message is rendered once");
 });

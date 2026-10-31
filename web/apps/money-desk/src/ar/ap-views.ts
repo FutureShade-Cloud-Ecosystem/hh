@@ -15,6 +15,7 @@ import {
   businessNumberIsMissing,
   businessNumberWords,
   t5018Box22Cents,
+  t5018Box22TotalCents,
   t5018EmptyKind,
   t5018Rows,
   t5018RuleNote,
@@ -427,7 +428,7 @@ function t5018Panel(model: T5018Model): TemplateResult {
                       <tr>
                         <td colspan="2"><b>Paid to subcontractors in ${report.year}</b></td>
                         <td class="num" data-label="Paid in ${report.year}"><b data-t5018-total>${formatMoney(report.total_cents)}</b></td>
-                        <td class="num" data-label="Box 22"><b data-t5018-box22-total>${formatMoney(report.box_22_total_cents)}</b></td>
+                        <td class="num" data-label="Box 22"><b data-t5018-box22-total>${formatMoney(t5018Box22TotalCents(report))}</b></td>
                       </tr>
                     </tfoot>
                   </table>

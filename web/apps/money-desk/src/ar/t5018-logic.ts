@@ -97,6 +97,11 @@ export function t5018Box22Cents(row: PurchasingT5018Row): number {
   return row.box_22_cents;
 }
 
+/** The year's box 22 across every marked subcontractor, the report's own total. */
+export function t5018Box22TotalCents(report: PurchasingT5018Report): number {
+  return report.box_22_total_cents;
+}
+
 /** The server's under-threshold or nothing-paid words when a subcontractor's pre-tax services are under $500. */
 export function t5018ThresholdWords(row: PurchasingT5018Row): string {
   if (row.paid_cents === 0 && row.box_22_cents === 0) {
