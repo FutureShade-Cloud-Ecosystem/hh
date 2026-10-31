@@ -58,6 +58,9 @@ type fakeStore struct {
 	markers       map[int]bool      // the year end markers the fake holds (FW1-09g)
 	periodYear    int               // the year the fake's one period sits in (FW1-09h: the reopen reads the year)
 	unmapped      []UnmappedAccount // the movement accounts UnmappedMovementAccounts answers (the export's refusal)
+	exportRows    []ExportRow       // the posted lines ExportRows answers (the export renderers' input)
+	mappings      []AccountMapping  // the mapping rows ListAccountMapping answers
+	batchInserts  int               // how many export batches InsertExportBatch recorded
 }
 
 func newFakeStore() *fakeStore {
@@ -473,11 +476,15 @@ func (f *fakeStore) GetRecurring(_ context.Context, _ string) (RecurringTemplate
 }
 
 func (f *fakeStore) InsertExportBatch(_ context.Context, _, _ int, _, _ string, _ int) (string, error) {
+	f.batchInserts++
 	f.seq++
 	return fmt.Sprintf("batch-%d", f.seq), nil
 }
+
+// ExportRows answers the rows a test plants (nil = the period is empty), so the export renderers
+// run against a known period with no database.
 func (f *fakeStore) ExportRows(_ context.Context, _ int, _ []int, _ string) ([]ExportRow, error) {
-	return nil, nil
+	return f.exportRows, nil
 }
 
 // UnmappedMovementAccounts answers the rows a test plants on the fake, so the export's mapping
@@ -488,8 +495,10 @@ func (f *fakeStore) UnmappedMovementAccounts(_ context.Context, _ int, _ []int, 
 
 // - the accounting package export's account mapping (W3 AX-1) -
 
+// ListAccountMapping answers the mapping rows a test plants, so a fully mapped period (or a hole
+// in one) is provable with no database.
 func (f *fakeStore) ListAccountMapping(_ context.Context, _ string) ([]AccountMapping, error) {
-	return nil, nil
+	return f.mappings, nil
 }
 func (f *fakeStore) SetAccountMapping(_ context.Context, target, accountCode, packageAccount, _ string, record func(context.Context, pgx.Tx, AccountMapping) error) (AccountMapping, error) {
 	m := AccountMapping{ID: "mapping-fake", Target: target, AccountCode: accountCode, PackageAccount: packageAccount}

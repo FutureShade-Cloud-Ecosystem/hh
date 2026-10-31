@@ -178,7 +178,8 @@ type RuleRef struct {
 	AccountOK   bool // resolves to an existing + active account
 }
 
-// ExportRow is one GP-parity export line.
+// ExportRow is one posted export line. PostedAt is the line's journal's posted day in the DEALER's
+// house zone, the day the export files date its entries by, never the UTC day.
 type ExportRow struct {
 	EntryNo     int
 	PostedAt    string

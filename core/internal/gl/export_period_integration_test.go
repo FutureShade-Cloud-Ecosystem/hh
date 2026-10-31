@@ -10,7 +10,6 @@ package gl
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +71,8 @@ func TestIntegration_Export_AnUnmappedAccountRefusesNamingIt(t *testing.T) {
 }
 
 // TestIntegration_Export_AFullyMappedMonthExportsAndBalances is red leg 2: a fully mapped period
-// exports, and its rendered debits equal its rendered credits.
+// exports, and its rendered debits equal its rendered credits. The QuickBooks Online target's body
+// is QBO's journal entry import CSV (AX-2), so the leg reads it the way its importer does.
 func TestIntegration_Export_AFullyMappedMonthExportsAndBalances(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
@@ -100,28 +100,18 @@ func TestIntegration_Export_AFullyMappedMonthExportsAndBalances(t *testing.T) {
 	if res.BatchID == "" {
 		t.Fatal("the target export must record its batch")
 	}
-	// The rendered rows carry the PACKAGE's account codes, with the HH words beside them.
-	if !strings.Contains(res.Content, "1010") || !strings.Contains(res.Content, "4010") {
+	// The rendered rows carry the PACKAGE's account codes, read as the importer reads them.
+	recs := qboCSV(t, res.Content)
+	if len(recs) != 3 {
+		t.Fatalf("the month's one journal exports as one entry of two rows, got %d lines:\n%s", len(recs), res.Content)
+	}
+	if recs[1][2] != "1010" || recs[2][2] != "4010" {
 		t.Fatalf("the export must carry the mapped package codes, got:\n%s", res.Content)
 	}
-	if !strings.Contains(res.Content, "1000") || !strings.Contains(res.Content, "4000") {
-		t.Fatalf("the export must carry the HH codes beside the package codes, got:\n%s", res.Content)
-	}
 	// And the file's own two sides tie: the red leg's assertion, read off the rendered rows.
-	var debit, credit float64
-	for _, line := range strings.Split(res.Content, "\n") {
-		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "entry_no") || line == "" {
-			continue
-		}
-		f := strings.Split(line, ",")
-		if len(f) < 7 {
-			t.Fatalf("unexpected export row %q", line)
-		}
-		debit += parseDollars(t, f[5])
-		credit += parseDollars(t, f[6])
-	}
+	debit, credit := qboSum(t, recs, recs[1][0])
 	if debit == 0 || debit != credit {
-		t.Fatalf("the export's debits (%f) must equal its credits (%f), content:\n%s", debit, credit, res.Content)
+		t.Fatalf("the export's debits (%d cents) must equal its credits (%d cents), content:\n%s", debit, credit, res.Content)
 	}
 }
 
@@ -182,18 +172,4 @@ func TestIntegration_Export_ThePickRefusesImpossiblePeriods(t *testing.T) {
 	if _, err := svc.Export(ctx, ExportQuery{Year: 2094, Month: 3, Target: "XERO"}); err == nil || !strings.Contains(err.Error(), "XERO") {
 		t.Fatalf("an unknown target must be refused in words, got %v", err)
 	}
-}
-
-// parseDollars reads the export renderer's signed dollars cell.
-func parseDollars(t *testing.T, cell string) float64 {
-	t.Helper()
-	cell = strings.TrimSpace(cell)
-	if cell == "" {
-		return 0
-	}
-	var f float64
-	if _, err := fmt.Sscanf(cell, "%g", &f); err != nil {
-		t.Fatalf("cannot read the money cell %q: %v", cell, err)
-	}
-	return f
 }

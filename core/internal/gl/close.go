@@ -838,7 +838,17 @@ func (s *Service) Export(ctx context.Context, q ExportQuery) (ExportResult, erro
 		for _, m := range mapped {
 			packageAccount[m.AccountCode] = m.PackageAccount
 		}
-		content = renderTargetExport(q, rows, packageAccount)
+		switch q.Target {
+		case TargetQuickBooksOnline:
+			// AX-2: QBO's own journal entry import format, one journal entry per GL journal, its
+			// two sides asserted per entry and in total.
+			content, err = renderQBOJournals(rows, packageAccount)
+			if err != nil {
+				return ExportResult{}, err
+			}
+		default:
+			content = renderTargetExport(q, rows, packageAccount)
+		}
 		format = q.Target
 	}
 	// The batch's month word: the month pick records itself; a quarter or a year pick records 0,
@@ -869,10 +879,11 @@ func renderGPParity(year, month int, rows []ExportRow) string {
 	return b.String()
 }
 
-// renderTargetExport renders the accounting package export for one target: the period's rows under
-// the package's account codes, the HH code and name beside each for provenance, and a totals line
-// whose two sides are the file's own balance assertion. AX-2 replaces the body's shape with the
-// package's import format, one package at a time, without touching the row set or the totals.
+// renderTargetExport renders the accounting package export for a target without its own import
+// format yet (Sage 50 is AX-3): the period's rows under the package's account codes, the HH code
+// and name beside each for provenance, and a totals line whose two sides are the file's own
+// balance assertion. QuickBooks Online has its own body, renderQBOJournals (AX-2); this one keeps
+// the row set and the totals the same for the target that replaces it next.
 func renderTargetExport(q ExportQuery, rows []ExportRow, packageAccount map[string]string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# ACCOUNTING PACKAGE EXPORT, %s; mapped draft, not a filing.\n", exportTargetWords(q.Target))
