@@ -668,3 +668,30 @@ func (r *Repository) requireFinanceChargeCustomer(ctx context.Context, customerI
 	}
 	return nil
 }
+
+// financeChargeBranches lists the branches of the books, the walk the worker's sweep makes (the
+// locations anchor, the same read the run's own branch check makes): active branches only, canonical
+// lower case ids in id order.
+func (w *InvoiceWriter) financeChargeBranches(ctx context.Context) ([]string, error) {
+	if w.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := w.pool.Query(ctx,
+		`SELECT id::text FROM locations WHERE loc_type = 'BRANCH' AND is_active ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("billing: list the branches for the finance charge sweep: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("billing: scan a branch for the finance charge sweep: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("billing: the branches for the finance charge sweep: %w", err)
+	}
+	return out, nil
+}
