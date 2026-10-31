@@ -134,8 +134,13 @@ func (g *Guards) RequireStaff(next StaffHandler) http.Handler {
 // tiers: a tier 1 or tier 2 role passes (IsManager), everything else is
 // the RBAC-403.
 func (g *Guards) RequireManager(next StaffHandler) http.Handler {
-	return g.RequireStaffPredicate(func(a identity.StaffAuthority) bool { return a.IsManager() }, next)
+	return g.RequireStaffPredicate(HoldsManagerTier, next)
 }
+
+// HoldsManagerTier is the one manager tier predicate (tier 1 or tier 2). RequireManager runs it
+// on every manager route, and the late discount approval wall (billing) runs the same function
+// beside the role gate's level check, so the two can never disagree on who a manager is.
+func HoldsManagerTier(a identity.StaffAuthority) bool { return a.IsManager() }
 
 // RequireAdmin re-expresses the ERP's RequireAdmin: a tier 1 global role
 // (IsAdmin), everything else is the RBAC-403.

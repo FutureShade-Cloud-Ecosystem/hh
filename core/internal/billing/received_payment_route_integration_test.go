@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	coreidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
@@ -121,7 +122,9 @@ func (w *applyRouteWorld) post(t *testing.T, caller identity.StaffContext, body 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/ar/payments/apply", strings.NewReader(string(raw)))
 	req = req.WithContext(identity.ContextWithStaff(req.Context(), caller))
 	rec := httptest.NewRecorder()
-	w.h.applyReceived(rec, req, guards.StaffCaller{})
+	w.h.applyReceived(rec, req, guards.StaffCaller{
+		StaffAuthority: coreidentity.StaffAuthority{Tier: int(caller.Tier), Scope: string(caller.Scope)},
+	})
 	return rec
 }
 
@@ -624,6 +627,28 @@ func TestApplyRoute_LateDiscountClerkRefusedManagerApproved(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("the approval is recorded once, found %d", n)
+	}
+}
+
+// TestApplyRoute_LateDiscountWallNeedsTheManagerTierToo is P3-4: a caller the role gate admits on
+// the money desk's level but who is not a tier 1 or tier 2 manager (a clerk a dealer raised to
+// manage on the money desk) is refused the late discount, exactly as the write off route refuses
+// them. One predicate (guards.HoldsManagerTier) serves both.
+func TestApplyRoute_LateDiscountWallNeedsTheManagerTierToo(t *testing.T) {
+	w := newLateDiscountWorld(t, true) // the role gate's level check says yes
+	inv := w.discountInvoiceOnTerms(t, "LATE-TIER", 100000, 1)
+	front := applyGlobalCaller()
+	front.Tier = identity.TierFrontline
+	code, body := decodeApply(t, w.post(t, front, map[string]any{
+		"customer_id": w.customerID, "method": "cheque", "amount_cents": 98000,
+		"reference": "CHQ 933", "invoice_ids": []string{inv},
+		"idempotency_key": w.tag + "-tier", "late_discount_reason": "customer phoned",
+	}))
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("a front line caller the level check admits is still refused the late discount, got %d body %v", code, body)
+	}
+	if balance, _ := clerkInvoiceState(t, w.pool, inv); balance != 100000 {
+		t.Fatalf("the refused ask applied nothing, balance %d", balance)
 	}
 }
 

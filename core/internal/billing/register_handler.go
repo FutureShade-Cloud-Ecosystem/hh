@@ -367,7 +367,10 @@ func (h *RegisterHandler) lateDiscountApproval(ctx context.Context, caller guard
 	if err != nil {
 		return false, err
 	}
-	return held, nil
+	// The write off route's wall is the role gate's level check AND the manager tier
+	// (RequireManager); the approval wall is both too, by the one predicate (P3-4), so a dealer
+	// who raises a clerk's money desk level cannot let that clerk approve what a write off refuses.
+	return held && guards.HoldsManagerTier(caller.StaffAuthority), nil
 }
 
 func (h *RegisterHandler) sendInvoice(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
