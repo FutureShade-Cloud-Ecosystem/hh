@@ -157,9 +157,9 @@ export function servedConsoleConfig(): ConsoleRuntimeConfig | null {
   return served;
 }
 
-/** The entry view an app shows while it has no session and the demo cards do not apply: its existing unavailable state. */
+/** The entry view an app shows on a dealer's own box while it has no session: its own sign in state, not a failure. */
 export function entryUnavailable(): EntryView {
-  return { flows: { kind: "unavailable", status: null }, busy: false, message: null };
+  return { flows: { kind: "signin" }, busy: false, message: null };
 }
 
 // ── custody ───────────────────────────────────────────────────────────────

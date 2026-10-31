@@ -350,7 +350,7 @@ export class DispatchBoardApp extends HHElement {
         ${this.#narrow ? this.#mobileTools() : html``}
         <h1>Dispatch and Load Building</h1>
         <p class="dim">Build the day's loads, crew the trucks and send them out.${demoNote(servedConsoleConfig())}</p>
-        ${renderEntry({ ...this.#entryView, flows: this.#entryFlows() }, { headline: "Who is dispatching?", intro: "Tap a role to open the dispatch board.", coming: false })}
+        ${renderEntry({ ...this.#entryView, flows: this.#entryFlows() }, { headline: "Who is dispatching?", intro: "Tap a role to open the dispatch board.", coming: false, app: "Dispatch Board" })}
       </main>
     `;
   }

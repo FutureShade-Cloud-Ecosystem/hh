@@ -27,8 +27,7 @@ import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/s
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
-import { bandIdentity } from "./band-identity.js";
-import { demoNote } from "./band-identity.js";
+import { bandIdentity, demoNote } from "./band-identity.js";
 import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { PoApi } from "./po/po-api.js";
@@ -471,7 +470,7 @@ export class BuyingAndStockApp extends HHElement {
       <main class="desk">
         <h1>Buying and Stock</h1>
         <p class="dim">Purchase orders and the reorder worklist for the buying seats; the stock lookup, read only, for Sales.${demoNote(servedConsoleConfig())}</p>
-        ${renderEntry(this.#entryView)}
+        ${renderEntry(this.#entryView, { app: "Buying and Stock" })}
       </main>
       <hh-feedback screen="Buying and Stock" trigger="external"></hh-feedback>
     `;

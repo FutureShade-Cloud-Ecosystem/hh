@@ -32,6 +32,8 @@ export const COMING_ROLES: readonly string[] = [];
 export type FlowsState =
   | { kind: "loading" }
   | { kind: "unavailable"; status: number | null }
+  /** A dealer's own box with no session: nothing failed and there are no demo roles, so the page asks for a sign in. */
+  | { kind: "signin" }
   | { kind: "ready"; flows: DemoFlow[] };
 
 export interface EntryView {
@@ -203,6 +205,12 @@ export const entryStyles = css`
     color: var(--hh-text-dim);
     margin: 0 0 var(--hh-s-24);
   }
+  .signin-link {
+    display: inline-block;
+    margin-inline-start: var(--hh-s-8);
+    color: var(--hh-accent-text);
+    font-weight: 600;
+  }
 `;
 
 /** The stage column: every state the entry shows lives on it, centred. */
@@ -213,14 +221,30 @@ const stage = (content: TemplateResult): TemplateResult => html`<div class="stag
  * yard app says its own thing and shows no Coming list (the front door already carries it).
  */
 export interface EntryCopy {
+  /** The app's name, for the sign in line on a dealer's own box ("Sign in to open the Money Desk."). */
+  readonly app?: string;
   readonly headline?: string;
   readonly intro?: string;
   readonly coming?: boolean;
 }
 
+/**
+ * The line a dealer's own box shows a person with no session: where to go, never a word of demo roles. The link is
+ * the box's front door at the origin root, the same place an app sends a person it cannot sign in (toFrontDoor).
+ */
+export function signInLine(app: string | undefined, className = "notice"): TemplateResult {
+  return html`<p class=${className} role="status">
+    Sign in to open ${app === undefined ? "this app" : `the ${app}`}.
+    <a class="signin-link" href="/">Go to sign in</a>
+  </p>`;
+}
+
 export function renderEntry(view: EntryView, copy: EntryCopy = {}): TemplateResult {
   if (view.flows.kind === "loading") {
     return stage(html`<p class="notice" role="status">Loading the demo roles.</p>`);
+  }
+  if (view.flows.kind === "signin") {
+    return stage(signInLine(copy.app));
   }
   if (view.flows.kind === "unavailable") {
     // The failures say different things, so the page does not claim more than

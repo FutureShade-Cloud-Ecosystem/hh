@@ -112,6 +112,12 @@ export const homeStyles = css`
 
   /* -- the way in ------------------------------------------------------------------------ */
 
+  .signin-link {
+    display: inline-block;
+    margin-inline-start: var(--hh-s-8);
+    color: var(--hh-accent-text);
+    font-weight: 600;
+  }
   .stage {
     max-width: 680px;
     margin: 0 auto;

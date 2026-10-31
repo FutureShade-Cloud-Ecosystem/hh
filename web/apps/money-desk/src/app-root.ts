@@ -31,8 +31,7 @@ import { generatedTransport } from "@hardscapehouse/shell-chrome/src/tanyai-tran
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
-import { bandIdentity } from "./band-identity.js";
-import { demoNote } from "./band-identity.js";
+import { bandIdentity, demoNote } from "./band-identity.js";
 import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { ArApi } from "./ar/ar-api.js";
@@ -832,7 +831,7 @@ export class MoneyDeskApp extends HHElement {
         <main class="desk">
           <h1>Money Desk</h1>
           <p class="dim">Receivables for the whole company: the aging, payments, promises and the bounced queue.${demoNote(servedConsoleConfig())}</p>
-          ${renderEntry(this.#entryView)}
+          ${renderEntry(this.#entryView, { app: "Money Desk" })}
         </main>
       `}
     `;

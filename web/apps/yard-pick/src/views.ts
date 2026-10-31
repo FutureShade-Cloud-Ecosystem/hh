@@ -783,6 +783,7 @@ export function renderChanges(model: ChangesModel): TemplateResult {
 export type EntryFlows =
   | { kind: "loading" }
   | { kind: "unavailable" }
+  | { kind: "signin" }
   | { kind: "ready"; flows: readonly DemoFlow[] };
 
 export interface EntryView {
@@ -806,6 +807,8 @@ export function renderEntry(view: EntryView): TemplateResult {
   let body: TemplateResult;
   if (view.flows.kind === "loading") {
     body = html`<p class="dim" role="status">Loading the demo.</p>`;
+  } else if (view.flows.kind === "signin") {
+    body = html`<p class="dim" role="status">Sign in to open Yard Pick. <a href="/">Go to sign in</a></p>`;
   } else if (view.flows.kind === "unavailable") {
     body = html`<p class="alert alert-error" role="alert">The demo way in is not available on this box.</p>`;
   } else {
