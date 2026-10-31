@@ -6,10 +6,11 @@ import (
 )
 
 // closedMonthDay answers a day inside the month before now's month, for the legs that plant a bank line in a
-// month that has reached its end. It steps back from now's own day of month, which on the 31st after a 30 day
-// month normalizes into the current month.
+// month that has reached its end. It steps back from the first of now's month, never from now's own day of month:
+// on the 31st after a 30 day month that day normalizes into the current month (September 31 is October 1).
 func closedMonthDay(now time.Time) time.Time {
-	return now.UTC().Truncate(24*time.Hour).AddDate(0, -1, 0)
+	u := now.UTC()
+	return time.Date(u.Year(), u.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 14)
 }
 
 // The month before is the month before on every day of the month, the 31st after a 30 day month and the 29th,
