@@ -5,6 +5,7 @@
 import "@hardscapehouse/design-system/src/tokens.css";
 import "./page.css";
 import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
+import { loadAppRuntime } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { announceSwitchRole, isFramed } from "./frames.js";
 
 applyTenantTitle("Work");
@@ -12,5 +13,6 @@ applyTenantTitle("Work");
 if (isFramed(window)) {
   announceSwitchRole(window);
 } else {
-  void import("./host-element.js");
+  // The served console config (a dealer's own box) is read before the host mounts, so its band can name the dealer.
+  void loadAppRuntime().then(() => import("./host-element.js"));
 }

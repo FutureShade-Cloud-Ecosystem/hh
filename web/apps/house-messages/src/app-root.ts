@@ -20,6 +20,7 @@ import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/s
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bandIdentity } from "./band-identity.js";
 import { entryStyles, renderEntry, type EntryView, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { MessagesApi } from "./messages-api.js";
@@ -231,15 +232,16 @@ export class HouseMessagesApp extends HHElement {
 
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
+    const identity = bandIdentity(servedConsoleConfig(), this.#org);
     setFieldFrame(this.renderRoot.querySelector("hh-field-frame"), {
-      org: this.#org,
+      org: identity.org,
       appName: "House Messages",
       surface: "Channels",
       roleLabel: this.#roleLabel,
       syncState: this.#syncState(),
       theme: this.#theme,
       signedIn: this.#sessions.current !== null,
-      demo: true,
+      demo: identity.demo,
       feedback: this.#sessions.current !== null,
       current: "messages",
       tabs: fieldTabsForRole(this.#callerRole?.roleCode ?? ""),
