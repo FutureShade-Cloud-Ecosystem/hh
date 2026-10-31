@@ -30,6 +30,7 @@ type ruleStore interface {
 	ProvinceRule(ctx context.Context, province string) (ProvinceRule, bool, error)
 	JobOverride(ctx context.Context, customerJobID string) (*int, error)
 	LinkCustomerJob(ctx context.Context, lienJobID, customerJobID string) error
+	ProvinceRules(ctx context.Context) ([]ProvinceRule, error)
 }
 
 var _ ruleStore = (*Repository)(nil)
@@ -213,4 +214,12 @@ func (s *Service) LinkCustomerJob(ctx context.Context, lienJobID, customerJobID 
 	}
 	job.CustomerJobID = customerJobID
 	return job, nil
+}
+
+// ProvinceRules lists every province's statutory holdback rule.
+func (s *Service) ProvinceRules(ctx context.Context) ([]ProvinceRule, error) {
+	if _, err := s.caller(ctx); err != nil {
+		return nil, err
+	}
+	return s.rules().ProvinceRules(ctx)
 }

@@ -151,3 +151,31 @@ func (r *Repository) LinkCustomerJob(ctx context.Context, lienJobID, customerJob
 	}
 	return nil
 }
+
+// ProvinceRules lists every province's rule, by province code.
+func (r *Repository) ProvinceRules(ctx context.Context) ([]ProvinceRule, error) {
+	if tx := customer.CallerTx(ctx); tx == nil && r.pool == nil {
+		return nil, errNoDB
+	}
+	var rows pgx.Rows
+	var err error
+	const stmt = `SELECT province, holdback_pct_bps, preserve_days, perfect_days FROM holdback_province_rules ORDER BY province`
+	if tx := customer.CallerTx(ctx); tx != nil {
+		rows, err = tx.Query(ctx, stmt)
+	} else {
+		rows, err = r.pool.Query(ctx, stmt)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lien: list the province holdback rules: %w", err)
+	}
+	defer rows.Close()
+	var out []ProvinceRule
+	for rows.Next() {
+		var p ProvinceRule
+		if err := rows.Scan(&p.Province, &p.HoldbackPctBps, &p.PreserveDays, &p.PerfectDays); err != nil {
+			return nil, fmt.Errorf("lien: scan a province holdback rule: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

@@ -9245,6 +9245,7 @@ export type LienJob = {
   id: string;
   job_no: string;
   customer_id?: string;
+  customer_job_id?: string;
   branch_id: string;
   description: string;
   contract_cents: number;
@@ -9255,6 +9256,33 @@ export type LienJob = {
   holdback_direction: "RECEIVABLE" | "PAYABLE";
   hst_on_holdback: boolean;
   created_at?: string;
+};
+export type LienProvinceRule = {
+  province: string;
+  holdback_pct_bps: number;
+  preserve_days: number;
+  perfect_days: number;
+};
+export type LienProvinceRuleList = {
+  items: LienProvinceRule[];
+};
+export type LienDealerRule = {
+  province: string;
+  holdback_pct_bps: number | null;
+};
+export type LienHoldbackOverrideInput = {
+  holdback_pct_bps: number | null;
+};
+export type LienHoldbackRule = {
+  holdback_pct_bps: number;
+  preserve_days: number;
+  perfect_days: number;
+  pct_source: "JOB" | "DEALER" | "PROVINCE";
+  province: string;
+  province_source: "SITE" | "DEALER";
+};
+export type LienCustomerJobLinkInput = {
+  customer_job_id: string | null;
 };
 export type LienJobInput = {
   job_no: string;

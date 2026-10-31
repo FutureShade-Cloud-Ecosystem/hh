@@ -34,8 +34,8 @@ test("two fresh generations are byte-identical and match the committed tree", ()
     // billingGetCreditChange, billingApproveCreditChange, billingRejectCreditChange), plus
     // W3-T51's three T5018 routes (purchasingSetVendorT5018, purchasingT5018Report and
     // purchasingT5018ReportCSV), plus AX-1's glListAccountMapping and glSetAccountMapping, plus RW-1's
-    // reportingListDatasets and reportingReadDataset: 822.
-    if (!out1.includes("822 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
+    // reportingListDatasets and reportingReadDataset, plus RT-1's five holdback rule routes: 827.
+    if (!out1.includes("827 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
     const a = snapshot(one);
     const b = snapshot(two);
     const c = snapshot(committed);
