@@ -174,6 +174,27 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			       AND ($3::uuid[] IS NULL OR i.branch_id = ANY($3::uuid[]))
 			  ) h
 			 WHERE h.held > 0
+			UNION ALL
+			-- A holdback released by the statement date is said so, in the words the preview uses: the
+			-- invoice's line above carries the whole total, and without this the customer would see the
+			-- "Holdback withheld" line vanish with no word of why. It moves no money (the amount is zero), so
+			-- the running balance and the closing figure are the aging's, unchanged.
+			SELECT r.occurred_at, r.created_at, 'HOLDBACK_RELEASED' AS txn_type, 0::bigint AS amount_cents,
+			       r.invoice_no, r.invoice_no || ' (holdback released ' || to_char(r.rel_on, 'YYYY-MM-DD') || ')' AS memo
+			  FROM (
+			    SELECT (invoice_released_on(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond')::timestamp AT TIME ZONE $4::text) AS occurred_at,
+			           i.created_at + interval '2 microsecond' AS created_at,
+			           i.invoice_no::text AS invoice_no,
+			           invoice_released_on(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond') AS rel_on,
+			           invoice_released_cents_as_of(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond') AS rel_cents
+			      FROM invoices i
+			     WHERE i.customer_id = $1::uuid
+			       AND i.doc_type = 'INVOICE'
+			       AND i.status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
+			       AND i.issue_date <= $2::date
+			       AND ($3::uuid[] IS NULL OR i.branch_id = ANY($3::uuid[]))
+			  ) r
+			 WHERE r.rel_cents > 0
 		)
 		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo
 		  FROM activity
