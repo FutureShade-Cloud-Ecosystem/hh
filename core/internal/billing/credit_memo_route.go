@@ -578,12 +578,8 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 		return CreditMemoRouteResult{}, err
 	}
 	if found {
-		if existing.CustomerID != customerID ||
-			existing.BranchID != branchID ||
-			existing.ReversesInvoiceID != in.ReversesInvoiceID ||
-			existing.jobID != in.JobID ||
-			(req.AmountCents != 0 && -existing.SubtotalCents != req.AmountCents) {
-			return CreditMemoRouteResult{}, &creditMemoKeyConflict{msg: "this idempotency key already named a different credit; a key belongs to the credit that first used it"}
+		if !sameCreditBody(existing, in) {
+			return CreditMemoRouteResult{}, errCreditKeyConflict()
 		}
 		return s.reusedResult(existing, revenue, reason), nil
 	}
@@ -812,10 +808,16 @@ func (s *CreditMemoService) creditMemoKey(ctx context.Context, req CreditMemoRou
 		return k
 	}
 	day := s.houseDay(ctx)
-	seed := strings.Join([]string{
+	parts := []string{
 		day, req.BranchID, req.CustomerID, strings.TrimSpace(req.InvoiceID),
-		fmt.Sprintf("%d", req.AmountCents), reason, jobID,
-	}, "|")
+		fmt.Sprintf("%d", req.AmountCents), reason,
+	}
+	// The job joins the seed only when there is one, so a jobless credit derives exactly the key it
+	// derived before JA-2 and a retry across the deploy on the same house day still replays.
+	if jobID != "" {
+		parts = append(parts, jobID)
+	}
+	seed := strings.Join(parts, "|")
 	sum := sha256.Sum256([]byte(seed))
 	return "credit-memo:" + hex.EncodeToString(sum[:])
 }
