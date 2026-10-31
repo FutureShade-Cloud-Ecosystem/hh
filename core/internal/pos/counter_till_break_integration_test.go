@@ -77,7 +77,9 @@ func plantTillBreakRows(t *testing.T, pool *pgxpool.Pool) {
 		`DELETE FROM quantity_break_headers WHERE id = '`+fxTillBreakHeaderID+`'`); err != nil {
 		t.Fatalf("break re-plant delete: %v", err)
 	}
-	_, _ = pool.Exec(ctx, `DELETE FROM customers WHERE id = '`+fxTillRetailCustomerID+`'`)
+	if _, err := pool.Exec(ctx, `DELETE FROM customers WHERE id = '`+fxTillRetailCustomerID+`'`); err != nil {
+		t.Fatalf("break re-plant delete from customers: %v", err)
+	}
 	plants := []string{
 		// QB1's shape on the fixture stand-in: no adjustment below 500, 500 bps at 500, 1000 bps
 		// at 2000, thresholds in the product's own unit.
@@ -104,15 +106,8 @@ func plantTillBreakRows(t *testing.T, pool *pgxpool.Pool) {
 			t.Fatalf("break plant: %v (%s)", err, q)
 		}
 	}
-	t.Cleanup(func() {
-		cleanups := []string{
-			`DELETE FROM quantity_break_headers WHERE id = '` + fxTillBreakHeaderID + `'`,
-			`DELETE FROM customers WHERE id = '` + fxTillRetailCustomerID + `'`,
-		}
-		for _, q := range cleanups {
-			_, _ = pool.Exec(context.Background(), q)
-		}
-	})
+	// No cleanup here: counterTillFixture's leg sweep deletes these rows (items before header,
+	// customer after its orders) and fails the leg on a refused delete.
 }
 
 // saleAlreadyRung reports whether this file's fixed replay key has already committed a sale on

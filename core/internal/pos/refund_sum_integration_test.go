@@ -32,6 +32,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -350,7 +351,7 @@ func smallPool(t *testing.T, maxConns int32) *pgxpool.Pool {
 		t.Fatalf("small pool not reachable: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	registerLegSweep(t, pool)
+	legsweep.Register(t, pool)
 	return pool
 }
 
