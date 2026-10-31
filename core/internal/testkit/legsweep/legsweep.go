@@ -28,7 +28,8 @@ package legsweep
 //   - A short list of tables is RESTORED by the sweep rather than failed (sweepRestorable). Each
 //     is a table the code under test changes on purpose in nearly every leg, or that a freshly
 //     seeded database has changed under it once, so asking every leg to put it back would repeat
-//     the same cleanup in a hundred places:
+//     the same cleanup in a hundred places. The four org stamped tables restore org_id ONLY; any
+//     other changed column fails the leg, naming the table and key (sweepRestorable):
 //     scope_sequences, order_no_sequences, gl_entry_no_sequences: the numbering counters;
 //     pos_policy: the settings row, whose updated_at moves on every save, even one that puts the
 //     values back; events_outbox: the dispatcher publishes every pending event, seeded ones
@@ -79,17 +80,28 @@ type sweepTable struct {
 }
 
 // sweepRestorable names the tables the sweep restores from the snapshot's row image instead of
-// failing the leg (schema qualified, as the catalog names them). See the file header.
-var sweepRestorable = map[string]bool{
-	"public.scope_sequences":       true,
-	"public.order_no_sequences":    true,
-	"public.gl_entry_no_sequences": true,
-	"public.pos_policy":            true,
-	"public.events_outbox":         true,
-	"public.users":                 true,
-	"public.user_roles":            true,
-	"public.user_branch_grants":    true,
-	"public.locations":             true,
+// failing the leg (schema qualified, as the catalog names them), and the columns it writes back.
+// A nil list means every non key column. A table with a list restores only those columns: any
+// other changed column leaves the row different from the snapshot, and the final check fails the
+// leg naming the table and key (row 0.44).
+//
+// The org stamped tables restore org_id alone, except locations, which restores org_id and
+// updated_at: identity.StampOrgScope moves both in one UPDATE (users, user_roles and
+// user_branch_grants take org_id only). The assumption: org_id on users, user_roles,
+// user_branch_grants and locations has NO foreign key to org (0213 added the column bare), so
+// writing the snapshot's org_id back, including NULL, can never be refused or cascade. If a
+// later migration adds that foreign key, the restore must be revisited (order against org rows,
+// and the org rows the sweep deletes).
+var sweepRestorable = map[string][]string{
+	"public.scope_sequences":       nil,
+	"public.order_no_sequences":    nil,
+	"public.gl_entry_no_sequences": nil,
+	"public.pos_policy":            nil,
+	"public.events_outbox":         nil,
+	"public.users":                 {"org_id"},
+	"public.user_roles":            {"org_id"},
+	"public.user_branch_grants":    {"org_id"},
+	"public.locations":             {"org_id", "updated_at"},
 }
 
 // keyExprOf is the key expression with every column qualified by alias.
@@ -331,7 +343,11 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool, db *sweepDB) (*sweepP
 
 		// The non key columns of the restorable tables, for the restore's UPDATE.
 		setCols := map[string][]string{}
-		for n := range sweepRestorable {
+		for n, only := range sweepRestorable {
+			onlyCols := map[string]bool{}
+			for _, c := range only {
+				onlyCols[c] = true
+			}
 			cr, err := pool.Query(ctx, `
 				SELECT a.attname FROM pg_attribute a
 				 WHERE a.attrelid = $1::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = ''
@@ -351,7 +367,7 @@ func sweepCatalog(ctx context.Context, pool *pgxpool.Pool, db *sweepDB) (*sweepP
 					db.err = fmt.Errorf("scan columns of %s: %w", n, err)
 					return
 				}
-				if !isKey[c] {
+				if !isKey[c] && (len(only) == 0 || onlyCols[c]) {
 					setCols[n] = append(setCols[n], pgx.Identifier{c}.Sanitize())
 				}
 			}
@@ -432,7 +448,7 @@ func sweepSnapshot(ctx context.Context, pool *pgxpool.Pool, plan *sweepPlan, onl
 			continue
 		}
 		img := `''::text`
-		if sweepRestorable[tb.name] {
+		if _, ok := sweepRestorable[tb.name]; ok {
 			img = `row_to_json(t)::text`
 		}
 		parts = append(parts, fmt.Sprintf(`SELECT %d AS t, %s AS k, md5(row_to_json(t)::text) AS h, %s AS img FROM %s t`,
