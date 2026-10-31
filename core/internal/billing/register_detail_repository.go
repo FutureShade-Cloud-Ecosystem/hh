@@ -124,6 +124,25 @@ func (r *Repository) AppliedCents(ctx context.Context, invoiceID string) (int64,
 	return sum, nil
 }
 
+// DiscountCents is the early payment discount taken on this document, summed beside AppliedCents
+// on the same signs: an application's discount counts positive, a reversal's contra row (on the
+// reversing payment) and a void or bounce's 0450 row (negative) count against it, so a payment
+// undone gave its discount back and the figure nets to what the document still holds.
+func (r *Repository) DiscountCents(ctx context.Context, invoiceID string) (int64, error) {
+	if r.pool == nil {
+		return 0, errNoDB
+	}
+	var sum int64
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(CASE WHEN p.reverses_payment_id IS NOT NULL THEN -pa.discount_cents ELSE pa.discount_cents END), 0)
+		   FROM payment_allocations pa JOIN payments p ON p.id = pa.payment_id
+		  WHERE pa.invoice_id = $1::uuid`,
+		invoiceID).Scan(&sum); err != nil {
+		return 0, fmt.Errorf("billing: discount cents: %w", err)
+	}
+	return sum, nil
+}
+
 // CustomerBlockFor reads the identity card: the account facts plus the PRIMARY contact. A customer
 // with no contact row renders name-and-account only, which is the truth rather than a blank field
 // labelled "Contact".

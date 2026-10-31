@@ -111,7 +111,7 @@ func (r *Repository) RecordReceipt(ctx context.Context, in ReceiptRequest) (Rece
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	p, claimed, err := settleReceipt(ctx, tx, in)
+	p, claimed, err := r.settleReceipt(ctx, tx, in, nil)
 	if err != nil {
 		return ReceiptOutcome{}, err
 	}
@@ -151,7 +151,7 @@ func (r *Repository) RecordReceiptTx(ctx context.Context, tx pgx.Tx, in ReceiptR
 	} else if ok {
 		return ReceiptOutcome{Payment: p, Replayed: true, Reference: ref, ReceivedBy: by}, nil
 	}
-	p, claimed, err := settleReceipt(ctx, tx, in)
+	p, claimed, err := r.settleReceipt(ctx, tx, in, nil)
 	if err != nil {
 		return ReceiptOutcome{}, err
 	}
@@ -197,11 +197,19 @@ func validateReceipt(in ReceiptRequest) error {
 // settleReceipt is the one settle both entries share, on a transaction the caller owns: lock and total
 // the invoices, claim the key with ON CONFLICT DO NOTHING (the whole guard, see the file header) and
 // apply the allocations. claimed is false when the key already existed, and then nothing was applied.
-func settleReceipt(ctx context.Context, tx pgx.Tx, in ReceiptRequest) (p Payment, claimed bool, err error) {
-	total, invBranch, err := lockAndTotal(ctx, tx, in.CustomerID, in.Allocations)
+//
+// dctx is the early payment discount's context (discount.go): the apply's walk hands in the one it
+// judged the window with, so the settle's discount and the walk's answer are one decision on one
+// clock; nil makes the settle resolve its own from the rows it locks (the per invoice and portal
+// doors).
+func (r *Repository) settleReceipt(ctx context.Context, tx pgx.Tx, in ReceiptRequest, dctx *discountContext) (p Payment, claimed bool, err error) {
+	total, invBranch, clamped, err := r.lockAndTotal(ctx, tx, in.CustomerID, in.Allocations, dctx)
 	if err != nil {
 		return Payment{}, false, err
 	}
+	// Money past an eligible invoice's discounted payoff (a door that named the face) stays with
+	// the dealer as change, like the apply's own (P3-2).
+	in.ChangeCents += clamped
 	branchID := in.BranchID
 	if branchID == "" {
 		branchID = invBranch

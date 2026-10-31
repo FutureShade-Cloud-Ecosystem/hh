@@ -185,7 +185,7 @@ func (r *Repository) VoidPayment(ctx context.Context, in VoidInput, now time.Tim
 	// rows: a reversal row (0450) is the undo of an application, and a receipt that was never voided
 	// carries none.
 	rows, err := tx.Query(ctx,
-		`SELECT id::text, invoice_id::text, amount_cents FROM payment_allocations
+		`SELECT id::text, invoice_id::text, amount_cents, discount_cents FROM payment_allocations
 		  WHERE payment_id = $1::uuid AND kind = 'APPLICATION'`, in.PaymentID)
 	if err != nil {
 		return Void{}, fmt.Errorf("void: read allocations: %w", err)
@@ -194,11 +194,12 @@ func (r *Repository) VoidPayment(ctx context.Context, in VoidInput, now time.Tim
 		id        string
 		invoiceID string
 		cents     int64
+		discount  int64
 	}
 	var allocs []alloc
 	for rows.Next() {
 		var a alloc
-		if err := rows.Scan(&a.id, &a.invoiceID, &a.cents); err != nil {
+		if err := rows.Scan(&a.id, &a.invoiceID, &a.cents, &a.discount); err != nil {
 			rows.Close()
 			return Void{}, fmt.Errorf("void: scan allocation: %w", err)
 		}
@@ -265,15 +266,15 @@ func (r *Repository) VoidPayment(ctx context.Context, in VoidInput, now time.Tim
 		// beside it: a receipt undone is a change the payer's device must see.
 		if _, err := tx.Exec(ctx, invoicesFeedSeqCTE+`
 UPDATE invoices
-			    SET balance_cents = balance_cents + $2,
+			    SET balance_cents = balance_cents + $2 + $3,
 			        status = CASE
 			                   WHEN status = 'VOID' THEN status
-			                   WHEN balance_cents + $2 >= total_cents - holdback_cents THEN 'FINALIZED'
+			                   WHEN balance_cents + $2 + $3 >= total_cents - holdback_cents THEN 'FINALIZED'
 			                   ELSE 'PARTIALLY_PAID'
 			                 END,
 			        updated_at = now(),
 			        seq = (SELECT next_value FROM iseq)
-			  WHERE id = $1::uuid`, a.invoiceID, a.cents); err != nil {
+			  WHERE id = $1::uuid`, a.invoiceID, a.cents, a.discount); err != nil {
 			return Void{}, fmt.Errorf("void: re-open invoice %s: %w", a.invoiceID, err)
 		}
 		runningAR += a.cents
@@ -288,6 +289,15 @@ UPDATE invoices
 				customerID, a.cents, runningAR, in.PaymentID, branchID, "voided receipt: "+in.Reason); err != nil {
 				return Void{}, fmt.Errorf("void: insert mirror subledger txn: %w", err)
 			}
+		}
+		// The discount the application took is given back with the money (TM-2), against the
+		// invoice like the taking, so the aging's past date reconstruction reads both in place.
+		runningAR += a.discount
+		if err := GiveBackDiscountTx(ctx, tx, DiscountGiveBack{
+			CustomerID: customerID, BranchID: branchID, InvoiceID: a.invoiceID, Cents: a.discount,
+			BalanceAfter: runningAR, Memo: "voided receipt: early payment discount given back",
+		}); err != nil {
+			return Void{}, err
 		}
 		reopened = append(reopened, a.invoiceID)
 	}
@@ -341,10 +351,10 @@ UPDATE invoices
 	for _, a := range allocs {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO payment_allocations
-			   (payment_id, invoice_id, amount_cents, kind, reverses_allocation_id, allocated_by, created_at)
-			 VALUES ($1::uuid, $2::uuid, $3, 'REVERSAL', $4::uuid, $5::uuid,
+			   (payment_id, invoice_id, amount_cents, discount_cents, kind, reverses_allocation_id, allocated_by, created_at)
+			 VALUES ($1::uuid, $2::uuid, $3, $7, 'REVERSAL', $4::uuid, $5::uuid,
 			         GREATEST($6::timestamptz, (SELECT app.created_at FROM payment_allocations app WHERE app.id = $4::uuid)))`,
-			in.PaymentID, a.invoiceID, -a.cents, a.id, actorUUID(in.ActorID), now); err != nil {
+			in.PaymentID, a.invoiceID, -a.cents, a.id, actorUUID(in.ActorID), now, -a.discount); err != nil {
 			return Void{}, fmt.Errorf("void: write the reversal row: %w", err)
 		}
 	}
@@ -380,15 +390,22 @@ UPDATE invoices
 	// Transactional outbox, in the SAME transaction, so the GL books the undo exactly once (the
 	// identical discipline the settle, the reversal and the bounce use). The payment facts ride
 	// the payload, read under the row lock this transaction holds, so the journal's branch and
-	// method are the receipt's own and never a re-read of the now VOID row.
+	// method are the receipt's own and never a re-read of the now VOID row. The discount the
+	// applications took rides with the amount (TM-2): the void's journal reverses the discount
+	// journal beside the receipt's own legs.
+	var discountBack int64
+	for _, a := range allocs {
+		discountBack += a.discount
+	}
 	payload, err := json.Marshal(map[string]any{
-		"payment_id":   in.PaymentID,
-		"customer_id":  customerID,
-		"branch_id":    branchID,
-		"method":       method,
-		"amount_cents": amount,
-		"reason":       in.Reason,
-		"invoice_ids":  reopened,
+		"payment_id":     in.PaymentID,
+		"customer_id":    customerID,
+		"branch_id":      branchID,
+		"method":         method,
+		"amount_cents":   amount,
+		"discount_cents": discountBack,
+		"reason":         in.Reason,
+		"invoice_ids":    reopened,
 	})
 	if err != nil {
 		return Void{}, fmt.Errorf("void: marshal payment.voided: %w", err)

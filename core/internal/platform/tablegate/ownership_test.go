@@ -315,6 +315,7 @@ var migrationTopics = map[string]string{
 	"0457_purchasing_payment_runs":         "purchasing",
 	"0460_customer_jobs":                   "customer",
 	"0466_payment_terms":                   "customer",
+	"0472_payment_discount":                "payments",
 	"0461_credit_change_requests":          "billing",
 	"0473_finance_charge_runs":             "billing",
 }
@@ -426,6 +427,7 @@ var ownedObjects = map[string]string{
 	"credit_change_requests":                "billing",           // 0461_credit_change_requests
 	"customer_jobs":                         "customer",          // 0460_customer_jobs
 	"payment_terms":                         "customer",          // 0466_payment_terms
+	"invoice_discount_approvals":            "payments",          // 0472_payment_discount (the manager approval of a late early-payment discount, written by the application)
 	"finance_charge_runs":                   "billing",           // 0473_finance_charge_runs
 	"finance_charge_waivers":                "billing",           // 0473_finance_charge_runs
 	"dashboard_gallery_entries":             "dashboard",         // 0208_widget_gallery
