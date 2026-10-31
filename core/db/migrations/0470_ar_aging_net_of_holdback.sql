@@ -6,7 +6,7 @@
 -- The aging therefore reads the NET due, balance less holdback, so its total ties to 1100; the holdback
 -- is reported separately through holdback_cents, as the holdback readers already do.
 --
--- Only the invoice arm changes. The view keeps its name and its nine columns in the same order, and a
+-- Only the invoice arm changes (here and in ai.ar_aging below). The view keeps its name and its nine columns in the same order, and a
 -- document with no holdback reads exactly as before. A credit memo against a withholding invoice carries
 -- a NEGATIVE holdback_cents, so its net is its credit less the holdback part it takes back.
 
@@ -34,9 +34,10 @@ SELECT
 FROM (
   -- open AR carried on invoices, net of the holdback the customer does not owe yet
   SELECT i.customer_id, 'invoice'::text AS source_type, i.id AS source_ref_id, i.branch_id,
-         i.balance_cents - i.holdback_cents AS amount_cents, i.due_date AS age_date
+         i.balance_cents - LEAST(i.holdback_cents, GREATEST(i.balance_cents, 0)) AS amount_cents, i.due_date AS age_date
   FROM invoices i
-  WHERE i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.balance_cents - i.holdback_cents <> 0
+  WHERE i.status IN ('FINALIZED','PARTIALLY_PAID')
+    AND i.balance_cents - LEAST(i.holdback_cents, GREATEST(i.balance_cents, 0)) <> 0
   UNION ALL
   -- non-invoice AR movements (kept out of the invoices table): NSF fee, adjustment, credit memo, write-off
   SELECT ct.customer_id, 'customer_txn'::text AS source_type, ct.id AS source_ref_id, ct.branch_id,
@@ -47,3 +48,72 @@ FROM (
 ) src
 CROSS JOIN dealer
 LEFT JOIN customers c ON c.id = src.customer_id;
+
+-- The assistant's receivables view reads the same net (0444's union, replaced under its owner so its
+-- ownership and the reader's grant stay): it must follow the aging screen to the cent.
+DO $rt2_net$
+DECLARE
+  db          text := current_database();
+  norm        text;
+  suffix      text;
+  v_view      text;
+  v_reader    text;
+BEGIN
+  norm := translate(db, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
+  norm := regexp_replace(norm, '[^a-z0-9]', '_', 'g');
+  IF norm = db AND length(norm) <= 30 THEN
+    suffix := norm;
+  ELSE
+    suffix := left(norm, 21) || '_' || left(md5(db), 8);
+  END IF;
+  v_view   := 'assist_view_owner_' || suffix;
+  v_reader := 'assist_reader_'     || suffix;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_view) THEN
+    RAISE EXCEPTION 'migration 0418 has not created the assist roles for this database';
+  END IF;
+  IF to_regprocedure('ai.dealer_zone()') IS NULL THEN
+    RAISE EXCEPTION 'migration 0444 has not created ai.dealer_zone()';
+  END IF;
+
+  -- The view's owner already reads invoices.holdback_cents (0427 granted it with the other columns).
+  EXECUTE format('SET LOCAL ROLE %I', v_view);
+
+  CREATE OR REPLACE VIEW ai.ar_aging AS
+    WITH open_ar AS (
+      SELECT i.customer_id,
+             i.balance_cents - LEAST(i.holdback_cents, GREATEST(i.balance_cents, 0)) AS balance_cents,
+             i.due_date
+        FROM public.invoices i
+       WHERE i.status IN ('FINALIZED', 'PARTIALLY_PAID')
+         AND i.balance_cents - LEAST(i.holdback_cents, GREATEST(i.balance_cents, 0)) <> 0
+      UNION ALL
+      SELECT ct.customer_id,
+             SUM(ct.amount_cents) AS balance_cents,
+             MIN((ct.occurred_at AT TIME ZONE ai.dealer_zone())::date) AS due_date
+        FROM public.customer_transactions ct
+       WHERE ct.txn_type IN ('NSF', 'ADJUSTMENT', 'CREDIT_MEMO', 'WRITE_OFF')
+         AND ct.source_type <> 'invoice'
+         AND ((SELECT ai.claims()).global OR ct.branch_id = ANY ((SELECT ai.claims()).branch_ids))
+       GROUP BY ct.customer_id, ct.branch_id, ct.source_type, COALESCE(ct.source_ref_id, ct.id)
+      HAVING SUM(ct.amount_cents) <> 0
+    )
+    SELECT c.id AS customer_id,
+           COALESCE(c.name, '') AS customer_name,
+           COALESCE(c.account_no::text, '') AS account_no,
+           d.today AS as_of,
+           COALESCE(SUM(o.balance_cents) FILTER (WHERE d.today <= o.due_date), 0)::bigint AS current_cents,
+           COALESCE(SUM(o.balance_cents) FILTER (WHERE d.today >  o.due_date AND d.today <= o.due_date + 30), 0)::bigint AS days_1_30_cents,
+           COALESCE(SUM(o.balance_cents) FILTER (WHERE d.today >  o.due_date + 30 AND d.today <= o.due_date + 60), 0)::bigint AS days_31_60_cents,
+           COALESCE(SUM(o.balance_cents) FILTER (WHERE d.today >  o.due_date + 60 AND d.today <= o.due_date + 90), 0)::bigint AS days_61_90_cents,
+           COALESCE(SUM(o.balance_cents) FILTER (WHERE d.today >  o.due_date + 90), 0)::bigint AS days_90_plus_cents,
+           COALESCE(SUM(o.balance_cents), 0)::bigint AS open_cents
+      FROM public.customers c
+      JOIN open_ar o ON o.customer_id = c.id
+      CROSS JOIN LATERAL (SELECT ai.dealer_day() AS today) d
+     GROUP BY c.id, c.name, c.account_no, d.today
+    HAVING COALESCE(SUM(o.balance_cents), 0) <> 0;
+
+  EXECUTE format('GRANT SELECT ON ai.ar_aging TO %I', v_reader);
+  RESET ROLE;
+END
+$rt2_net$;

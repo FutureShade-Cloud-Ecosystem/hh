@@ -67,8 +67,10 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 	err = r.pool.QueryRow(ctx,
 		`SELECT
 		   (SELECT COALESCE(SUM(b.bal), 0) FROM (
-		     SELECT CASE WHEN $3::bool THEN i.balance_cents - i.holdback_cents
-		                 ELSE i.total_cents - i.holdback_cents
+		     SELECT r.raw - LEAST(r.hb, GREATEST(r.raw, 0)) AS bal
+		       FROM (
+		     SELECT i.holdback_cents AS hb, CASE WHEN $3::bool THEN i.balance_cents
+		                 ELSE i.total_cents
 		                      + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
 		                      WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
 		                        AND t.txn_type <> i.doc_type AND t.created_at <= $2), 0)
@@ -77,11 +79,11 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 		                      WHERE a.invoice_id = i.id AND a.created_at <= $2), 0)
 		                      - COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra
 		                      WHERE ra.invoice_id = i.id AND ra.created_at <= $2), 0)
-		                   END AS bal
+		                   END AS raw
 		       FROM invoices i
 		      WHERE i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
 		        AND ($3::bool OR COALESCE(i.finalized_at, i.created_at) <= $2)
-		        AND ($1 = '' OR i.branch_id = $1::uuid)) b
+		        AND ($1 = '' OR i.branch_id = $1::uuid)) r) b
 		      WHERE b.bal <> 0)
 		 + (SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
 		     WHERE txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF') AND source_type <> 'invoice'
