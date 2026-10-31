@@ -344,3 +344,7 @@ additions:
     reason: "W3-CC1: approve a pending customer credit limit increase request under separation of duties and dealer threshold role checks; no ERP source route."
   - route: "POST /api/v1/ar/credit-changes/{id}/reject"
     reason: "W3-CC1: reject a pending customer credit limit increase request with a reason; no ERP source route."
+  - route: "GET /api/v1/gl/export-mapping"
+    reason: "W3 AX-1: the desk's read of the accounting package export's account mapping (each HH GL account to the target package's account code, QuickBooks Online first, Sage 50 next); the ERP exported by hand and had no mapping; no ERP source route."
+  - route: "PUT /api/v1/gl/export-mapping"
+    reason: "W3 AX-1: the Financial Controller's door to point one HH account at a target package's account code, upserted on (target, account_code) and audited; the ERP kept the mapping in a spreadsheet; no ERP source route."

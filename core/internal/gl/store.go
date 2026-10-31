@@ -173,5 +173,18 @@ type glStore interface {
 
 	// - GP-parity export -
 	InsertExportBatch(ctx context.Context, year, month int, format, actorID string, rowCount int) (string, error)
-	ExportRows(ctx context.Context, year, month int, branchID string) ([]ExportRow, error)
+	// ExportRows reads a period's posted lines: the fiscal year, the pick's months (empty = the
+	// whole year), and the branch scope ("" = all branches).
+	ExportRows(ctx context.Context, year int, months []int, branchID string) ([]ExportRow, error)
+	// UnmappedMovementAccounts answers the accounts with movement in the period that carry no
+	// mapping row for the target: the export's refusal names every one of them.
+	UnmappedMovementAccounts(ctx context.Context, year int, months []int, branchID, target string) ([]UnmappedAccount, error)
+
+	// - the accounting package export's account mapping (W3 AX-1) -
+	// ListAccountMapping answers one target's rows, or every target's when the target is empty.
+	ListAccountMapping(ctx context.Context, target string) ([]AccountMapping, error)
+	// SetAccountMapping upserts one account's row for one target and runs the record callback on
+	// the upsert's own transaction, handing it the row as written, so the audit row commits or
+	// rolls back with the mapping (the head office set's shape).
+	SetAccountMapping(ctx context.Context, target, accountCode, packageAccount, actorID string, record func(ctx context.Context, tx pgx.Tx, m AccountMapping) error) (AccountMapping, error)
 }

@@ -2834,6 +2834,8 @@ export type GlPolicy = {
 export type GlExportBody = {
   year: number;
   month: number;
+  quarter?: number;
+  target?: "QUICKBOOKS_ONLINE" | "SAGE_50";
   branch_id: string;
 };
 export type GlExportResult = {
@@ -2842,6 +2844,22 @@ export type GlExportResult = {
   row_count: number;
   is_draft: boolean;
   content: string;
+};
+export type GlAccountMapping = {
+  target: "QUICKBOOKS_ONLINE" | "SAGE_50";
+  account_code: string;
+  account_name: string;
+  package_account: string;
+};
+export type GlAccountMappingPage = {
+  items: GlAccountMapping[];
+  next_cursor?: string | null;
+  limit?: number;
+};
+export type GlAccountMappingSet = {
+  target: "QUICKBOOKS_ONLINE" | "SAGE_50";
+  account_code: string;
+  package_account: string;
 };
 export type FinStmtStatementRow = {
   account_code: string;

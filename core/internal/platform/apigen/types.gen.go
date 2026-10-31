@@ -3335,9 +3335,11 @@ type GlPolicy struct {
 }
 
 type GlExportBody struct {
-	Year     int32  `json:"year"`
-	Month    int32  `json:"month"`
-	BranchId string `json:"branch_id"`
+	Year     int32   `json:"year"`
+	Month    int32   `json:"month"`
+	Quarter  *int32  `json:"quarter,omitempty"`
+	Target   *string `json:"target,omitempty"`
+	BranchId string  `json:"branch_id"`
 }
 
 type GlExportResult struct {
@@ -3346,6 +3348,25 @@ type GlExportResult struct {
 	RowCount int32  `json:"row_count"`
 	IsDraft  bool   `json:"is_draft"`
 	Content  string `json:"content"`
+}
+
+type GlAccountMapping struct {
+	Target         string `json:"target"`
+	AccountCode    string `json:"account_code"`
+	AccountName    string `json:"account_name"`
+	PackageAccount string `json:"package_account"`
+}
+
+type GlAccountMappingPage struct {
+	Items      []GlAccountMapping `json:"items"`
+	NextCursor *string            `json:"next_cursor,omitempty"`
+	Limit      *int32             `json:"limit,omitempty"`
+}
+
+type GlAccountMappingSet struct {
+	Target         string `json:"target"`
+	AccountCode    string `json:"account_code"`
+	PackageAccount string `json:"package_account"`
 }
 
 type FinStmtStatementRow struct {
