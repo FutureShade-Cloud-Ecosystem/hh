@@ -17,10 +17,14 @@ import (
 	"context"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
-const actHoldbackRuleSet = "HOLDBACK_RULE_SET"
+const (
+	actHoldbackRuleSet = "HOLDBACK_RULE_SET"
+	actHoldbackLink    = "HOLDBACK_JOB_LINK"
+)
 
 // ruleStore is the rule tables' persistence seam; *Repository satisfies it.
 type ruleStore interface {
@@ -31,6 +35,15 @@ type ruleStore interface {
 	JobOverride(ctx context.Context, customerJobID string) (*int, error)
 	LinkCustomerJob(ctx context.Context, lienJobID, customerJobID string) error
 	ProvinceRules(ctx context.Context) ([]ProvinceRule, error)
+	RuleInputs(ctx context.Context, sitePro, customerJobID string) (RuleInputs, error)
+	// InTx runs fn on one transaction (the caller's when one rides ctx), so a change and its audit
+	// record commit or roll back together.
+	InTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// txRecorder is the audit recorder's transactional write, satisfied by *audit.Service.
+type txRecorder interface {
+	RecordTx(ctx context.Context, q audit.Execer, a audit.SensitiveAccess) error
 }
 
 var _ ruleStore = (*Repository)(nil)
@@ -58,21 +71,36 @@ func (s *Service) managerCaller(ctx context.Context) (identity.StaffContext, err
 	return c, nil
 }
 
-func (s *Service) recordRuleSet(ctx context.Context, c identity.StaffContext, entityType, entityID, branchID string, pct *int) error {
+// record writes one audit row on the transaction the change rides (ctx carries it from InTx), so a
+// failed record fails the change. A recorder with no transactional write (a unit fake) records on its
+// own path. No recorder wired records nothing.
+func (s *Service) record(ctx context.Context, a audit.SensitiveAccess) error {
 	if s.audit == nil {
 		return nil
 	}
-	extra := map[string]any{"holdback_pct_bps": nil}
+	if tr, ok := s.audit.(txRecorder); ok {
+		if tx := customer.CallerTx(ctx); tx != nil {
+			return tr.RecordTx(ctx, tx, a)
+		}
+	}
+	return s.audit.Record(ctx, a)
+}
+
+// recordRuleSet records a set (pct) or a clear (nil) of an override. A set carries the percent and a
+// clear carries none, which tells them apart.
+func (s *Service) recordRuleSet(ctx context.Context, c identity.StaffContext, entityType, entityID, branchID string, pct *int) error {
+	extra := map[string]any{}
 	if pct != nil {
 		extra["holdback_pct_bps"] = *pct
 	}
-	return s.audit.Record(ctx, audit.SensitiveAccess{
+	return s.record(ctx, audit.SensitiveAccess{
 		Action: actHoldbackRuleSet, EntityType: entityType, EntityID: entityID,
 		ActorID: c.UserID, BranchID: branchID, Extra: extra,
 	})
 }
 
-// SetDealerOverride sets (pct) or clears (nil) the dealer's override of the province's percent.
+// SetDealerOverride sets (pct) or clears (nil) the dealer's override of the province's percent. The
+// change and its record are one transaction. The record's entity is the dealer rule row's own uuid.
 func (s *Service) SetDealerOverride(ctx context.Context, pct *int) (DealerRule, error) {
 	c, err := s.managerCaller(ctx)
 	if err != nil {
@@ -81,17 +109,21 @@ func (s *Service) SetDealerOverride(ctx context.Context, pct *int) (DealerRule, 
 	if err := checkPct(pct); err != nil {
 		return DealerRule{}, err
 	}
-	d, err := s.rules().SetDealerOverride(ctx, pct, c.UserID)
+	var d DealerRule
+	err = s.rules().InTx(ctx, func(ctx context.Context) error {
+		var err error
+		if d, err = s.rules().SetDealerOverride(ctx, pct, c.UserID); err != nil {
+			return err
+		}
+		return s.recordRuleSet(ctx, c, "lien.holdback_dealer_rule", d.ID, "", pct)
+	})
 	if err != nil {
-		return DealerRule{}, err
-	}
-	if err := s.recordRuleSet(ctx, c, "lien.holdback_dealer_rule", "dealer", "", pct); err != nil {
 		return DealerRule{}, err
 	}
 	return d, nil
 }
 
-// SetJobOverride sets (pct) or clears (nil) one customer job's override.
+// SetJobOverride sets (pct) or clears (nil) one customer job's override, with its record in one transaction.
 func (s *Service) SetJobOverride(ctx context.Context, customerJobID string, pct *int) error {
 	c, err := s.managerCaller(ctx)
 	if err != nil {
@@ -110,10 +142,12 @@ func (s *Service) SetJobOverride(ctx context.Context, customerJobID string, pct 
 	if !c.CanAccessBranch(site.BranchID) {
 		return forbidden("lien: that job sits at a branch outside your reach")
 	}
-	if err := s.rules().SetJobOverride(ctx, site.JobID, site.BranchID, pct, c.UserID); err != nil {
-		return err
-	}
-	return s.recordRuleSet(ctx, c, "lien.holdback_job_override", site.JobID, site.BranchID, pct)
+	return s.rules().InTx(ctx, func(ctx context.Context) error {
+		if err := s.rules().SetJobOverride(ctx, site.JobID, site.BranchID, pct, c.UserID); err != nil {
+			return err
+		}
+		return s.recordRuleSet(ctx, c, "lien.holdback_job_override", site.JobID, site.BranchID, pct)
+	})
 }
 
 // Where a rule's percent came from.
@@ -150,32 +184,27 @@ func (s *Service) HoldbackRuleForJob(ctx context.Context, customerJobID string) 
 	if c, ok := s.callerFrom(ctx); ok && c.UserID != "" && !c.CanAccessBranch(site.BranchID) {
 		return HoldbackRule{}, clientErr(404, "that job was not found")
 	}
-	dealer, err := s.rules().DealerRule(ctx)
+	// One statement reads the dealer rule, the province rule and the job's override, so the answer is
+	// one snapshot whether or not a caller's transaction rides ctx.
+	in, err := s.rules().RuleInputs(ctx, site.Province, site.JobID)
 	if err != nil {
 		return HoldbackRule{}, err
 	}
 	out := HoldbackRule{Province: site.Province, ProvinceSource: "SITE"}
 	if out.Province == "" {
-		out.Province, out.ProvinceSource = dealer.Province, "DEALER"
+		out.Province, out.ProvinceSource = in.Dealer.Province, "DEALER"
 	}
-	pr, ok, err := s.rules().ProvinceRule(ctx, out.Province)
-	if err != nil {
-		return HoldbackRule{}, err
-	}
-	if !ok {
+	if !in.HasProvince {
 		return HoldbackRule{}, unprocessable("lien: there is no holdback rule for the province %s", out.Province)
 	}
+	pr := in.Province
 	out.HoldbackPctBps, out.PctSource = pr.HoldbackPctBps, PctFromProvince
 	out.PreserveDays, out.PerfectDays = pr.PreserveDays, pr.PerfectDays
-	if dealer.HoldbackPctBps != nil {
-		out.HoldbackPctBps, out.PctSource = *dealer.HoldbackPctBps, PctFromDealer
+	if in.Dealer.HoldbackPctBps != nil {
+		out.HoldbackPctBps, out.PctSource = *in.Dealer.HoldbackPctBps, PctFromDealer
 	}
-	jo, err := s.rules().JobOverride(ctx, site.JobID)
-	if err != nil {
-		return HoldbackRule{}, err
-	}
-	if jo != nil {
-		out.HoldbackPctBps, out.PctSource = *jo, PctFromJob
+	if in.JobOverride != nil {
+		out.HoldbackPctBps, out.PctSource = *in.JobOverride, PctFromJob
 	}
 	return out, nil
 }
@@ -209,7 +238,25 @@ func (s *Service) LinkCustomerJob(ctx context.Context, lienJobID, customerJobID 
 		}
 		customerJobID = site.JobID
 	}
-	if err := s.rules().LinkCustomerJob(ctx, lienJobID, customerJobID); err != nil {
+	before := job.CustomerJobID
+	if err := s.rules().InTx(ctx, func(ctx context.Context) error {
+		if err := s.rules().LinkCustomerJob(ctx, lienJobID, customerJobID); err != nil {
+			return err
+		}
+		// The link decides which job's rule a lien job's holdback follows, so it is recorded: a link
+		// names the job it linked to, an unlink only the one it left (a nil value is skipped).
+		extra := map[string]any{"before": nil, "after": nil}
+		if before != "" {
+			extra["before"] = before
+		}
+		if customerJobID != "" {
+			extra["after"] = customerJobID
+		}
+		return s.record(ctx, audit.SensitiveAccess{
+			Action: actHoldbackLink, EntityType: "lien.job_customer_link", EntityID: job.ID,
+			ActorID: c.UserID, BranchID: job.BranchID, Extra: extra,
+		})
+	}); err != nil {
 		return Job{}, err
 	}
 	job.CustomerJobID = customerJobID

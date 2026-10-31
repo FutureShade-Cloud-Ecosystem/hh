@@ -34,9 +34,66 @@ func (r *Repository) q(ctx context.Context) (querier, error) {
 	return r.pool, nil
 }
 
+// InTx runs fn on one transaction: the caller's own when one rides the context (customer.WithCallerTx),
+// else a new one on the pool that commits when fn returns nil and rolls back on an error. fn's context
+// carries the transaction, so every repository call inside rides it.
+func (r *Repository) InTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	if customer.CallerTx(ctx) != nil {
+		return fn(ctx)
+	}
+	if r.pool == nil {
+		return errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("lien: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := fn(customer.WithCallerTx(ctx, tx)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// RuleInputs is everything the rule for one job reads, from ONE statement and so one snapshot, inside
+// a caller's transaction or not: the dealer rule, the province rule (the site's province when sitePro
+// is set, else the dealer's), and the job's override.
+type RuleInputs struct {
+	Dealer      DealerRule
+	Province    ProvinceRule
+	HasProvince bool
+	JobOverride *int
+}
+
+func (r *Repository) RuleInputs(ctx context.Context, sitePro, customerJobID string) (RuleInputs, error) {
+	q, err := r.q(ctx)
+	if err != nil {
+		return RuleInputs{}, err
+	}
+	var in RuleInputs
+	var ppct, pres, perf *int32
+	var prov *string
+	if err := q.QueryRow(ctx, `
+		SELECT d.id::text, d.province, d.holdback_pct_bps,
+		       p.province, p.holdback_pct_bps, p.preserve_days, p.perfect_days,
+		       (SELECT o.holdback_pct_bps FROM holdback_job_overrides o WHERE o.customer_job_id = $2)
+		FROM holdback_dealer_rule d
+		LEFT JOIN holdback_province_rules p ON p.province = COALESCE(NULLIF($1, ''), d.province)
+		WHERE d.singleton`, sitePro, customerJobID).
+		Scan(&in.Dealer.ID, &in.Dealer.Province, &in.Dealer.HoldbackPctBps, &prov, &ppct, &pres, &perf, &in.JobOverride); err != nil {
+		return RuleInputs{}, fmt.Errorf("lien: read the holdback rule inputs: %w", err)
+	}
+	if prov != nil {
+		in.HasProvince = true
+		in.Province = ProvinceRule{Province: *prov, HoldbackPctBps: int(*ppct), PreserveDays: int(*pres), PerfectDays: int(*perf)}
+	}
+	return in, nil
+}
+
 // DealerRule is the dealer's own holdback rule: its province, and an optional percent that overrides
 // the province's. A nil percent is no override, never zero percent.
 type DealerRule struct {
+	ID             string `json:"-"` // the row's own uuid, the entity id of its audit record; never on the wire
 	Province       string `json:"province"`
 	HoldbackPctBps *int   `json:"holdback_pct_bps"`
 }
@@ -47,8 +104,8 @@ func (r *Repository) DealerRule(ctx context.Context) (DealerRule, error) {
 		return DealerRule{}, err
 	}
 	var d DealerRule
-	if err := q.QueryRow(ctx, `SELECT province, holdback_pct_bps FROM holdback_dealer_rule WHERE singleton`).
-		Scan(&d.Province, &d.HoldbackPctBps); err != nil {
+	if err := q.QueryRow(ctx, `SELECT id::text, province, holdback_pct_bps FROM holdback_dealer_rule WHERE singleton`).
+		Scan(&d.ID, &d.Province, &d.HoldbackPctBps); err != nil {
 		return DealerRule{}, fmt.Errorf("lien: read the dealer holdback rule: %w", err)
 	}
 	return d, nil
@@ -62,8 +119,8 @@ func (r *Repository) SetDealerOverride(ctx context.Context, pct *int, setBy stri
 	var d DealerRule
 	if err := q.QueryRow(ctx,
 		`UPDATE holdback_dealer_rule SET holdback_pct_bps = $1, set_by = $2, updated_at = now()
-		 WHERE singleton RETURNING province, holdback_pct_bps`, pct, nullUUID(setBy)).
-		Scan(&d.Province, &d.HoldbackPctBps); err != nil {
+		 WHERE singleton RETURNING id::text, province, holdback_pct_bps`, pct, nullUUID(setBy)).
+		Scan(&d.ID, &d.Province, &d.HoldbackPctBps); err != nil {
 		return DealerRule{}, fmt.Errorf("lien: set the dealer holdback override: %w", err)
 	}
 	return d, nil

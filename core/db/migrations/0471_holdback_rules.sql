@@ -34,6 +34,7 @@ VALUES ('ON', 1000, 60, 90);
 -- province's. A NULL percent means no override, never zero percent.
 CREATE TABLE holdback_dealer_rule (
   singleton        BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+  id               UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(), -- the row's own id: its audit record's entity id
   province         TEXT NOT NULL DEFAULT 'ON' REFERENCES holdback_province_rules(province) ON DELETE RESTRICT,
   holdback_pct_bps INTEGER CHECK (holdback_pct_bps IS NULL OR holdback_pct_bps BETWEEN 0 AND 10000),
   set_by           UUID REFERENCES users(id) ON DELETE SET NULL,
