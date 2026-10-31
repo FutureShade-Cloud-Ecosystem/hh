@@ -33,6 +33,8 @@ type applyRouteWorld struct {
 	customerID string
 	otherID    string
 	tag        string
+	// last runs after the world's own rows are gone (a user those rows referenced).
+	last []func(context.Context)
 }
 
 func newApplyRouteWorld(t *testing.T) *applyRouteWorld {
@@ -60,16 +62,28 @@ func newApplyRouteWorld(t *testing.T) *applyRouteWorld {
 		WithMoney(NewPaymentsReceiptWriter(NewPaymentsRepository(pool, nil))).
 		WithClock(func() time.Time { return d510Now })
 	w.h = NewRegisterHandler(w.svc, repo, nil)
+	// Every delete fails the leg loudly naming its table (FROM-PRINCIPAL 202), in dependency
+	// order: approval rows before the payments and invoices they name, then the rest, then whatever
+	// a leg registered to run last (a staff user the rows above referenced).
 	t.Cleanup(func() {
 		c := context.Background()
+		del := func(table, q string, args ...any) {
+			if _, err := pool.Exec(c, q, args...); err != nil {
+				t.Errorf("cleanup of %s failed: %v", table, err)
+			}
+		}
 		for _, cid := range []string{w.customerID, w.otherID} {
-			_, _ = pool.Exec(c, `DELETE FROM ar_promises_to_pay WHERE customer_id = $1::uuid`, cid)
-			_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, cid)
-			_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, cid)
-			_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, cid)
-			_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, cid)
-			_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, cid)
-			_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, cid)
+			del("invoice_discount_approvals", `DELETE FROM invoice_discount_approvals WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, cid)
+			del("ar_promises_to_pay", `DELETE FROM ar_promises_to_pay WHERE customer_id = $1::uuid`, cid)
+			del("customer_transactions", `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, cid)
+			del("events_outbox", `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, cid)
+			del("payment_allocations", `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, cid)
+			del("payments", `DELETE FROM payments WHERE customer_id = $1::uuid`, cid)
+			del("invoices", `DELETE FROM invoices WHERE customer_id = $1::uuid`, cid)
+			del("customers", `DELETE FROM customers WHERE id = $1::uuid`, cid)
+		}
+		for _, f := range w.last {
+			f(c)
 		}
 	})
 	return w
@@ -580,8 +594,10 @@ func TestApplyRoute_LateDiscountClerkRefusedManagerApproved(t *testing.T) {
 		manager.tag+"-approver@example.test").Scan(&approver); err != nil {
 		t.Fatalf("seed the approver: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = manager.pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1::uuid`, approver)
+	manager.last = append(manager.last, func(c context.Context) {
+		if _, err := manager.pool.Exec(c, `DELETE FROM users WHERE id = $1::uuid`, approver); err != nil {
+			t.Errorf("cleanup of users failed: %v", err)
+		}
 	})
 	caller := applyGlobalCaller()
 	caller.UserID = approver
