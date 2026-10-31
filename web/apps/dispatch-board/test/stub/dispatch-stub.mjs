@@ -1183,6 +1183,6 @@ const server = createServer((req, res) => {
     fail(res, 500, `stub error: ${String(err)}`);
   });
 });
-server.listen(port, () => {
+server.listen(port, "127.0.0.1", () => {
   console.log(`dispatch-stub listening on ${port}`);
 });
