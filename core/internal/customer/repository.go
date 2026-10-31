@@ -265,14 +265,22 @@ func (r *Repository) InsertCustomer(ctx context.Context, in CreateInput) (Accoun
 	if in.PaymentTermsDays != nil {
 		terms = *in.PaymentTermsDays
 	}
+	// The customer's terms: the code their own days name, and the flat days mirror every reader
+	// that counts days still reads. The code's row is ensured first, so the code a customer
+	// carries always names a term that exists (a custom net is added to the master's list).
+	code, name := TermsForDays(terms)
+	if err := ensureTermsRow(ctx, r.pool, code, name, terms); err != nil {
+		return Account{}, err
+	}
 	var id string
 	err = r.pool.QueryRow(ctx, `
 		INSERT INTO customers (account_no, name, customer_type, home_branch_id,
-		                       payment_terms_days, credit_limit_cents, tax_exempt, billing_address)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		                       payment_terms_days, credit_limit_cents, tax_exempt, billing_address,
+		                       terms_code)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id::text`,
 		in.AccountNo, in.Name, in.CustomerType, homeBranch,
-		terms, in.CreditLimitCents, in.TaxExempt, addr).Scan(&id)
+		terms, in.CreditLimitCents, in.TaxExempt, addr, code).Scan(&id)
 	if err != nil {
 		// account_no is CITEXT NOT NULL UNIQUE (migration 0006). A collision is a client
 		// error (the account number is already taken), not a server fault: return the

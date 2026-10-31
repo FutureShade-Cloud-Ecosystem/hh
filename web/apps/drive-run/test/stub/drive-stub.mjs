@@ -634,6 +634,6 @@ async function handleSync(req, res, url, body) {
 const server = createServer((req, res) => {
   handle(req, res).catch(() => refuse(res, 500, "internal error"));
 });
-server.listen(port, () => {
+server.listen(port, "127.0.0.1", () => {
   console.log(`drive-stub listening on ${port}`);
 });

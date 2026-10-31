@@ -73,6 +73,6 @@ function handle(req, res) {
 }
 
 const server = createServer(handle);
-server.listen(port, () => {
+server.listen(port, "127.0.0.1", () => {
   console.log(`role-stub listening on ${port}`);
 });
