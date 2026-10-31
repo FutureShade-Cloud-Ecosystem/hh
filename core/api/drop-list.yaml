@@ -16,6 +16,16 @@ drops:
     reason: "Not a route: a comment line in order/activity.go:27 quoting an API framing the surface exists to hide. The literal grep cannot tell comments from registrations."
 
 additions:
+  - route: "GET /api/v1/lien/holdback/province-rules"
+    reason: "W3-RT1: the province holdback rules, one row a province; the ERP carried one placeholder percent on each lien job and no province table."
+  - route: "GET /api/v1/lien/holdback/jobs/{customerJobID}/rule"
+    reason: "W3-RT1: the one read that answers a customer job's holdback rule (the job's override, else the dealer's, else the province's); the ERP had no rule read."
+  - route: "PUT /api/v1/lien/holdback/dealer-rule"
+    reason: "W3-RT1: the dealer's optional holdback percent override, bounded 0 to 100 percent, manager gated and recorded; the ERP had none."
+  - route: "PUT /api/v1/lien/holdback/jobs/{customerJobID}/override"
+    reason: "W3-RT1: a customer job's optional holdback percent override, bounded, manager gated, branch fenced and recorded; the ERP had none."
+  - route: "PUT /api/v1/lien/jobs/{id}/customer-job"
+    reason: "W3-RT1: the link from a lien job to one customer job of the same customer (JA-1's job account); the ERP had no customer jobs."
   - route: "POST /api/v1/landed-costs/{id}/settle"
     reason: "W2-1d: the landed cost's own settlement. The payable the apply posts to AP is paid on the payee vendor's terms, the payment journal keyed landedcost.settle, and the AP aging reads it by the same rule it reads a bill's payment."
   - route: "GET /api/v1/reporting/datasets"

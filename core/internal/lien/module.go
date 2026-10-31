@@ -121,6 +121,7 @@ type Service struct {
 	standard StandardRateReader // the dealer's standard tax rate; nil is the Ontario 13 percent
 	cosigner CoSignerResolver   // resolves the four-eyes co-signer's authority server-side (never body-asserted)
 	audit    audit.Recorder
+	custJobs CustomerJobs // the customer module's job facts (the holdback rule, the link)
 	log      *slog.Logger
 	now      func() time.Time
 	// callerFrom resolves the guard-stamped acting StaffContext (the dual-gate release check). Never a
@@ -211,6 +212,13 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/lien/jobs/{id}/sync", g.RequireManager(h.staff(h.syncHoldbacks)))
 	r.Handle("POST /api/v1/lien/documents", g.RequireManager(h.staff(h.createDocument)))
 	r.Handle("POST /api/v1/lien/holdback/{jobID}/release", g.RequireManager(h.staff(h.release)))
+	// - holdback rules (RT-1): the province rules, the rule for a job, the dealer and job overrides, and the link
+	//   to a customer job. Reads and writes are RequireManager; the service holds the manager line itself -
+	r.Handle("GET /api/v1/lien/holdback/province-rules", g.RequireManager(h.staff(h.provinceRules)))
+	r.Handle("GET /api/v1/lien/holdback/jobs/{customerJobID}/rule", g.RequireManager(h.staff(h.jobRule)))
+	r.Handle("PUT /api/v1/lien/holdback/dealer-rule", g.RequireManager(h.staff(h.setDealerOverride)))
+	r.Handle("PUT /api/v1/lien/holdback/jobs/{customerJobID}/override", g.RequireManager(h.staff(h.setJobOverride)))
+	r.Handle("PUT /api/v1/lien/jobs/{id}/customer-job", g.RequireManager(h.staff(h.linkCustomerJob)))
 }
 
 func (h *Handler) notImplemented(w http.ResponseWriter, _ *http.Request) {

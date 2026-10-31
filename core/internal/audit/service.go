@@ -672,6 +672,10 @@ var allowedExtraKeys = map[string]bool{
 	"first_approved_by":  true,
 	"second_approved_by": true,
 	"rejected_by":        true,
+	// The lien holdback rule records (HOLDBACK_RULE_SET, RT-1): the percent a dealer or job override
+	// became, in basis points, an int (0 to 10000) like the cents above, never an identifier. A set
+	// carries it and a clear carries none (a nil value is skipped), which tells the two apart.
+	"holdback_pct_bps": true,
 }
 
 // redactCleartext returns the value with cleartext-looking identifiers stripped. A value is treated as

@@ -37,8 +37,8 @@ test("two fresh generations are byte-identical and match the committed tree", ()
     // reportingListDatasets and reportingReadDataset, plus RW-2's seven saved report
     // doors (reportingListSavedReports, reportingCreateSavedReport, reportingGetSavedReport,
     // reportingUpdateSavedReport, reportingDeleteSavedReport, reportingRunSavedReport and
-    // reportingExportSavedReportCsv): 829.
-    if (!out1.includes("829 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
+    // reportingExportSavedReportCsv), plus RT-1's five holdback rule routes: 834.
+    if (!out1.includes("834 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
     const a = snapshot(one);
     const b = snapshot(two);
     const c = snapshot(committed);

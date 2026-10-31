@@ -6,6 +6,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"net/http"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/customerwall"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
@@ -144,4 +145,99 @@ func (h *Handler) release(w http.ResponseWriter, r *http.Request, caller guards.
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// - holdback rules (RT-1) -
+
+// overrideBody is the body of an override write: a percent in basis points, or null to clear. The field
+// must be present, so an empty body is never read as a clear.
+type overrideBody struct {
+	HoldbackPctBps customer.OptionalValue[int] `json:"holdback_pct_bps"`
+}
+
+func (h *Handler) decodeOverride(w http.ResponseWriter, r *http.Request) (*int, bool) {
+	var b overrideBody
+	if !h.decode(w, r, &b) {
+		return nil, false
+	}
+	if !b.HoldbackPctBps.Set() {
+		httpx.Error(w, http.StatusUnprocessableEntity, "lien: holdback_pct_bps is required (basis points, or null to clear the override)")
+		return nil, false
+	}
+	return b.HoldbackPctBps.Value, true
+}
+
+func (h *Handler) provinceRules(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	items, err := h.svc.ProvinceRules(r.Context())
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Handler) jobRule(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	rule, err := h.svc.HoldbackRuleForJob(r.Context(), r.PathValue("customerJobID"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, rule)
+}
+
+func (h *Handler) setDealerOverride(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	pct, ok := h.decodeOverride(w, r)
+	if !ok {
+		return
+	}
+	d, err := h.svc.SetDealerOverride(r.Context(), pct)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, d)
+}
+
+func (h *Handler) setJobOverride(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	pct, ok := h.decodeOverride(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("customerJobID")
+	if err := h.svc.SetJobOverride(r.Context(), id, pct); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	rule, err := h.svc.HoldbackRuleForJob(r.Context(), id)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, rule)
+}
+
+// linkBody is the body of a link write: the customer job's id, or null to unlink.
+type linkBody struct {
+	CustomerJobID customer.OptionalValue[string] `json:"customer_job_id"`
+}
+
+func (h *Handler) linkCustomerJob(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var b linkBody
+	if !h.decode(w, r, &b) {
+		return
+	}
+	if !b.CustomerJobID.Set() {
+		httpx.Error(w, http.StatusUnprocessableEntity, "lien: customer_job_id is required (a customer job id, or null to unlink)")
+		return
+	}
+	id := ""
+	if b.CustomerJobID.Value != nil {
+		id = *b.CustomerJobID.Value
+	}
+	job, err := h.svc.LinkCustomerJob(r.Context(), r.PathValue("id"), id)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, job)
 }

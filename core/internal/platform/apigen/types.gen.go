@@ -10714,6 +10714,7 @@ type LienJob struct {
 	Id                  string     `json:"id"`
 	JobNo               string     `json:"job_no"`
 	CustomerId          *string    `json:"customer_id,omitempty"`
+	CustomerJobId       *string    `json:"customer_job_id,omitempty"`
 	BranchId            string     `json:"branch_id"`
 	Description         string     `json:"description"`
 	ContractCents       int64      `json:"contract_cents"`
@@ -10724,6 +10725,39 @@ type LienJob struct {
 	HoldbackDirection   string     `json:"holdback_direction"`
 	HstOnHoldback       bool       `json:"hst_on_holdback"`
 	CreatedAt           *time.Time `json:"created_at,omitempty"`
+}
+
+type LienProvinceRule struct {
+	Province       string `json:"province"`
+	HoldbackPctBps int32  `json:"holdback_pct_bps"`
+	PreserveDays   int32  `json:"preserve_days"`
+	PerfectDays    int32  `json:"perfect_days"`
+}
+
+type LienProvinceRuleList struct {
+	Items []LienProvinceRule `json:"items"`
+}
+
+type LienDealerRule struct {
+	Province       string `json:"province"`
+	HoldbackPctBps *int32 `json:"holdback_pct_bps"`
+}
+
+type LienHoldbackOverrideInput struct {
+	HoldbackPctBps *int32 `json:"holdback_pct_bps"`
+}
+
+type LienHoldbackRule struct {
+	HoldbackPctBps int32  `json:"holdback_pct_bps"`
+	PreserveDays   int32  `json:"preserve_days"`
+	PerfectDays    int32  `json:"perfect_days"`
+	PctSource      string `json:"pct_source"`
+	Province       string `json:"province"`
+	ProvinceSource string `json:"province_source"`
+}
+
+type LienCustomerJobLinkInput struct {
+	CustomerJobId *string `json:"customer_job_id"`
 }
 
 type LienJobInput struct {
