@@ -156,3 +156,35 @@ func (r *Repository) ListRevaluationRuns(ctx context.Context, branchID string) (
 	}
 	return out, rows.Err()
 }
+
+// DueRevaluationRun is one posted run with no reversal yet: the branch and the house month.
+type DueRevaluationRun struct {
+	BranchID string
+	Month    string
+}
+
+// UnreversedRevaluationRuns lists the runs that posted a journal and have no reversal, oldest month
+// first. A nil branch list is every branch (the worker's global reach); otherwise only those named.
+func (r *Repository) UnreversedRevaluationRuns(ctx context.Context, branchIDs []string) ([]DueRevaluationRun, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT branch_id::text, month FROM ap_revaluation_runs
+		 WHERE journal_id IS NOT NULL AND reversal_journal_id IS NULL
+		   AND ($1::uuid[] IS NULL OR branch_id = ANY($1::uuid[]))
+		 ORDER BY month, branch_id`, branchIDs)
+	if err != nil {
+		return nil, fmt.Errorf("purchasing: list unreversed revaluation runs: %w", err)
+	}
+	defer rows.Close()
+	var out []DueRevaluationRun
+	for rows.Next() {
+		var d DueRevaluationRun
+		if err := rows.Scan(&d.BranchID, &d.Month); err != nil {
+			return nil, fmt.Errorf("purchasing: scan unreversed revaluation run: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}

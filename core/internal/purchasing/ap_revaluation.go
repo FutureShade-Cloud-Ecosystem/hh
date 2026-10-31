@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 )
@@ -681,4 +682,74 @@ func (s *Service) ListAPRevaluations(ctx context.Context, branchID string) ([]AP
 		runs = []APRevaluationRunRecord{}
 	}
 	return runs, nil
+}
+
+// APRevaluationSweep is the worker's answer: how many unreversed runs it found, how many it
+// reversed, how many are not yet due (the next house day has not begun) and how many failed.
+type APRevaluationSweep struct {
+	Examined  int `json:"examined"`
+	Reversed  int `json:"reversed"`
+	NotYetDue int `json:"not_yet_due"`
+	Failed    int `json:"failed"`
+}
+
+// ReverseDueAPRevaluations is the worker's trigger: it reverses every posted run whose next house
+// day has begun and whose reversal has not posted, through ReverseAPRevaluation (so the reversal
+// is the run's own legs swapped, dated the next house day, under the branch lock). It never
+// presses a run: the month end rate is a Controller's input, so a month with no run is left alone.
+// One failing run does not stop the others; the sweep answers an error naming the count.
+func (s *Service) ReverseDueAPRevaluations(ctx context.Context) (APRevaluationSweep, error) {
+	var sweep APRevaluationSweep
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return sweep, err
+	}
+	var reach []string
+	if caller.Scope != identity.ScopeGlobal {
+		reach = []string{}
+		for b, granted := range caller.Branches {
+			if granted {
+				reach = append(reach, b)
+			}
+		}
+	}
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return sweep, err
+	}
+	loc := zone.Location()
+	due, err := s.repo.UnreversedRevaluationRuns(ctx, reach)
+	if err != nil {
+		return sweep, err
+	}
+	sweep.Examined = len(due)
+	var firstErr error
+	for _, d := range due {
+		year, month, perr := parseAPMonth(d.Month)
+		if perr != nil {
+			sweep.Failed++
+			if firstErr == nil {
+				firstErr = perr
+			}
+			continue
+		}
+		monthStart, _ := apMonthBounds(year, month, loc)
+		if s.clock().In(loc).Before(monthStart.AddDate(0, 1, 0)) {
+			sweep.NotYetDue++
+			continue
+		}
+		if _, rerr := s.ReverseAPRevaluation(ctx, d.BranchID, d.Month); rerr != nil {
+			sweep.Failed++
+			s.log.Warn("purchasing: AP revaluation reversal failed", "branch_id", d.BranchID, "month", d.Month, "err", rerr)
+			if firstErr == nil {
+				firstErr = rerr
+			}
+			continue
+		}
+		sweep.Reversed++
+	}
+	if firstErr != nil {
+		return sweep, fmt.Errorf("purchasing: %d of %d AP revaluation reversals failed, the first: %w", sweep.Failed, sweep.Examined, firstErr)
+	}
+	return sweep, nil
 }

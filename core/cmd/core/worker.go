@@ -31,6 +31,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -183,6 +184,15 @@ func worker(getenv func(string) string) error {
 	jobRunner := jobs.NewRunner(jobs.NewRepository(pool), log).
 		Register("ar.credit_hold_sweep", unionCreditSweep).
 		Register(billing.CreditMemoRepostJobName, creditMemoRepost).
+		// W3 FX-2b: take back the month end AP revaluation a Controller pressed, on the next house
+		// day. The job never presses a run (the rate is a Controller's input). It runs under the
+		// same GLOBAL system identity as the SLA sweep, so the branch fence sees every branch.
+		Register(purchasing.APRevaluationReversalJobName, func(jobCtx context.Context) (jobs.Result, error) {
+			sysCtx := identity.ContextWithStaff(jobCtx, identity.StaffContext{
+				UserID: "system:jobs", Scope: identity.ScopeGlobal, Status: identity.StatusActive,
+			})
+			return purchasing.APRevaluationReversalJob(graph.ops.purchasingSvc)(sysCtx)
+		}).
 		Register("warranty.sla.sweep", func(jobCtx context.Context) (jobs.Result, error) {
 			// The SLA sweep runs under a GLOBAL system identity:
 			// SweepSLA resolves a StaffContext and branch-scopes; the
