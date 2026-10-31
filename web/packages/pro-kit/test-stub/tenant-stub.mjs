@@ -159,7 +159,20 @@ const orderDetail = (o) => ({ ...orderSummary(o), lines: o.lines, delivery_instr
 // ---- the portal's payoff (TM-2b), following core/internal/payments PayableInvoices ----------------------------
 // An open invoice that carries discount terms (the control door's {discount}) and is inside its window quotes the payoff:
 // the open amount less the holdback, less the terms' percent of it, half to even. The list shows it and the pay charges it.
-const stubToday = () => new Date().toISOString().slice(0, 10);
+// The core judges the window on the dealer's house day (America/Toronto), never the UTC day. The control door can pin the
+// clock ({clock}) so a leg can stand in the house evening, when the UTC day is already tomorrow.
+const HOUSE_ZONE = "America/Toronto";
+let clockOverride = null;
+const stubNow = () => (clockOverride === null ? Date.now() : clockOverride);
+function houseDay(ms) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("sv-SE", { timeZone: HOUSE_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+}
+const stubToday = () => houseDay(stubNow());
+function houseDayPlus(days) {
+  const [y, m, d] = stubToday().split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
 function halfEvenPercent(cents, bps) {
   const n = cents * bps;
   const q = Math.floor(n / 10_000);
@@ -171,7 +184,10 @@ function quoteOf(i) {
   const payable = Math.max(i.balance_cents - i.holdback_cents, 0);
   if (payable <= 0) return null;
   const inside = (i.discount_bps ?? 0) > 0 && typeof i.discount_by === "string" && stubToday() <= i.discount_by;
-  const discount = inside ? halfEvenPercent(payable, i.discount_bps) : 0;
+  // The running cap, as the core holds it: the terms' percent of the whole base (total less holdback), less what earlier
+  // receipts already took. The percent of the open amount never passes the room that is left.
+  const room = inside ? Math.max(halfEvenPercent(Math.max(i.total_cents - i.holdback_cents, 0), i.discount_bps) - (i.discount_taken_cents ?? 0), 0) : 0;
+  const discount = inside ? Math.min(halfEvenPercent(payable, i.discount_bps), room) : 0;
   return { payoff: payable - discount, discount, by: inside ? i.discount_by : "" };
 }
 function quoteFields(i) {
@@ -375,6 +391,7 @@ H.tenantCreatePayment = async (ctx) => {
     inv.payment_history.push({ id: payment.id, amount_cents: q.payoff, method: payment.method, status: payment.status, received_at: nowIso });
     // The money and the discount together close the open amount; a held back invoice keeps its holdback.
     inv.balance_cents -= q.payoff + q.discount;
+    inv.discount_taken_cents = (inv.discount_taken_cents ?? 0) + q.discount;
     inv.status = inv.balance_cents === 0 ? "PAID" : "PARTIALLY_PAID";
   }
   world.payments.push(payment);
@@ -911,7 +928,7 @@ async function handle(req, res) {
   return H[route.operationId](ctx);
 }
 
-// POST /_stub/control {fault: {path, status}} | {delayMs} | {discount: {invoice_no, bps, days}} | {empty: "orders" | "invoices" | "projects" | "quotes"}
+// POST /_stub/control {fault: {path, status}} | {delayMs} | {discount: {invoice_no, bps, days, taken_cents?}} | {clock: iso | null} | {empty: "orders" | "invoices" | "projects" | "quotes"}
 async function stubControl(req, res) {
   const body = await readJson(req, res);
   if (body === undefined) return;
@@ -923,9 +940,12 @@ async function stubControl(req, res) {
     const inv = world.invoices.find((i) => i.invoice_no === body.discount.invoice_no);
     if (inv) {
       inv.discount_bps = Number(body.discount.bps);
-      inv.discount_by = new Date(Date.now() + Number(body.discount.days) * 86_400_000).toISOString().slice(0, 10);
+      inv.discount_by = houseDayPlus(Number(body.discount.days));
+      inv.discount_taken_cents = Number(body.discount.taken_cents ?? 0);
     }
   }
+  // {clock: iso | null}: pin the stub's clock (null releases it), so the house day can be judged at a chosen instant.
+  if (body && "clock" in body) clockOverride = body.clock === null ? null : Date.parse(String(body.clock));
   if (body?.empty && collections[body.empty]) {
     world[collections[body.empty]] = [];
     world.recompute();

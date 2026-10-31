@@ -198,3 +198,56 @@ test("the pay body carries the shown amount: a stale figure is refused as change
   assert.equal(paid.kind, "paid");
   assert.equal(paid.differs, false);
 });
+
+// ---- the stub judges the house day and holds the running cap, as the core does (TM-2b P3-3) -------------------------
+
+const HOUSE_ZONE = "America/Toronto";
+const houseParts = (ms) => Object.fromEntries(new Intl.DateTimeFormat("sv-SE", { timeZone: HOUSE_ZONE, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23", minute: "2-digit" }).formatToParts(new Date(ms)).map((p) => [p.type, p.value]));
+const houseDayOf = (ms) => { const p = houseParts(ms); return `${p.year}-${p.month}-${p.day}`; };
+
+/** The next instant, at least an hour from now, at 23:30 in the dealer's zone: the evening, when the UTC day is already tomorrow. */
+function houseEvening() {
+  let ms = Math.floor(Date.now() / 60_000) * 60_000;
+  for (let i = 0; i < 3 * 24 * 60; i++, ms += 60_000) {
+    const p = houseParts(ms);
+    if (p.hour === "23" && p.minute === "30") return ms;
+  }
+  throw new Error("no house evening found");
+}
+
+async function control(body) {
+  const r = await fetch(`${base}/_stub/control`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  assert.equal(r.status, 200);
+}
+
+test("the window is judged on the dealer's house day: in the house evening a last day of today still quotes the discount", async () => {
+  const { client } = await signedIn("ap");
+  const evening = houseEvening();
+  try {
+    await control({ clock: new Date(evening).toISOString() });
+    await termsOn("INV-20402", 0);
+    const row = await listed(client, "INV-20402");
+    assert.equal(row.discount_by, houseDayOf(evening), "today is the house day, not the UTC day");
+    assert.ok(row.discount_cents > 0, "the last day is today, so the discount still quotes");
+    await control({ clock: new Date(evening + 3_600_000).toISOString() });
+    const after = await listed(client, "INV-20402");
+    assert.equal("discount_cents" in after, false, "past the house midnight the window is closed");
+  } finally {
+    await control({ clock: null });
+  }
+});
+
+test("the running cap holds: the discount is the terms' percent of the open amount, but never past the room earlier receipts left", async () => {
+  const { client } = await signedIn("ap");
+  await termsOn("INV-20402", 3);
+  const free = await listed(client, "INV-20402");
+  const cap = Math.round(((free.total_cents - free.holdback_cents) * 200) / 10_000);
+  await control({ discount: { invoice_no: "INV-20402", bps: 200, days: 3, taken_cents: cap - 50 } });
+  const capped = await listed(client, "INV-20402");
+  assert.equal(capped.discount_cents, 50, "only 50 cents of room is left");
+  assert.equal(capped.payoff_cents, free.balance_cents - free.holdback_cents - 50);
+  await control({ discount: { invoice_no: "INV-20402", bps: 200, days: 3, taken_cents: cap } });
+  const spent = await listed(client, "INV-20402");
+  assert.equal("discount_cents" in spent, false, "no room left, no discount quoted");
+  assert.equal(spent.payoff_cents, free.balance_cents - free.holdback_cents);
+});
