@@ -98,6 +98,10 @@ type CreditMemoJournal struct {
 	ARCents      int64
 	RevenueCents int64
 	TaxCents     int64
+	// ReversesSourceKind is the source kind of the invoice the memo reverses ("" for a standalone
+	// credit). A memo against a FINANCE_CHARGE document debits finance charge income, never sales
+	// revenue, because that is the account the charge credited. Every other kind is unchanged.
+	ReversesSourceKind string
 }
 
 // Journal roles a reversing entry moves. Roles, never account codes, see the header.
@@ -105,6 +109,9 @@ const (
 	RoleAR      = "ar"
 	RoleRevenue = "revenue"
 	RoleTax     = "tax"
+	// RoleFinanceCharge is the income role a finance charge document credited (posting rule
+	// invoice.finalized/finance_charge, account 4220); its reversal debits the same role.
+	RoleFinanceCharge = "finance_charge"
 )
 
 // SupplierDepositNotCreditable refuses a credit memo against a supplier
@@ -161,6 +168,9 @@ func (j CreditMemoJournal) ReversingLegs() []JournalLeg { return j.ReversingLegs
 // ("HST reversed", "Sales tax reversed"). The amounts and roles do not depend on the word.
 func (j CreditMemoJournal) ReversingLegsFor(taxWord string) []JournalLeg {
 	legs := []JournalLeg{{Role: RoleRevenue, DebitCents: j.RevenueCents, Memo: "revenue reversed"}}
+	if j.ReversesSourceKind == SourceFinanceCharge {
+		legs = []JournalLeg{{Role: RoleFinanceCharge, DebitCents: j.RevenueCents, Memo: "finance charge reversed"}}
+	}
 	if j.TaxCents != 0 {
 		legs = append(legs, JournalLeg{Role: RoleTax, DebitCents: j.TaxCents, Memo: taxWord + " reversed"})
 	}
@@ -246,12 +256,13 @@ func (w *InvoiceWriter) IssueCreditMemo(ctx context.Context, in CreditMemoInput)
 	if w.glPoster != nil {
 		jid, perr := w.glPoster.PostCreditMemoJournal(ctx, CreditMemoJournal{
 			CreditMemoID: doc.InvoiceID, CreditMemoNo: doc.InvoiceNo, BranchID: in.BranchID,
-			IdempotencyKey: creditMemoJournalKey(doc.InvoiceID),
-			Memo:           "Credit memo " + doc.InvoiceNo,
-			OccurredAt:     w.now(),
-			ARCents:        plan.subtotal + plan.tax,
-			RevenueCents:   plan.subtotal,
-			TaxCents:       plan.tax,
+			IdempotencyKey:     creditMemoJournalKey(doc.InvoiceID),
+			Memo:               "Credit memo " + doc.InvoiceNo,
+			OccurredAt:         w.now(),
+			ARCents:            plan.subtotal + plan.tax,
+			RevenueCents:       plan.subtotal,
+			TaxCents:           plan.tax,
+			ReversesSourceKind: plan.origSourceKind,
 		})
 		if perr != nil {
 			// Reported, not fatal, see the doc comment. The memo exists; the journal is chaseable by
@@ -271,6 +282,8 @@ type creditPlan struct {
 	tax      int64
 	lines    []OrderInvoiceLine // positive magnitudes; negated at insert
 	origNo   string
+	// origSourceKind is the reversed invoice's source kind, carried to the memo's journal.
+	origSourceKind string
 	// THE ROOM: what the invoice has left to credit, before tax and with it (SF-2e). A credit
 	// against an invoice is capped at the room, so the room is the figure a person needs to see
 	// before typing an amount; the quote door answers it, and the desk shows it. Zero for a
@@ -362,6 +375,7 @@ SELECT invoice_no::text, doc_type, source_kind, customer_id::text, branch_id::te
 		// releases it, whole or not at all.
 		return creditPlan{}, &SupplierDepositNotCreditable{InvoiceNo: p.origNo}
 	}
+	p.origSourceKind = sourceKind
 	if in.CustomerID != "" && in.CustomerID != customerID {
 		return creditPlan{}, httpx.BadRequestf("the credit memo's customer must match the invoice it reverses")
 	}

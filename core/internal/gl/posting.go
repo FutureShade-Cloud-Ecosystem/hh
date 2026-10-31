@@ -194,6 +194,29 @@ func (s *Service) buildInvoiceFinalized(ctx context.Context, payload []byte) (jo
 			},
 		}, true, nil
 	}
+	// Wave 3 FC-1: a finance charge document is fee income, not sale revenue. The monthly finance
+	// charge run raises it through the invoice writer billed as stated (no assessed tax on it), so
+	// the journal is the plan's two legs: DR the receivable, CR the finance charge income account
+	// the posting rule names (4220, seeded by 0473; a branch override rides the rule). No revenue
+	// leg and no tax leg: the charge collected no tax, and it is not a sale.
+	if a.SourceKind == "FINANCE_CHARGE" {
+		fcCode, err := pick(rules, et, "finance_charge")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		return journalDraft{
+			Source:         SourceInvoice,
+			SourceRefID:    p.InvoiceID,
+			IdempotencyKey: "ar.invoice.finalized:" + p.InvoiceID,
+			Memo:           "Finance charge " + a.InvoiceNo,
+			BranchID:       a.BranchID,
+			OccurredAt:     a.FinalizedAt,
+			Lines: []draftLine{
+				dr(arCode, a.TotalCents, "AR"),
+				cr(fcCode, a.TotalCents, "finance charge income"),
+			},
+		}, true, nil
+	}
 	revCode, err := pick(rules, et, "revenue")
 	if err != nil {
 		return journalDraft{}, false, err
