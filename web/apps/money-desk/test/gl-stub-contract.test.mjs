@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { SCHEMA_DESCRIPTORS } from "../../../packages/api-client/src/testing.ts";
 import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 import { IDS } from "./stub/gl-world.mjs";
+import { statementMonth } from "./stub/bankrec-world.mjs";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
@@ -547,9 +548,9 @@ test("the trial balance takes a month and a year, and a month shows that period'
   holds("GlTrialBalanceResult", august);
   assert.equal(august.month, 8);
   // The month probed for emptiness must be one no journal lands in: the till's lodgement journal is planted in
-  // the bank rec month (the host's prior month), so the probe reads December, or November when the bank rec
+  // the bank rec month (the house day's prior month), so the probe reads December, or November when the bank rec
   // month is December itself.
-  const bankRecMonth = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).getMonth() + 1;
+  const bankRecMonth = statementMonth().month;
   const probeMonth = bankRecMonth === 12 ? 11 : 12;
   const empty = (await call(IDS.controller, "GET", `/api/v1/gl/trial-balance?year=2026&month=${probeMonth}`)).json;
   assert.equal(empty.rows.length, 0);

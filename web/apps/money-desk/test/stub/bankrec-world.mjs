@@ -16,6 +16,8 @@
 // received card payments, an open cash lodgement that carries its own journal (and an older lodgement that
 // carries none), and the three seeded rules.
 
+import { houseDay } from "../house-day.mjs";
+
 export const IDS = {
   controller: "de110000-0000-4000-9000-000000000008",
   payrec: "de110000-0000-4000-9000-000000000007",
@@ -41,10 +43,12 @@ const usd = (cents) =>
   `${cents < 0 ? "-" : ""}$${String(Math.floor(Math.abs(cents) / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${pad(Math.abs(cents) % 100)}`;
 const uuid = (kind, n) => `${kind.padEnd(8, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
-/** The month before today, from the host's own clock: the month the statement covers (the desk opens the same one). */
-export function statementMonth() {
-  const before = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1);
-  return { year: before.getFullYear(), month: before.getMonth() + 1 };
+/** The month before the house day: the month the statement covers (the desk opens the same one). The house day is
+ *  Toronto's calendar day, the one the sign off gate reads, never the host's local zone: a process zone left switched
+ *  by another test, or a runner in UTC, disagrees with Toronto for hours around every month end. */
+export function statementMonth(now = new Date()) {
+  const [year, month] = houseDay(now).split("-").map(Number);
+  return month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
 }
 
 // The ledger side is the GL module's, and this stub reads it where the ledger is: the posted journals' lines on
