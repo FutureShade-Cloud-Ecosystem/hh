@@ -276,6 +276,12 @@ func (w *InvoiceWriter) RunFinanceCharges(ctx context.Context, in FinanceChargeR
 	if branchID == "" {
 		return FinanceChargeRunResult{}, httpx.BadRequestf("billing: branch_id is required, a finance charge run is one branch's books")
 	}
+	// One form of the id feeds the lock, the claim key and every read: an id typed in upper case is
+	// the same branch as its lower case form (the AP revaluation read's P2).
+	branchID, err := canonicalUUID(branchID, "branch_id")
+	if err != nil {
+		return FinanceChargeRunResult{}, err
+	}
 	year, month, err := parseFinanceChargeMonth(in.Month)
 	if err != nil {
 		return FinanceChargeRunResult{}, err
