@@ -50,6 +50,8 @@ import "@hardscapehouse/shell-chrome/src/shell-banner.js";
 import { bannerFor, chipInputFor, pinStorageFrom } from "./chrome-feed.js";
 import { createConsoleSession, type ConsoleSession } from "./console-session.js";
 import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
+import { servedConsoleConfig } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bandIdentity } from "./band-identity.js";
 import { DEMO_ORG_SLUG, DOOR_PATH, LAUNCH_FILE, PROFILE_FILE } from "./config.js";
 import { acceptChromeControls, framedAddress, type ChromeAction } from "@hardscapehouse/design-system/src/framed.js";
 import { acceptSwitchRole, announceChromeAction } from "./frames.js";
@@ -575,8 +577,9 @@ export class WorkShellHost extends HHElement {
     const pinned = this.#pins.pins(userId);
     const held = new Set(apps.map((a) => a.id));
     if (header !== null) {
-      header.org = this.#dealerName;
-      header.demo = true;
+      const identity = bandIdentity(servedConsoleConfig(), this.#dealerName);
+      header.org = identity.org;
+      header.demo = identity.demo;
       header.user = state.session.roleLabel;
       header.groups = switcherGroups({ frontends: apps, roles: [state.session.roleCode], surfaces: NO_SURFACES });
       header.breadcrumb = currentBreadcrumb({
