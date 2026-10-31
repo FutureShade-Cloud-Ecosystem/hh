@@ -245,7 +245,17 @@ test("a card's scope is named: the day, the working window or open now", () => {
   assert.equal(asOfLabel(""), "");
 });
 
-test("asOfLabel compares against the dealer's today in houseDayInZone(zone), not the machine's local TZ", () => {
+// Under bun this test is skipped, by name. It switches process.env.TZ in process, and bun 1.3.12 runs every test
+// file in one process and can keep the switched zone after the variable is restored: on main's run 41212453853
+// this leg left bun on Asia/Tokyo, and the money desk's bankrec contract test, later in the same process, read
+// Tokyo's November 1 against a stub on UTC's October 31 (the quote desk's related-docs test records the same bun
+// behaviour). Node re-reads TZ on assignment, and this app's own Node suite (the web shards) runs the test in full.
+const UNDER_BUN = typeof process.versions.bun === "string";
+const BUN_ZONE_SKIP = "bun does not reliably restore process.env.TZ in process; the Node suite runs this test";
+// bun's node:test shim ignores the options object's skip, so the skip is the function itself.
+const zoneTest = UNDER_BUN ? (name, fn) => test.skip(`${name} (skipped: ${BUN_ZONE_SKIP})`, fn) : test;
+
+zoneTest("asOfLabel compares against the dealer's today in houseDayInZone(zone), not the machine's local TZ", () => {
   const prevTz = process.env.TZ;
   const RealDate = globalThis.Date;
   const fixedNow = new RealDate("2026-03-02T16:15:00Z");

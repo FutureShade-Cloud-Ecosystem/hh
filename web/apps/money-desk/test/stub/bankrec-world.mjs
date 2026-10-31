@@ -15,6 +15,7 @@
 // in the month before today (dates are cut from the host's own day, so no calendar literal is written), three
 // received card payments, an open cash lodgement that carries its own journal (and an older lodgement that
 // carries none), and the three seeded rules.
+import { monthsBefore } from "./clock-zone.mjs";
 
 export const IDS = {
   controller: "de110000-0000-4000-9000-000000000008",
@@ -41,10 +42,10 @@ const usd = (cents) =>
   `${cents < 0 ? "-" : ""}$${String(Math.floor(Math.abs(cents) / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${pad(Math.abs(cents) % 100)}`;
 const uuid = (kind, n) => `${kind.padEnd(8, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
-/** The month before today, from the host's own clock: the month the statement covers (the desk opens the same one). */
-export function statementMonth() {
-  const before = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1);
-  return { year: before.getFullYear(), month: before.getMonth() + 1 };
+/** The month before today, from the host's own clock: the month the statement covers (the desk opens the same one).
+ *  A contract test names its stub's zone (clock-zone.mjs), so the two processes read the same month. */
+export function statementMonth(timeZone) {
+  return monthsBefore(1, timeZone);
 }
 
 // The ledger side is the GL module's, and this stub reads it where the ledger is: the posted journals' lines on
