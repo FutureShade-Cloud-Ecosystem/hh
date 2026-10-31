@@ -56,7 +56,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -144,18 +143,18 @@ func (portalLegStub) PortalRole(context.Context, string, string) (string, bool, 
 	return "", false, nil
 }
 
-var (
-	worldOnce sync.Once
-	worldErr  error
-)
+// worldErr is the last buildWorld's failure. The world is rebuilt for every leg (each row lands
+// idempotently) because the leg sweep removes it when the leg ends.
+var worldErr error
 
-// buildWorld provisions the data side once: the org anchor, the people and
+// buildWorld provisions the data side for one leg: the org anchor, the people and
 // their grants, the product with its exact price anchor and Trenton cost,
 // and the two drawers. Every row lands idempotently, so a shared
 // integration database is never disturbed beyond this world's own rows.
 func buildWorld(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
-	worldOnce.Do(func() {
+	worldErr = nil
+	func() {
 		ctx := context.Background()
 		orgID, _, err := identity.ProvisionOrgAnchor(ctx, pool, demoOrgSlug, "The first dealer")
 		if err != nil {
@@ -270,7 +269,7 @@ func buildWorld(t *testing.T, pool *pgxpool.Pool) {
 				return
 			}
 		}
-	})
+	}()
 	if worldErr != nil {
 		t.Fatalf("trenton world: %v", worldErr)
 	}

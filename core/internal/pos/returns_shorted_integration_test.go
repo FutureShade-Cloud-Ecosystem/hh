@@ -34,7 +34,6 @@ RETURNING id::text`, fmt.Sprintf("#SRT-%d", time.Now().UnixNano()), cust).Scan(&
 		_, _ = pool.Exec(c, `DELETE FROM order_shortfall_basis WHERE order_id = $1`, ord)
 		_, _ = pool.Exec(c, `DELETE FROM order_lines WHERE order_id = $1`, ord)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, ord)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, cust)
 	})
 	if err := pool.QueryRow(ctx, `
 INSERT INTO order_lines (order_id, line_no, product_id, description, qty_entered, uom_entered, qty_base,

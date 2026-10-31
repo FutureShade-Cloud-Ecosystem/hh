@@ -69,9 +69,6 @@ func TestIntegration_PickHold_CashOnDemandDepositHoldsEveryReleasingPath(t *test
 		fmt.Sprintf("PH-%s", fixtureTag())).Scan(&custID); err != nil {
 		t.Fatalf("plant the cash on demand customer: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, custID)
-	})
 
 	svc := realPosSvc(t, pool, stubCharger{})
 	billingRepo := testBillingRepo(pool)
@@ -172,9 +169,6 @@ func TestIntegration_PickHold_ConvertedCashOnDemandOrderOwesBeforeInvoicing(t *t
 		fmt.Sprintf("PHC-%s", fixtureTag())).Scan(&custID); err != nil {
 		t.Fatalf("plant the customer: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, custID)
-	})
 	// The order a converted quote becomes: CONFIRMED, nothing invoiced.
 	var orderID string
 	if err := pool.QueryRow(ctx, `
@@ -243,9 +237,6 @@ func TestIntegration_PickHold_PaymentsSettleLiftsOnce_UnderConcurrency(t *testin
 		fmt.Sprintf("PHR-%s", fixtureTag())).Scan(&custID); err != nil {
 		t.Fatalf("plant the customer: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, custID)
-	})
 	svc := realPosSvc(t, pool, stubCharger{})
 	session := openTill(t, pool, branchID)
 	out, err := svc.Sale(ctx, SaleInput{

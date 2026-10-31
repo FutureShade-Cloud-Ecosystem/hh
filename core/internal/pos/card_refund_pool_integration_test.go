@@ -97,6 +97,49 @@ func TestIntegration_Trenton_CardRefund_ParallelReturnsSmallPool(t *testing.T) {
 	s := newTrentonStackOnPoolWithRail(t, pool, cardRailAdapter{svc: payment.NewService(store, payment.RunPaymentsStub{})})
 	sale := s.ringSale(key(), trentonBranchID, s.trentonTill, "trenton", []float64{30}, TenderCard)
 
+	// Configure disables the processor's active row and inserts its own. A row may already exist
+	// (an earlier package in CI's order leaves an active one), so capture every run_payments row
+	// whole first, and in cleanup delete the rows this leg inserted and put the others back
+	// (row 0.39: the leg sweep fails a leg that leaves a pre existing payment_config row changed).
+	cfgImages := map[string]string{}
+	crows, err := pool.Query(context.Background(),
+		`SELECT id::text, row_to_json(c)::text FROM payment_config c WHERE processor = 'run_payments'`)
+	if err != nil {
+		t.Fatalf("capture the payment config rows: %v", err)
+	}
+	for crows.Next() {
+		var id, img string
+		if err := crows.Scan(&id, &img); err != nil {
+			crows.Close()
+			t.Fatalf("scan the payment config rows: %v", err)
+		}
+		cfgImages[id] = img
+	}
+	crows.Close()
+	if err := crows.Err(); err != nil {
+		t.Fatalf("read the payment config rows: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		known := make([]string, 0, len(cfgImages))
+		for id := range cfgImages {
+			known = append(known, id)
+		}
+		if _, err := pool.Exec(c,
+			`DELETE FROM payment_config WHERE processor = 'run_payments' AND NOT (id::text = ANY($1::text[]))`,
+			known); err != nil {
+			t.Errorf("delete the payment_config rows the leg inserted: %v", err)
+		}
+		for id, img := range cfgImages {
+			if _, err := pool.Exec(c, `
+				UPDATE payment_config t SET status = r.status, updated_at = r.updated_at
+				  FROM json_populate_record(NULL::payment_config, $2::json) r
+				 WHERE t.id = $1::uuid`, id, img); err != nil {
+				t.Errorf("restore the payment_config row %s: %v", id, err)
+			}
+		}
+	})
+
 	// The dealer's config row: surcharge stays disabled (Configure refuses
 	// true), the api_key non-empty so the stub reversal passes its guards,
 	// and the processor's own name. Planted before any return fires.
