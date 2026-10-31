@@ -102,6 +102,10 @@ const CONTROLLER_TOKEN = tokenFor("de110000-0000-4000-9000-000000000008");
 // The Payables and Receivables clerk: at work on the money desk, so a manage level route there
 // turns the role away.
 const CLERK_TOKEN = tokenFor("de110000-0000-4000-9000-000000000007");
+// The credit change routes' deciders and a requester that may not decide (CC-2).
+const BRANCH_MANAGER_TOKEN = tokenFor("de5b2000-0000-4000-9000-000000000003");
+const SALES_MANAGER_TOKEN = tokenFor("de110000-0000-4000-9000-000000000002");
+const bearer = (token) => ({ Authorization: `Bearer ${token}` });
 
 const reset = () => fetch(`${base}/_stub/reset`, { method: "POST" });
 
@@ -706,4 +710,64 @@ test("the open AP and the bill payment answer in the contract's shapes, and the 
   // Payables and Receivables role is at work on that surface.
   const clerk = await call("POST", PAY_BILL, body, { Authorization: `Bearer ${CLERK_TOKEN}`, "Idempotency-Key": "clerk-key" });
   assert.equal(clerk.status, 403);
+});
+
+test("the credit change routes answer in the contract's shapes and the refusals are the core's own sentences", async () => {
+  await reset();
+  const aging = await call("GET", "/api/v1/ar/aging");
+  const customer = aging.json.items[0].customer_id;
+
+  // The gate is the manager tiers; a caller the stub does not know is turned away with the shared body.
+  const unknown = await call("GET", "/api/v1/ar/credit-changes", undefined, bearer(tokenFor("00000000-0000-4000-9000-000000000000")));
+  refused(unknown, 403, "Forbidden");
+
+  const waiting = await call("GET", "/api/v1/ar/credit-changes?status=PENDING", undefined, bearer(CONTROLLER_TOKEN));
+  assert.equal(waiting.status, 200);
+  holds("BillingCreditChangePage", waiting.json);
+  assert.ok(waiting.json.items.length >= 2);
+  assert.ok(waiting.json.items.every((r) => r.status === "PENDING"));
+
+  // A decrease applies at once; an increase waits, and the answer says which tier it needs.
+  const down = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 0, reason: "Past due" }, bearer(SALES_MANAGER_TOKEN));
+  assert.equal(down.status, 201);
+  holds("BillingCreditChangeRequest", down.json);
+  assert.equal(down.json.status, "APPLIED");
+  const up = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 2_000_000, reason: "Winter work" }, bearer(SALES_MANAGER_TOKEN));
+  assert.equal(up.status, 201);
+  holds("BillingCreditChangeRequest", up.json);
+  assert.equal(up.json.status, "PENDING");
+  assert.equal(up.json.required_approvals, 1);
+  const noReason = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 10, reason: " " }, bearer(SALES_MANAGER_TOKEN));
+  refused(noReason, 400, "credit change: a reason is required");
+
+  // The refusals of a decision, in the core's order and words.
+  refused(await call("POST", `/api/v1/ar/credit-changes/${up.json.id}/approve`, {}, bearer(SALES_MANAGER_TOKEN)), 403, "credit change: requester cannot approve their own request");
+  const other = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 2_200_000, reason: "More room" }, bearer(BRANCH_MANAGER_TOKEN));
+  refused(await call("POST", `/api/v1/ar/credit-changes/${other.json.id}/approve`, {}, bearer(SALES_MANAGER_TOKEN)), 403, "credit change: caller role is not permitted to approve this request");
+  const approved = await call("POST", `/api/v1/ar/credit-changes/${up.json.id}/approve`, {}, bearer(CONTROLLER_TOKEN));
+  assert.equal(approved.status, 200);
+  holds("BillingCreditChangeRequest", approved.json);
+  assert.equal(approved.json.status, "APPLIED");
+  refused(await call("POST", `/api/v1/ar/credit-changes/${up.json.id}/approve`, {}, bearer(CONTROLLER_TOKEN)), 409, "credit change: request is not pending");
+
+  // The first of two approvals moves nothing; the same person never approves twice.
+  const big = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 9_000_000, reason: "Two large jobs" }, bearer(SALES_MANAGER_TOKEN));
+  assert.equal(big.json.required_approvals, 2);
+  const first = await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/approve`, {}, bearer(CONTROLLER_TOKEN));
+  holds("BillingCreditChangeRequest", first.json);
+  assert.equal(first.json.status, "PENDING");
+  refused(await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/approve`, {}, bearer(CONTROLLER_TOKEN)), 403, "credit change: the same person cannot approve twice");
+  refused(await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/approve`, {}, bearer(BRANCH_MANAGER_TOKEN)), 403, "credit change: caller role is not permitted to approve this request");
+
+  // A rejection needs its reason and settles the request.
+  refused(await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/reject`, { reason: "" }, bearer(BRANCH_MANAGER_TOKEN)), 400, "credit change: a reason is required");
+  const rejected = await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/reject`, { reason: "Balance is past due" }, bearer(BRANCH_MANAGER_TOKEN));
+  assert.equal(rejected.status, 200);
+  holds("BillingCreditChangeRequest", rejected.json);
+  assert.equal(rejected.json.status, "REJECTED");
+  assert.equal(rejected.json.rejection_reason, "Balance is past due");
+
+  const history = await call("GET", `/api/v1/ar/credit-changes?customer_id=${customer}`, undefined, bearer(CONTROLLER_TOKEN));
+  holds("BillingCreditChangePage", history.json);
+  assert.ok(history.json.items.every((r) => r.customer_id === customer));
 });
