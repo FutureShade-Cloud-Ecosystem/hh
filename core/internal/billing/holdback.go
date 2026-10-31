@@ -50,6 +50,8 @@ type Withholder interface {
 	BookRelease(ctx context.Context, b lien.ReleaseBooking) (string, error)
 	ReleasesForKey(ctx context.Context, key string) ([]lien.ReleasedRow, error)
 	HasReleaseOnJob(ctx context.Context, customerJobID string) (bool, error)
+	// HasJobLevelRelease: the linked lien job already has a job level RELEASE row (the old route).
+	HasJobLevelRelease(ctx context.Context, customerJobID string) (bool, error)
 }
 
 // WithHoldback binds the holdback seam. Unbound, no invoice withholds (the writer as it was before RT-2).

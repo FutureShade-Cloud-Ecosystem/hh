@@ -315,6 +315,17 @@ func (r *Repository) ReleaseHoldback(ctx context.Context, in HoldbackReleaseInpu
 		return r.replayRelease(ctx, tx, in, prior, today)
 	}
 
+	// A job whose holdback the old job level route already released is refused: its 1150 was credited
+	// and its 2350 debited once, and a release here would credit 1150 a second time.
+	legacy, err := r.holdback.HasJobLevelRelease(txCtx, in.CustomerJobID)
+	if err != nil {
+		return HoldbackReleaseResult{}, err
+	}
+	if legacy {
+		return HoldbackReleaseResult{}, HoldbackReleaseRefused{Kind: RefusedAlreadyReleased,
+			Msg: "the holdback of this job was already released by the old job level release (DR 2350 / CR 1150), so releasing it again would credit the holdback receivable twice; correct that release first"}
+	}
+
 	rows, err := tx.Query(ctx, `
 SELECT id::text, invoice_no::text, branch_id::text, holdback_cents
   FROM invoices

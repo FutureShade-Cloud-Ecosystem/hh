@@ -193,6 +193,14 @@ func (s *Service) releaseHoldback(ctx context.Context, jobID string, appr Releas
 		return ReleaseResult{}, unprocessable("lien: PAYABLE holdback release is manual, recorded, not posted (register a calendar deadline)")
 	}
 
+	// A lien job linked to a customer job holds invoice level retention that RT-3's Controller release
+	// moves with the invoice's column and the dated ledger. This job level route posts DR 2350 / CR 1150 and
+	// writes a row the dated readers cannot see, so on such a job it would release the same holdback a
+	// second time. It is refused in words naming RT-3's release.
+	if job.CustomerJobID != "" {
+		return ReleaseResult{}, unprocessable("lien: job %s is linked to a customer job, so its holdback is released by the Controller's holdback release (POST /api/v1/ar/holdback/releases), once its preservation period has run out, and not by this job level release", job.JobNo)
+	}
+
 	entries, err := s.store.HoldbackEntriesForJob(ctx, jobID)
 	if err != nil {
 		return ReleaseResult{}, err
@@ -355,7 +363,7 @@ func (s *Service) jobFacts(ctx context.Context, branchID string) (map[string]job
 	}
 	out := make(map[string]jobFacts, len(jobs))
 	for _, j := range jobs {
-		out[j.ID] = jobFacts{JobNo: j.JobNo, BranchID: j.BranchID, Direction: j.Direction}
+		out[j.ID] = jobFacts{JobNo: j.JobNo, BranchID: j.BranchID, Direction: j.Direction, Linked: j.CustomerJobID != ""}
 	}
 	return out, nil
 }

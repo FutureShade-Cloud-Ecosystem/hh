@@ -105,7 +105,8 @@ type AgingRow struct {
 	OutstandingCents int64  `json:"outstanding_cents"`
 	OldestDays       int    `json:"oldest_days"`
 	Bucket           string `json:"bucket"`
-	ReleaseEligible  bool   `json:"release_eligible"` // RECEIVABLE + past the 45-day rule window
+	ReleaseEligible  bool   `json:"release_eligible"` // RECEIVABLE + past the 45-day rule window, and not linked to a customer job
+	linked           bool   // linked to a customer job: released by RT-3, so the old rule's eligibility does not apply
 }
 
 // TriageItem is one Monday-triage worklist row, a job needing attention, badge-classified.

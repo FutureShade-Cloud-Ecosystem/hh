@@ -33,6 +33,9 @@ type jobFacts struct {
 	JobNo     string
 	BranchID  string
 	Direction string
+	// Linked is true when the job is linked to a customer job: its holdback is released by RT-3's
+	// Controller release, never by the old job level route.
+	Linked bool
 }
 
 // buildAging rolls the ledger up per job into outstanding-holdback aging rows. Outstanding = ΣRETENTION −
@@ -80,7 +83,8 @@ func buildAging(entries []HoldbackEntry, facts map[string]jobFacts, asOf time.Ti
 			OutstandingCents: a.outstanding,
 			OldestDays:       days,
 			Bucket:           ageBucket(days),
-			ReleaseEligible:  f.Direction == dirReceivable && days >= releaseRuleDays,
+			ReleaseEligible:  f.Direction == dirReceivable && !f.Linked && days >= releaseRuleDays,
+			linked:           f.Linked,
 		}
 		out = append(out, row)
 	}
@@ -92,6 +96,10 @@ func buildAging(entries []HoldbackEntry, facts map[string]jobFacts, asOf time.Ti
 	})
 	return out
 }
+
+// linkedReleaseNote is the triage's words for a job linked to a customer job: the old job level release
+// refuses it, and the holdback is released by the Controller once the preservation period has run out.
+const linkedReleaseNote = "held on a customer job's invoices: not released from here, the Controller releases it from the holdback release once its lien preservation period has run out"
 
 // buildTriage badge-classifies the aging rows into the Monday worklist. Badges (no scheduler infra at W6 -
 // these are worklist BADGES computed on read, the recorded PARTIAL for reminders):
@@ -114,9 +122,15 @@ func buildTriage(rows []AgingRow) []TriageItem {
 		case r.Direction == dirPayable:
 			item.Badge = "PAYABLE_MANUAL"
 			item.Note = "payable retention, release is manual (registers a deadline, does not post)"
+		case r.linked && r.OldestDays > 2*releaseRuleDays:
+			item.Badge = "OVERDUE"
+			item.Note = linkedReleaseNote
 		case r.OldestDays > 2*releaseRuleDays:
 			item.Badge = "OVERDUE"
 			item.Note = "past the release window, action overdue"
+		case r.linked && r.OldestDays >= releaseRuleDays:
+			item.Badge = "RELEASE_DUE"
+			item.Note = linkedReleaseNote
 		case r.OldestDays >= releaseRuleDays:
 			item.Badge = "RELEASE_DUE"
 			item.Note = "at/over the 45-day window, eligible to release"
