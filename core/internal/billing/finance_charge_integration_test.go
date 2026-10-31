@@ -77,6 +77,14 @@ type fcRig struct {
 	other  string // the branch scope leg's branch
 }
 
+// fcDelete runs one cleanup delete and fails the test, naming the table, when it errors.
+func fcDelete(t *testing.T, pool *pgxpool.Pool, table, sql string, args ...any) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), sql, args...); err != nil {
+		t.Errorf("cleanup: delete from %s: %v", table, err)
+	}
+}
+
 func fcRigNew(t *testing.T) *fcRig {
 	t.Helper()
 	pool := intPool(t)
@@ -101,12 +109,19 @@ func fcRigNew(t *testing.T) *fcRig {
 		t.Fatalf("plant the controller: %v", err)
 	}
 	t.Cleanup(func() {
-		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM finance_charge_runs WHERE branch_id IN ($1::uuid, $2::uuid)`, fc1BranchID, fc1OtherBranchID)
-		_, _ = pool.Exec(c, `DELETE FROM finance_charge_waivers WHERE waived_by = $1::uuid OR cleared_by = $1::uuid`, fc1Controller)
-		_, _ = pool.Exec(c, `DELETE FROM users WHERE id = $1::uuid`, fc1Controller)
-		_, _ = pool.Exec(c, `DELETE FROM locations WHERE id IN ($1::uuid, $2::uuid)`, fc1BranchID, fc1OtherBranchID)
-		_, _ = pool.Exec(c, `DELETE FROM org WHERE id = $1::uuid`, fc1OrgID)
+		// Dependency order: the journals the charges and memos posted at the two branches (lines
+		// first, a reversing journal before the one it reverses), then the rig's own rows, the
+		// branches, the org. Every delete's error fails the test, naming the table: a delete that
+		// fails leaves the branches behind for the next package to count (PR 748, run 41188047610).
+		branches := []string{fc1BranchID, fc1OtherBranchID}
+		fcDelete(t, pool, "gl_journal_lines", `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE branch_id = ANY($1::uuid[]))`, branches)
+		fcDelete(t, pool, "gl_journals (reversals)", `DELETE FROM gl_journals WHERE branch_id = ANY($1::uuid[]) AND reverses_journal_id IS NOT NULL`, branches)
+		fcDelete(t, pool, "gl_journals", `DELETE FROM gl_journals WHERE branch_id = ANY($1::uuid[])`, branches)
+		fcDelete(t, pool, "finance_charge_runs", `DELETE FROM finance_charge_runs WHERE branch_id = ANY($1::uuid[])`, branches)
+		fcDelete(t, pool, "finance_charge_waivers", `DELETE FROM finance_charge_waivers WHERE waived_by = $1::uuid OR cleared_by = $1::uuid`, fc1Controller)
+		fcDelete(t, pool, "users", `DELETE FROM users WHERE id = $1::uuid`, fc1Controller)
+		fcDelete(t, pool, "locations", `DELETE FROM locations WHERE id = ANY($1::uuid[])`, branches)
+		fcDelete(t, pool, "org", `DELETE FROM org WHERE id = $1::uuid`, fc1OrgID)
 	})
 	return r
 }
@@ -123,14 +138,13 @@ func (r *fcRig) customer(branchID, label string) string {
 		r.t.Fatalf("seed customer %s: %v", label, err)
 	}
 	r.t.Cleanup(func() {
-		c := context.Background()
-		_, _ = r.pool.Exec(c, `DELETE FROM finance_charge_runs WHERE customer_id = $1::uuid`, id)
-		_, _ = r.pool.Exec(c, `DELETE FROM finance_charge_waivers WHERE customer_id = $1::uuid`, id)
-		_, _ = r.pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, id)
-		_, _ = r.pool.Exec(c, `DELETE FROM credit_application_keys WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, id)
-		_, _ = r.pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, id)
-		_, _ = r.pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, id)
-		_, _ = r.pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, id)
+		fcDelete(r.t, r.pool, "finance_charge_runs", `DELETE FROM finance_charge_runs WHERE customer_id = $1::uuid`, id)
+		fcDelete(r.t, r.pool, "finance_charge_waivers", `DELETE FROM finance_charge_waivers WHERE customer_id = $1::uuid`, id)
+		fcDelete(r.t, r.pool, "customer_transactions", `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, id)
+		fcDelete(r.t, r.pool, "credit_application_keys", `DELETE FROM credit_application_keys WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, id)
+		fcDelete(r.t, r.pool, "invoice_lines", `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, id)
+		fcDelete(r.t, r.pool, "invoices", `DELETE FROM invoices WHERE customer_id = $1::uuid`, id)
+		fcDelete(r.t, r.pool, "customers", `DELETE FROM customers WHERE id = $1::uuid`, id)
 	})
 	return id
 }
@@ -161,10 +175,9 @@ func (r *fcRig) invoice(customerID, branchID string, s fcInv) string {
 		r.t.Fatalf("seed invoice %s: %v", s.no, err)
 	}
 	r.t.Cleanup(func() {
-		c := context.Background()
-		_, _ = r.pool.Exec(c, `DELETE FROM credit_application_keys WHERE invoice_id = $1::uuid`, id)
-		_, _ = r.pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id = $1::uuid`, id)
-		_, _ = r.pool.Exec(c, `DELETE FROM invoices WHERE id = $1::uuid`, id)
+		fcDelete(r.t, r.pool, "credit_application_keys", `DELETE FROM credit_application_keys WHERE invoice_id = $1::uuid`, id)
+		fcDelete(r.t, r.pool, "invoice_lines", `DELETE FROM invoice_lines WHERE invoice_id = $1::uuid`, id)
+		fcDelete(r.t, r.pool, "invoices", `DELETE FROM invoices WHERE id = $1::uuid`, id)
 	})
 	return id
 }

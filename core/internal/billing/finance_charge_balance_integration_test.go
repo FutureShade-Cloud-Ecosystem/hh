@@ -4,7 +4,6 @@
 package billing
 
 import (
-	"context"
 	"testing"
 	"time"
 )
@@ -26,9 +25,8 @@ func (r *fcRig) pay(cust, invoice string, cents int64, at time.Time, label strin
 		r.t.Fatalf("plant the allocation %s: %v", label, err)
 	}
 	r.t.Cleanup(func() {
-		c := context.Background()
-		_, _ = r.pool.Exec(c, `DELETE FROM payment_allocations WHERE payment_id = $1::uuid`, pid)
-		_, _ = r.pool.Exec(c, `DELETE FROM payments WHERE id = $1::uuid`, pid)
+		fcDelete(r.t, r.pool, "payment_allocations", `DELETE FROM payment_allocations WHERE payment_id = $1::uuid`, pid)
+		fcDelete(r.t, r.pool, "payments", `DELETE FROM payments WHERE id = $1::uuid`, pid)
 	})
 }
 
