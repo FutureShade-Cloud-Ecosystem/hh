@@ -182,10 +182,19 @@ export const baseStyles = css`
      chosen rule above outranks the primitive's own disabled rule (two classes
      to one). The pair is restated in the grey triple, so a chosen segment
      that is refused looks refused and not merely unfilled. */
+  .seg-btn .picked {
+    display: none;
+    margin-left: 5px;
+    font-weight: 700;
+  }
   .seg-btn.seg-on:disabled {
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
     border-color: var(--hh-disabled-line);
+    box-shadow: inset 0 0 0 1px var(--hh-disabled-ink);
+  }
+  .seg-btn.seg-on:disabled .picked {
+    display: inline;
   }
   /* The named group: the fieldset keeps its legend (the group's accessible
      name) and the legend is set as the group's visible heading. */
@@ -427,7 +436,7 @@ export function segmented(spec: SegmentedSpec): Template {
       data-action=${spec.action ?? nothing}
       aria-pressed=${option.value === on ? 'true' : 'false'}
       ?disabled=${spec.disabled === true}
-    >${option.label}</button>`,
+    >${option.label}${option.value === on ? html`<span class="picked" aria-hidden="true">&#10003;</span>` : nothing}</button>`,
   )}</div>`;
 }
 

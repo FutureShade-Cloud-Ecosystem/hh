@@ -967,3 +967,38 @@ test("the convert route sits in the desk's history: back reaches the list, forwa
   await page.goForward();
   await expect(page.getByTestId("qc-review")).toBeVisible();
 });
+
+test("when the fulfilment step is held, the chosen tile carries a tick and a non-brand ring while the unchosen tile does not", async ({ page }) => {
+  await page.request.put("/_stub/multi-accept", { data: { on: true } });
+  await arrive(page, "q-1003");
+  await next(page);
+  await page.getByTestId("qc-fulfil-will-call").click();
+  await next(page);
+  await next(page);
+  await next(page);
+  let lost = true;
+  await page.route(/\/api\/v1\/quotes\/q-1003\/convert$/, async (route) => {
+    if (!lost) {
+      await route.continue();
+      return;
+    }
+    lost = false;
+    await route.fetch();
+    await route.abort();
+  });
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-refusal")).toContainText("not known yet");
+  await page.getByTestId("qc-back").click();
+  await page.getByTestId("qc-back").click();
+  await page.getByTestId("qc-back").click();
+  const chosen = page.getByTestId("qc-fulfil-will-call");
+  const unchosen = page.getByTestId("qc-fulfil-pickup");
+  await expect(chosen).toBeDisabled();
+  await expect(unchosen).toBeDisabled();
+  await expect(chosen).toHaveAttribute("aria-pressed", "true");
+  await expect(unchosen).toHaveAttribute("aria-pressed", "false");
+  await expect(chosen.locator(".picked")).toHaveText("\u2713");
+  await expect(unchosen.locator(".picked")).toHaveCount(0);
+  const ring = await chosen.evaluate((el) => getComputedStyle(el).boxShadow);
+  expect(ring).not.toBe("none");
+});

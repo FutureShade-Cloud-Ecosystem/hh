@@ -140,6 +140,36 @@ test('a held segment renders the real disabled attribute', () => {
   assert.ok(sheet.includes('.seg-btn'), 'the shared sheet holds the segment face');
 });
 
+test('a held segmented control marks the chosen option with a tick and a non-brand ring', () => {
+  const markup = renderTemplate(
+    segmented({
+      label: 'Filter by status',
+      field: 'status-filter',
+      disabled: true,
+      selected: 'DRAFT',
+      options: [
+        { label: 'All', value: 'ALL' },
+        { label: 'Draft', value: 'DRAFT' },
+        { label: 'Sent', value: 'SENT' },
+      ],
+    }),
+  );
+  const buttons = [...markup.matchAll(/<button\b[^>]*data-value="([^"]*)"[^>]*>([\s\S]*?)<\/button>/g)];
+  assert.equal(buttons.length, 3);
+  const byValue = Object.fromEntries(buttons.map(([, v, inner]) => [v, inner]));
+  assert.match(byValue.DRAFT, /class="picked"[^>]*>&#10003;|\u2713/, 'the chosen disabled segment carries the tick mark');
+  assert.doesNotMatch(byValue.ALL, /picked|&#10003;|\u2713/, 'an unchosen segment carries no tick mark');
+  assert.doesNotMatch(byValue.SENT, /picked|&#10003;|\u2713/, 'an unchosen segment carries no tick mark');
+  const sheet = baseStyles.cssText;
+  const disabledOn = sheet.match(/\.seg-btn\.seg-on:disabled\s*\{([^}]*)\}/);
+  assert.ok(disabledOn, '.seg-btn.seg-on:disabled block exists');
+  assert.match(
+    disabledOn[1],
+    /box-shadow:\s*inset 0 0 0 1px var\(--hh-disabled-ink\)/,
+    'the chosen disabled segment carries a non-brand inset ring',
+  );
+});
+
 // The text input (the quotes list's search box): the control face on the
 // native text or search input, the value the consumer's wiring-pass job.
 test('the text input renders the control face and its value is nowhere in the markup', () => {

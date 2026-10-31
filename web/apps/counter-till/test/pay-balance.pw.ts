@@ -268,3 +268,33 @@ test("at 390 the Pay balance surface does not scroll sideways", async ({ page })
   expect(read.doc).toBeLessThanOrEqual(read.view);
   await expect(page.getByTestId("pay-balance-take")).toBeVisible();
 });
+
+test("while a balance take is in flight, the chosen tender carries a tick and a non-brand ring and the unchosen tender does not", async ({ page }) => {
+  await signIn(page);
+  await openDrawer(page);
+  await page.getByTestId("till-pay-balance-entry").click();
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D02");
+  await page.getByTestId("pay-balance-find").click();
+  const cash = page.getByTestId("pay-balance-method-CASH");
+  const card = page.getByTestId("pay-balance-method-CARD");
+  await cash.click();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/pos/pay-balance", async (route) => {
+    if (route.request().method() === "POST") await gate;
+    await route.continue();
+  });
+  await page.getByTestId("pay-balance-take").click();
+  await expect(cash).toBeDisabled();
+  await expect(card).toBeDisabled();
+  await expect(cash).toHaveAttribute("aria-pressed", "true");
+  await expect(card).toHaveAttribute("aria-pressed", "false");
+  await expect(cash.locator(".picked")).toHaveText("\u2713");
+  await expect(card.locator(".picked")).toHaveCount(0);
+  const ring = await cash.evaluate((el) => getComputedStyle(el).boxShadow);
+  expect(ring).not.toBe("none");
+  release();
+  await expect(page.getByTestId("pay-balance-done")).toBeVisible();
+});

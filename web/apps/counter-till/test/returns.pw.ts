@@ -856,3 +856,31 @@ test("an order not paid at all: cash or card say nothing can go back that way, i
   await expect(page.getByTestId("returns-notice")).toContainText("This order is not paid yet: nothing can go back in cash or card");
   await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "refund");
 });
+
+test("while a swap is being rung, the chosen shortfall tender carries a tick and a non-brand ring and the unchosen tender does not", async ({ page }) => {
+  await draftTwoOrders(page);
+  await addPolymerSand(page, "20");
+  await expect(page.getByTestId("swap-shortfall")).toHaveText("$139.45");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/pos/swaps", async (route) => {
+    if (route.request().method() === "POST") await gate;
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Ring the swap" }).click();
+  const group = page.getByRole("group", { name: "Shortfall tender" });
+  const cash = group.getByRole("button", { name: "Pay the rest in cash" });
+  const account = group.getByRole("button", { name: "Put the rest on the account" });
+  await expect(cash).toBeDisabled();
+  await expect(account).toBeDisabled();
+  await expect(cash).toHaveAttribute("aria-pressed", "true");
+  await expect(account).toHaveAttribute("aria-pressed", "false");
+  await expect(cash.locator(".picked")).toHaveText("\u2713");
+  await expect(account.locator(".picked")).toHaveCount(0);
+  const ring = await cash.evaluate((el) => getComputedStyle(el).boxShadow);
+  expect(ring).not.toBe("none");
+  release();
+  await expect(page.getByTestId("returns-done")).toContainText("Swap rung");
+});

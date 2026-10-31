@@ -584,18 +584,18 @@ function renderPrefs(ch: Channel, p: PrefsModel): TemplateResult {
           : html`
             <div class="segs" role="group" aria-label="Notification mode">
               ${offered.map(
-                (mo) => html`<button type="button" class="seg" data-action="set-mode" data-mode=${mo} aria-pressed=${p.mode === mo ? "true" : "false"} ?disabled=${p.busy}>${modeWords(mo)}</button>`,
+                (mo) => html`<button type="button" class="seg" data-action="set-mode" data-mode=${mo} aria-pressed=${p.mode === mo ? "true" : "false"} ?disabled=${p.busy}>${modeWords(mo)}${p.busy && p.mode === mo ? html`<span class="picked" aria-hidden="true">&#10003;</span>` : nothing}</button>`,
               )}
             </div>
             ${p.inherited ? html`<p class="dim small" data-inherited>You have not chosen. This is the room's default.</p>` : nothing}
             ${canMute(ch.tier) ? nothing : html`<p class="small" data-mute-rule>${MUTE_REFUSAL}</p>`}
             <div class="toggle-row">
               <span class="grow">Desktop notifications</span>
-              <button type="button" class="switch" data-action="toggle-pref" data-pref="desktop_enabled" aria-pressed=${p.desktop ? "true" : "false"} ?disabled=${p.busy}>${p.desktop ? "On" : "Off"}</button>
+              <button type="button" class="switch" data-action="toggle-pref" data-pref="desktop_enabled" aria-pressed=${p.desktop ? "true" : "false"} ?disabled=${p.busy}>${p.desktop ? "On" : "Off"}${p.busy && p.desktop ? html`<span class="picked" aria-hidden="true">&#10003;</span>` : nothing}</button>
             </div>
             <div class="toggle-row">
               <span class="grow">A firehose escalation reaches you even when the room is muted</span>
-              <button type="button" class="switch" data-action="toggle-pref" data-pref="escalation_override" aria-pressed=${p.escalationOverride ? "true" : "false"} ?disabled=${p.busy}>${p.escalationOverride ? "On" : "Off"}</button>
+              <button type="button" class="switch" data-action="toggle-pref" data-pref="escalation_override" aria-pressed=${p.escalationOverride ? "true" : "false"} ?disabled=${p.busy}>${p.escalationOverride ? "On" : "Off"}${p.busy && p.escalationOverride ? html`<span class="picked" aria-hidden="true">&#10003;</span>` : nothing}</button>
             </div>
           `}
       ${p.error === "" ? nothing : html`<p class="small words-bad" role="alert" data-prefs-error>${p.error}</p>`}
@@ -624,7 +624,7 @@ function renderRules(r: RulesModel): TemplateResult {
               (rule) => html`
                 <div class="toggle-row">
                   <span class="grow"><strong>${rule.label}</strong><br /><span class="dim small">${rule.line}</span></span>
-                  <button type="button" class="switch" data-action="toggle-rule" data-rule=${rule.id} aria-pressed=${values[rule.id] === true ? "true" : "false"} ?disabled=${r.busy !== ""}>${values[rule.id] === true ? "On" : "Off"}</button>
+                  <button type="button" class="switch" data-action="toggle-rule" data-rule=${rule.id} aria-pressed=${values[rule.id] === true ? "true" : "false"} ?disabled=${r.busy !== ""}>${values[rule.id] === true ? "On" : "Off"}${r.busy !== "" && values[rule.id] === true ? html`<span class="picked" aria-hidden="true">&#10003;</span>` : nothing}</button>
                 </div>
               `,
             )}
