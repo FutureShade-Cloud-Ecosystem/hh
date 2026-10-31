@@ -35,7 +35,6 @@ func TestIntegration_SaleReplay_EchoesBothDeposits(t *testing.T) {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1`, creditID)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE customer_id = $1`, creditID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, creditID)
 	})
 	svc := realPosSvc(t, pool, stubCharger{})
 	supplierKey := key()
@@ -81,7 +80,6 @@ func TestIntegration_SaleReplay_EchoesBothDeposits(t *testing.T) {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1`, codID)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE customer_id = $1`, codID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, codID)
 	})
 	counterKey := key()
 	codIn := SaleInput{

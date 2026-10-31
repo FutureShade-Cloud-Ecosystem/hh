@@ -114,7 +114,6 @@ func newRVFixture(t *testing.T) *rvFixture {
 		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
 		_, _ = pool.Exec(c, `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, custID)
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 	})
 	return f
 }

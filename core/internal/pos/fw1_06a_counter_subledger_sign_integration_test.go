@@ -52,7 +52,6 @@ func TestIntegration_FW1_06a_CounterSaleSubledgerSign(t *testing.T) {
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
 		_, _ = pool.Exec(c, `DELETE FROM order_lines WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1::uuid)`, custID)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE customer_id = $1::uuid`, custID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 	})
 
 	const depositCents = int64(2000)

@@ -90,7 +90,6 @@ func depositSaleReturnLeg(t *testing.T, leg depositLeg) {
 		_, _ = pool.Exec(c, `DELETE FROM pos_sale WHERE order_id = $1`, out.OrderID)
 		_, _ = pool.Exec(c, `DELETE FROM order_lines WHERE order_id = $1`, out.OrderID)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, out.OrderID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
 	})
 
 	billingRepo := billing.NewRepository(pool)
