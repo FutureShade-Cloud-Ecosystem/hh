@@ -666,6 +666,19 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "payments",
+		file:   "core/internal/payments/discount.go",
+		tables: []string{"invoices"},
+		reason: "the early payment discount cap reads the invoice's discountable base on the settle's own transaction (TM-2): the same invoice row the settle already locks; read only",
+	},
+	{
+		module: "payments",
+		file:   "core/internal/payments/discount_giveback.go",
+		tables: []string{},
+		writes: []string{"customer_transactions"},
+		reason: "the one helper every undo door (reversal, void, the till's NSF bounce) uses to write the discount's contra row into the AR subledger projection, as reversal.go and void.go already write their rows (TM-2)",
+	},
+	{
+		module: "payments",
 		file:   "core/internal/payments/payment_lookup.go",
 		tables: []string{"customers", "locations"},
 		reason: "find me that payment resolves the customer and branch names the three lookup shapes answer with, read only",
