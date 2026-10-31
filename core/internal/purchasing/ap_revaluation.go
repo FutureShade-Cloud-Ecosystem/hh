@@ -34,6 +34,7 @@ import (
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -153,13 +154,36 @@ func apMonthBounds(year, month int, loc *time.Location) (start, end time.Time) {
 	return start, end
 }
 
+// revaluationBranch is the branch fence for the revaluation entry points, with the branch id parsed
+// as a uuid first: a value that is not one is a 400 in words, and every later use (the lock, the
+// journal key, the record and every read) sees the canonical lower case form, so an id typed in
+// upper case is the same branch, the same lock and the same key as its lower case form.
+func (s *Service) revaluationBranch(ctx context.Context, raw string) (identity.StaffContext, string, error) {
+	canonical := ""
+	if t := strings.TrimSpace(raw); t != "" {
+		id, err := uuid.Parse(t)
+		if err != nil {
+			return identity.StaffContext{}, "", badReq("purchasing: branch_id %q is not a uuid", raw)
+		}
+		canonical = id.String()
+	}
+	caller, branch, err := s.branchFence(ctx, canonical)
+	if err != nil || branch == "" {
+		return caller, branch, err
+	}
+	if id, perr := uuid.Parse(branch); perr == nil {
+		branch = id.String()
+	}
+	return caller, branch, nil
+}
+
 // RevalueAP runs the month end revaluation of one branch's open USD bills: their open
 // document amount (billDocOpen, the aging's own remaining amount) at the run's rate
 // against the CAD each carries in 2100, one journal for the total difference. Idempotent
 // per branch and month by its key: a re-press replays the posted run, and a press whose
 // rate would post different legs is refused in words.
 func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAPRun, error) {
-	_, branchID, err := s.branchFence(ctx, in.BranchID)
+	_, branchID, err := s.revaluationBranch(ctx, in.BranchID)
 	if err != nil {
 		return RevalueAPRun{}, err
 	}
@@ -354,6 +378,11 @@ func (s *Service) refuseRunOutOfOrder(ctx context.Context, tx pgx.Tx, branchID, 
 		return unprocessable("purchasing: month %s in branch %s was revalued and its reversal has not posted; reverse %s before revaluing %s, or its difference would be carried twice in 2100",
 			prev, branchID, prev, monthWords)
 	}
+	// The forward guard is strict on purpose (the Opus read of PR 765 kept it): a skipped month
+	// cannot be run after a later one, even once the later run is reversed, because until that
+	// reversal posts the later month end would carry both differences. The screen that follows
+	// this work must say so plainly beside the month picker, not let the Controller find out
+	// from the refusal.
 	if later, held, err := s.repo.PostedRevaluationAfterTx(ctx, tx, branchID, monthWords); err != nil {
 		return err
 	} else if held {
@@ -541,7 +570,7 @@ var ErrGLJournalReaderUnwired = clientError{
 // once that next house day has begun on the dealer's clock, so the temporary entry never
 // spans less than the month end itself.
 func (s *Service) ReverseAPRevaluation(ctx context.Context, branchID, month string) (APRevaluationReversal, error) {
-	_, branch, err := s.branchFence(ctx, branchID)
+	_, branch, err := s.revaluationBranch(ctx, branchID)
 	if err != nil {
 		return APRevaluationReversal{}, err
 	}
@@ -667,7 +696,7 @@ func (s *Service) ReverseAPRevaluation(ctx context.Context, branchID, month stri
 // ListAPRevaluations reads one branch's revaluation runs, newest month first. The branch fence
 // runs first, so a branch outside the caller's reach is refused.
 func (s *Service) ListAPRevaluations(ctx context.Context, branchID string) ([]APRevaluationRunRecord, error) {
-	_, branch, err := s.branchFence(ctx, branchID)
+	_, branch, err := s.revaluationBranch(ctx, branchID)
 	if err != nil {
 		return nil, err
 	}

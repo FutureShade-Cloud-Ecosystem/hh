@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
 // W3 FX-2b: the run record (migration 0476) and the guards that read it.
@@ -219,4 +221,88 @@ func TestIntegration_W3FX2B_ConcurrentAdjacentRunsOnePosts(t *testing.T) {
 		"purchasing.ap.revaluation:"+branchKGN+":%").Scan(&n); err != nil || n != 1 {
 		t.Fatalf("W3-FX2b red: %d run journals in the branch (%v), want 1", n, err)
 	}
+}
+
+// P2-1: one branch id form everywhere. An id typed in upper case is the same branch as its lower
+// case form: the lock, the journal key, the record and every read use the canonical form.
+
+// October pressed with the id in upper case and November in lower case, at once: the lock holds
+// whatever the case, so exactly one posts.
+func TestIntegration_W3FX2B_MixedCaseConcurrentRunsOnePosts(t *testing.T) {
+	rig := fx2Rig(t)
+	fx2bTwoMonthWorld(t, rig)
+	ids := []string{strings.ToUpper(branchKGN), strings.ToLower(branchKGN)}
+	months := []string{"2026-10", "2026-11"}
+	errs := make([]error, len(months))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range months {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, errs[i] = rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: ids[i], Month: months[i], FXRate: fx2RunRate})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	posted := 0
+	for i, err := range errs {
+		if err == nil {
+			posted++
+			continue
+		}
+		fx2bWantStatus(t, "W3-FX2b red: the refused mixed case run for "+months[i], err, http.StatusUnprocessableEntity)
+	}
+	if posted != 1 {
+		t.Fatalf("W3-FX2b red: %d of two mixed case adjacent runs posted (%v, %v), want exactly one", posted, errs[0], errs[1])
+	}
+}
+
+// A run pressed with the id in upper case files under the lower case key, and is reversed by the
+// worker and by hand, whichever case the reversal names.
+func TestIntegration_W3FX2B_UpperCaseRunIsReversible(t *testing.T) {
+	upper, lower := strings.ToUpper(branchKGN), strings.ToLower(branchKGN)
+	press := func(t *testing.T) *apAgingTestRig {
+		rig := fx2Rig(t)
+		fx2bTwoMonthWorld(t, rig)
+		rig.svc.withCaller(identity.StaffContextFromContext)
+		if _, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: upper, Month: "2026-10", FXRate: fx2RunRate}); err != nil {
+			t.Fatalf("upper case October run: %v", err)
+		}
+		if n := fx2JournalCount(t, rig, "purchasing.ap.revaluation:"+lower+":2026-10"); n != 1 {
+			t.Fatalf("W3-FX2b red: %d journals under the lower case key, want 1", n)
+		}
+		return rig
+	}
+	for _, c := range []struct{ name, id string }{{"by hand in lower case", lower}, {"by hand in upper case", upper}} {
+		t.Run(c.name, func(t *testing.T) {
+			rig := press(t)
+			if _, err := rig.svc.ReverseAPRevaluation(rig.ctx, c.id, "2026-10"); err != nil {
+				t.Fatalf("W3-FX2b red: reversal %s: %v", c.name, err)
+			}
+			if row := fx2bRun(t, rig, branchKGN, "2026-10"); !row.HasReversed || row.ReversalID == "" {
+				t.Fatalf("W3-FX2b red: the record after the reversal = %+v", row)
+			}
+		})
+	}
+	t.Run("by the worker", func(t *testing.T) {
+		rig := press(t)
+		sweep, err := rig.svc.ReverseDueAPRevaluations(fx2bSystemCtx())
+		if err != nil || sweep.Reversed != 1 || sweep.Failed != 0 {
+			t.Fatalf("W3-FX2b red: the sweep = %+v, %v, want 1 reversed, 0 failed", sweep, err)
+		}
+	})
+}
+
+// P3-1: a branch id that is not a uuid is a 400 in words on the run, the reversal and the list.
+func TestIntegration_W3FX2B_BranchIDNotUUIDIs400(t *testing.T) {
+	rig := fx2Rig(t)
+	fx2bTwoMonthWorld(t, rig)
+	_, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: "not-a-branch", Month: "2026-10", FXRate: fx2RunRate})
+	fx2bWantStatus(t, "W3-FX2b red: the run with a bad branch id", err, http.StatusBadRequest, "branch_id", "uuid")
+	_, err = rig.svc.ReverseAPRevaluation(rig.ctx, "not-a-branch", "2026-10")
+	fx2bWantStatus(t, "W3-FX2b red: the reversal with a bad branch id", err, http.StatusBadRequest, "branch_id", "uuid")
+	_, err = rig.svc.ListAPRevaluations(rig.ctx, "not-a-branch")
+	fx2bWantStatus(t, "W3-FX2b red: the list with a bad branch id", err, http.StatusBadRequest, "branch_id", "uuid")
 }
