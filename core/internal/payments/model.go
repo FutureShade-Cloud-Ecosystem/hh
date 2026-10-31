@@ -55,6 +55,9 @@ type PayRequest struct {
 	PaymentMethodID string   `json:"payment_method_id"` // a stored method ...
 	Nonce           string   `json:"nonce"`             // ... OR add-at-checkout
 	IdempotencyKey  string   `json:"idempotency_key"`
+	// ExpectedCents is the amount the customer's Pay button showed. When it is set the core re-quotes
+	// at the tap and refuses, before any intent is claimed, if its quote differs (ErrAmountChanged).
+	ExpectedCents int64 `json:"expected_cents,omitempty"`
 }
 
 // Payment is a recorded payments row (0010): method/gateway_ref/status, like the POS
@@ -89,4 +92,7 @@ type Allocation struct {
 	// zero on every allocation an unbound repository settles, the invoice's own terms percent
 	// otherwise. The balance move is the money and the discount together.
 	DiscountCents int64 `json:"discount_cents,omitempty"`
+	// DiscountDay is the last house day the quoted discount runs (TM-2b), set only by PayableInvoices
+	// when it quotes a discount; empty everywhere else and never read from a client.
+	DiscountDay string `json:"-"`
 }

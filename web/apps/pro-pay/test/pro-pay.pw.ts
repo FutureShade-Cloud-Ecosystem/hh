@@ -191,6 +191,35 @@ test.describe("phone", () => {
     expect((await paymentsHeld(page, "ap")).length).toBe(3);
   });
 
+  test("an invoice inside its discount window shows the payoff and the savings, and Pay charges the payoff (TM-2b)", async ({ page }) => {
+    const control = await page.request.post("/_stub/control", { data: { discount: { invoice_no: "INV-20402", bps: 200, days: 3 } } });
+    expect(control.ok()).toBe(true);
+    const session = await page.request.post("/_stub/session", { data: { email: EMAIL("ap"), password: PASSWORD } });
+    const { token } = (await session.json()) as { token: string };
+    const listed = await page.request.get("/api/v1/tenant/invoices?limit=50", { headers: { Authorization: `Bearer ${token}` } });
+    const quoted = ((await listed.json()) as { items: { invoice_no: string; payoff_cents: number; discount_cents: number; balance_cents: number }[] }).items.find((i) => i.invoice_no === "INV-20402");
+    expect(quoted?.discount_cents).toBeGreaterThan(0);
+    const dollars = (cents: number): string => `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    await signIn(page, "ap");
+    const row = page.getByTestId("invoice-row").filter({ hasText: "INV-20402" });
+    await expect(row.getByTestId("inv-amount")).toContainText(dollars(quoted!.payoff_cents));
+    await expect(row.getByTestId("discount-line")).toHaveText(new RegExp(`^Pay by [A-Z][a-z]{2} \\d{1,2}, \\d{4} and save ${dollars(quoted!.discount_cents).replace("$", "\\$")}$`));
+    // A plain invoice carries no discount line.
+    await expect(page.getByTestId("invoice-row").filter({ hasText: "INV-20403" }).getByTestId("discount-line")).toHaveCount(0);
+    await shot(page, "pay-discount-home-phone");
+    await row.getByRole("checkbox").click();
+    await expect(page.getByTestId("pay-open")).toContainText(dollars(quoted!.payoff_cents));
+    await page.getByTestId("pay-open").click();
+    await expect(page.getByTestId("pay-confirm")).toContainText(dollars(quoted!.payoff_cents));
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    await expect(page.getByTestId("receipt-amount")).toHaveText(dollars(quoted!.payoff_cents));
+    await expect(page.getByTestId("receipt-differs")).toHaveCount(0);
+    const held = await paymentsHeld(page, "ap");
+    expect(held.some((p) => p.amount_cents === quoted!.payoff_cents)).toBe(true);
+  });
+
   test("closing a paid sheet by the scrim is Done: the invoices reload and show the paid ones as paid", async ({ page }) => {
     await signIn(page, "ap");
     await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox").click();
@@ -817,4 +846,108 @@ test.describe("desktop", () => {
     await state.getByRole("button", { name: "Try again" }).click();
     await expect(page.getByTestId("invoice-row").first()).toContainText("INV-");
   });
+});
+
+// The discount screens' behaviour (TM-2b fix): the arithmetic in a customer's words, the receipt over a list that has already
+// moved on, and a quote that lapsed under the open sheet.
+test.describe("the discount sheet", () => {
+  test("the sheet and the receipt show the invoice amount, the early payment saving and what you pay", async ({ page }) => {
+    await page.request.post("/_stub/control", { data: { discount: { invoice_no: "INV-20402", bps: 200, days: 3 } } });
+    await signIn(page, "ap");
+    const row = page.getByTestId("invoice-row").filter({ hasText: "INV-20402" });
+    await expect(row.getByTestId("discount-line")).toBeVisible();
+    await row.getByRole("checkbox").click();
+    await page.getByTestId("pay-open").click();
+    const sum = page.getByTestId("pay-arithmetic");
+    await expect(sum).toContainText("Invoice amount");
+    await expect(sum).toContainText("Early payment saving");
+    await expect(sum).toContainText("You pay");
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    await expect(page.getByTestId("receipt").getByTestId("pay-arithmetic")).toContainText("You paid");
+  });
+
+  test("an invoice outside its window shows no saving line anywhere", async ({ page }) => {
+    await page.request.post("/_stub/control", { data: { discount: { invoice_no: "INV-20402", bps: 200, days: -1 } } });
+    await signIn(page, "ap");
+    const row = page.getByTestId("invoice-row").filter({ hasText: "INV-20402" });
+    await expect(row).toBeVisible();
+    await expect(row.getByTestId("discount-line")).toHaveCount(0);
+    await row.getByRole("checkbox").click();
+    await page.getByTestId("pay-open").click();
+    await expect(page.getByTestId("pay-confirm")).toBeVisible();
+    await expect(page.getByTestId("pay-arithmetic")).toHaveCount(0);
+  });
+
+  test("the receipt sits over a list that has already moved on: the paid row is neither open nor picked", async ({ page }) => {
+    await page.request.post("/_stub/control", { data: { discount: { invoice_no: "INV-20402", bps: 200, days: 3 } } });
+    await signIn(page, "ap");
+    const row = page.getByTestId("invoice-row").filter({ hasText: "INV-20402" });
+    await row.getByRole("checkbox").click();
+    await page.getByTestId("pay-open").click();
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    await expect(page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox")).toHaveCount(0);
+    await expect(page.getByTestId("pay-open")).toContainText("Pick invoices to pay");
+  });
+
+  test("a quote that lapses under the open sheet is refused before any charge, and the sheet asks again with the new amount", async ({ page }) => {
+    await page.request.post("/_stub/control", { data: { discount: { invoice_no: "INV-20402", bps: 200, days: 3 } } });
+    await signIn(page, "ap");
+    const row = page.getByTestId("invoice-row").filter({ hasText: "INV-20402" });
+    await row.getByRole("checkbox").click();
+    await page.getByTestId("pay-open").click();
+    const button = page.getByTestId("pay-confirm");
+    await expect(button).toBeVisible();
+    const before = (await button.textContent()) ?? "";
+    const held = (await paymentsHeld(page, "ap")).length;
+    // The discount day ends while the sheet is open.
+    await page.request.post("/_stub/control", { data: { discount: { invoice_no: "INV-20402", bps: 200, days: -1 } } });
+    await button.click();
+    await expect(page.getByTestId("sheet-words")).toContainText("amount to pay has changed");
+    await expect(page.getByTestId("sheet-words")).toContainText("No money moved");
+    expect((await paymentsHeld(page, "ap")).length).toBe(held);
+    await expect(page.getByTestId("pay-arithmetic")).toHaveCount(0);
+    await expect(button).not.toHaveText(before);
+    await button.click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    expect((await paymentsHeld(page, "ap")).length).toBe(held + 1);
+  });
+});
+
+// The reader's shots of the discount screens (TM-2b). Light only: Pro Pay's signed in frame ships in light and nothing
+// else, so no charcoal shot is taken. At 1280 and 390, only when PAY_SHOTS names a directory.
+test.describe("discount shots", () => {
+  test.skip(!process.env.PAY_SHOTS, "PAY_SHOTS names the directory the shots go to");
+  for (const [width, height] of [[1280, 800], [390, 844]] as const) {
+    test(`the discount home, sheet and receipt at ${width}`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await page.request.post("/_stub/control", { data: { discount: { invoice_no: "INV-20402", bps: 200, days: 3 } } });
+      await signIn(page, "ap");
+      const row = page.getByTestId("invoice-row").filter({ hasText: "INV-20402" });
+      await expect(row.getByTestId("discount-line")).toBeVisible();
+      await shot(page, `w3-tm2b-home-${width}-light`);
+      await row.getByRole("checkbox").click();
+      await page.getByTestId("pay-open").click();
+      await expect(page.getByTestId("pay-arithmetic")).toBeVisible();
+      await shot(page, `w3-tm2b-sheet-${width}-light`);
+      await page.getByTestId("pay-confirm").click();
+      await expect(page.getByTestId("receipt")).toBeVisible();
+      await expect(page.getByTestId("pay-open")).toContainText("Pick invoices to pay");
+      await shot(page, `w3-tm2b-receipt-${width}-light`);
+    });
+    test(`an invoice with terms but outside its window at ${width}`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await page.request.post("/_stub/control", { data: { discount: { invoice_no: "INV-20402", bps: 200, days: -1 } } });
+      await signIn(page, "ap");
+      const row = page.getByTestId("invoice-row").filter({ hasText: "INV-20402" });
+      await expect(row).toBeVisible();
+      await expect(row.getByTestId("discount-line")).toHaveCount(0);
+      await shot(page, `w3-tm2b-outside-window-home-${width}-light`);
+      await row.getByRole("checkbox").click();
+      await page.getByTestId("pay-open").click();
+      await expect(page.getByTestId("pay-confirm")).toBeVisible();
+      await shot(page, `w3-tm2b-outside-window-sheet-${width}-light`);
+    });
+  }
 });

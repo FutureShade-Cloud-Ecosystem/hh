@@ -36,23 +36,22 @@ func (w *applyWorld) doorOutcome(t *testing.T, invoiceID, paymentID string) (bal
 	return
 }
 
-// TestDiscountDoors_FaceInsideTheWindowIsTheSameAtEveryDoor: a customer sends the invoice's face
-// (100000) inside the 2/10 window. The doors keep two rules, stated plainly:
+// TestDiscountDoors_FaceInsideTheWindowIsTheSameAtEveryDoor: a customer inside the 2/10 window
+// closes a 100000 invoice at the discounted payoff at every door (98000 money, 2000 discount):
 //
-//   - the money desk and the per invoice door take the discount: the invoice closes at the
-//     discounted payoff (98000 money, 2000 discount) and the 2000 over the payoff stays with the
-//     dealer as change on account. The payment row carries the whole 100000 that arrived;
-//   - the portal takes NO discount for now (TM-2 fix round 2, P2-1, the lead's choice (b)): the
-//     card is charged the face, the invoice closes at face with discount 0 and no change is made.
-//     The follow on is plan row TM-2b (the portal charges the discounted payoff and shows it).
+//   - the money desk and the per invoice door are sent the face (100000) and the 2000 over the
+//     payoff stays with the dealer as change on account; the payment row carries the whole 100000
+//     that arrived;
+//   - the portal is never sent the face (TM-2b): its payable quotes the payoff, the card is
+//     charged 98000, and there is no change.
 func TestDiscountDoors_FaceInsideTheWindowIsTheSameAtEveryDoor(t *testing.T) {
 	ctx := context.Background()
 	w := newApplyWorld(t).bindTerms()
 
 	type door struct {
 		name string
-		// atFace is true for the portal: it settles at face with no discount and no change.
-		atFace bool
+		// quoted is true for the portal: it charges the quoted payoff, so no change is made.
+		quoted bool
 		run    func(inv, key string) (paymentID string, err error)
 	}
 	doors := []door{
@@ -71,7 +70,11 @@ func TestDiscountDoors_FaceInsideTheWindowIsTheSameAtEveryDoor(t *testing.T) {
 			return out.Payment.ID, err
 		}},
 		{"portal (Pay)", true, func(inv, key string) (string, error) {
-			p, err := w.repo.Pay(ctx, w.customerID, "CARD", "gw-"+key, []Allocation{{InvoiceID: inv, AmountCents: 100000}})
+			quote, err := w.repo.PayableInvoices(ctx, w.customerID, []string{inv})
+			if err != nil {
+				return "", err
+			}
+			p, err := w.repo.Pay(ctx, w.customerID, "CARD", "gw-"+key, quote)
 			return p.ID, err
 		}},
 	}
@@ -82,9 +85,9 @@ func TestDiscountDoors_FaceInsideTheWindowIsTheSameAtEveryDoor(t *testing.T) {
 			t.Fatalf("%s: %v", d.name, err)
 		}
 		bal, st, disc, amt, onAcct := w.doorOutcome(t, inv, pid)
-		if d.atFace {
-			if bal != 0 || st != "PAID" || disc != 0 || amt != 100000 || onAcct != 0 {
-				t.Errorf("%s: want balance 0 PAID at face, discount 0, payment 100000, change 0; got balance %d %s, discount %d, payment %d, change %d",
+		if d.quoted {
+			if bal != 0 || st != "PAID" || disc != 2000 || amt != 98000 || onAcct != 0 {
+				t.Errorf("%s: want balance 0 PAID, discount 2000, payment 98000, change 0; got balance %d %s, discount %d, payment %d, change %d",
 					d.name, bal, st, disc, amt, onAcct)
 			}
 			continue

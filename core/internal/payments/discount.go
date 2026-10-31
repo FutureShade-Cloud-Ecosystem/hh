@@ -231,6 +231,13 @@ func (c *discountContext) takesLate(discountDay, termsCode string) bool {
 // the transaction the application holds. With no seam bound the context answers no rates, which
 // discounts nothing: a percent the module cannot ask for is a percent it must not guess.
 func (r *Repository) newDiscountContextTx(ctx context.Context, tx pgx.Tx, rows []applyInvoiceRow, late *DiscountApproval) (*discountContext, error) {
+	return r.newDiscountContextAt(ctx, tx, rows, late, r.nowClock)
+}
+
+// newDiscountContextAt is newDiscountContextTx judged on the given clock: the portal's quote is
+// re-read as of the instant its intent was claimed (TM-2b), so a settle resumed after the house
+// midnight is judged on the day the customer was quoted.
+func (r *Repository) newDiscountContextAt(ctx context.Context, tx pgx.Tx, rows []applyInvoiceRow, late *DiscountApproval, clock func() time.Time) (*discountContext, error) {
 	// The dealer's own zone, read on the caller's transaction when there is one: the application
 	// holds its connection, and a pool read beside it waits on a second one.
 	zone, err := houseday.ResolveTx(ctx, r.zone, tx)
@@ -238,7 +245,7 @@ func (r *Repository) newDiscountContextTx(ctx context.Context, tx pgx.Tx, rows [
 		return nil, err
 	}
 	c := &discountContext{
-		today: zone.Today(r.nowClock),
+		today: zone.Today(clock),
 		bps:   map[string]int{},
 		late:  late,
 	}

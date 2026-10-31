@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
@@ -222,6 +223,34 @@ func (s *Service) ListPayments(ctx context.Context, customerID string) ([]Paymen
 	return s.store.ListPayments(ctx, customerID)
 }
 
+// PayoffQuote is what the portal shows beside an open invoice (TM-2b): the amount a payment today
+// would charge, the early payment discount inside it and the last house day that discount runs.
+type PayoffQuote struct {
+	PayoffCents   int64
+	DiscountCents int64
+	DiscountDay   string
+}
+
+// Payoffs quotes the payoff of each named invoice, by invoice id. It is the same read the pay flow
+// charges on, so what the screen shows is what the card is charged. An invoice that is not payable
+// (not open, or fully held back) is left out.
+func (s *Service) Payoffs(ctx context.Context, customerID string, invoiceIDs []string) (map[string]PayoffQuote, error) {
+	if customerID == "" {
+		return nil, httpx.BadRequestf("customer id is required")
+	}
+	allocs, err := s.store.PayableInvoices(ctx, customerID, invoiceIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]PayoffQuote, len(allocs))
+	for _, a := range allocs {
+		if a.AmountCents > 0 && isPayableStatus(a.Status) {
+			out[a.InvoiceID] = PayoffQuote{PayoffCents: a.AmountCents, DiscountCents: a.DiscountCents, DiscountDay: a.DiscountDay}
+		}
+	}
+	return out, nil
+}
+
 // Pay runs the multi-invoice pay flow: validate the selection, derive the summed payable
 // amount server-side (EXCLUDING holdback), run ONE gateway charge under a server-bound
 // idempotency key, then atomically split the settled amount across allocations.
@@ -283,6 +312,13 @@ type stampedSettler interface {
 
 // The production store MUST carry the stamped settle.
 var _ stampedSettler = (*Repository)(nil)
+
+// payableAsOf is the optional quote as of an earlier instant; the production store carries it.
+type payableAsOf interface {
+	PayableInvoicesAt(ctx context.Context, customerID string, invoiceIDs []string, at time.Time) ([]Allocation, error)
+}
+
+var _ payableAsOf = (*Repository)(nil)
 
 // pay is the one pay choreography both doors run; the stamps alter
 // only the settled row's sync legs.
@@ -352,6 +388,14 @@ func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, st
 			return Payment{}, httpx.BadRequestf("invoice %q is not payable; refresh and retry", a.InvoiceID)
 		}
 		sum += a.AmountCents
+	}
+	// - The amount the customer was shown is the most they are ever charged -
+	// A door that carries the shown amount (the portal's Pay button) is held to it: the quote just made
+	// must equal it, or the request is refused here, before an intent is claimed and before the gateway
+	// is touched. Without this the clock (a discount day ending under an open sheet) or a desk payment
+	// could move the amount between the list and the tap and charge more than the button said.
+	if req.ExpectedCents > 0 && req.ExpectedCents != sum {
+		return Payment{}, ErrAmountChanged
 	}
 
 	// The dealer's currency, read before the intent is claimed: a failed read holds no intent and moves
@@ -483,7 +527,15 @@ func (s *Service) resume(ctx context.Context, customerID string, req PayRequest,
 		}
 		method = paymentMethodFor(m.MethodType)
 	}
-	allocs, err := s.store.PayableInvoices(ctx, customerID, req.InvoiceIDs)
+	// Re-quoted as of the intent when the store can (TM-2b): the amount charged is fixed at the
+	// intent, and a house midnight between the claim and this resume must not change the quote.
+	var allocs []Allocation
+	var err error
+	if q, ok := s.store.(payableAsOf); ok && !intent.CreatedAt.IsZero() {
+		allocs, err = q.PayableInvoicesAt(ctx, customerID, req.InvoiceIDs, intent.CreatedAt)
+	} else {
+		allocs, err = s.store.PayableInvoices(ctx, customerID, req.InvoiceIDs)
+	}
 	if err != nil {
 		return Payment{}, afterApprovedCharge(err)
 	}
