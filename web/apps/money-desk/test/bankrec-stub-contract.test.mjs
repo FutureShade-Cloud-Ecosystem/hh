@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { SCHEMA_DESCRIPTORS } from "../../../packages/api-client/src/testing.ts";
 import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 import { IDS, statementMonth } from "./stub/bankrec-world.mjs";
+import { STUB_ZONE } from "./stub/clock-zone.mjs";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
@@ -48,7 +49,7 @@ before(async () => {
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [join(appDir, "test", "stub", "money-desk-stub.mjs")], {
-    env: { ROLE_STUB_PORT: String(port) },
+    env: { ROLE_STUB_PORT: String(port), TZ: STUB_ZONE },
     stdio: "ignore",
   });
   for (let i = 0; i < 100; i += 1) {
@@ -139,7 +140,9 @@ function refused(res, status, fragment) {
   assert.ok(coreSource.includes(fragment), `the core's source does not contain the sentence "${fragment}": the stub invented it`);
 }
 
-const { year: Y, month: M } = statementMonth();
+// The stub runs on STUB_ZONE and this month is read in the same zone, so the test and the stub name one month
+// whatever zone this process was left on (clock-zone.mjs).
+const { year: Y, month: M } = statementMonth(STUB_ZONE);
 const period = `${Y}-${String(M).padStart(2, "0")}`;
 // The statement's closing balance in the stub world: the balance the ledger holds at the month end, read from the
 // ledger's own world ($27,475.50: the opening balances, the payment received, the till over/short, and the till
