@@ -54,6 +54,10 @@ func intPool(t *testing.T) *pgxpool.Pool {
 		fail("integration DB not reachable: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	// Registered after pool.Close, so it runs before the pool closes. Cleanups run last in,
+	// first out, so a leg's own cleanups (added after this call) run first and this sweep
+	// catches what they left (cleanup_sweep_integration_test.go).
+	registerLegSweep(t, pool)
 	return pool
 }
 

@@ -686,7 +686,9 @@ test("the cut over door: the controller records the starting point on the accoun
   assert.equal(ticked.json.difference_cents, 0);
   assert.equal(ticked.json.reconciles, true);
   refused(await ctl("GET", `${cutPath}?date=${period}-28&statement_cents=nope`), 400, "statement_cents must be a whole number of cents");
-  const before = await ctl("GET", `${cutPath}?date=${prior}-01`);
+  // A day before the stub GL world's seeded books begin (they are dated around 2026-08-31, fixed, whatever the
+  // clock says): the statement month follows the clock, so the month before it is no stand-in for "before the books".
+  const before = await ctl("GET", `${cutPath}?date=2026-08-01`);
   assert.equal(before.status, 200);
   assert.deepEqual(before.json, { book_balance_cents: 0 });
   // Once the statement month has signed off, recording at the month before it is refused with the core's conflict.

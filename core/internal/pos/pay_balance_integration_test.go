@@ -46,9 +46,6 @@ func seedOwingWorld(t *testing.T, pool *pgxpool.Pool, charger till.CardCharger, 
 		custID, phone); err != nil {
 		t.Fatalf("plant the contact: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, custID)
-	})
 	svc := realPosSvc(t, pool, charger)
 	session = openTill(t, pool, branchID)
 	out, err := svc.Sale(ctx, SaleInput{
@@ -311,7 +308,6 @@ func TestIntegration_PayBalance_FindCountsAVoidedInvoiceAsUnbilled(t *testing.T)
 		Scan(&custID, &branchID); err != nil {
 		t.Fatalf("read the planted order: %v", err)
 	}
-	defer pool.Exec(context.Background(), `DELETE FROM customers WHERE id=$1`, custID)
 	if _, err := pool.Exec(ctx, `
 INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, doc_type, status,
                       subtotal_cents, tax_cents, total_cents, balance_cents, due_date, finalized_at)
@@ -417,7 +413,6 @@ func TestIntegration_PayBalance_UninvoicedOrder_FoundTakenReleased(t *testing.T)
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE order_id = $1`, orderID)
 		_, _ = pool.Exec(c, `DELETE FROM order_lines WHERE order_id = $1`, orderID)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, orderID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
 	})
 
 	billingRepo := testBillingRepo(pool)
@@ -566,7 +561,6 @@ func TestIntegration_PayBalance_PreReadAndLockedReadAgree(t *testing.T) {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE order_id = $1`, orderID)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, orderID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
 	})
 	var branchID string
 	if err := pool.QueryRow(ctx, `SELECT branch_id::text FROM orders WHERE id=$1`, orderID).Scan(&branchID); err != nil {
@@ -636,7 +630,6 @@ func TestIntegration_PayBalance_FindEscapesTheWildcards(t *testing.T) {
 		t.Cleanup(func() {
 			c := context.Background()
 			_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, orderID)
-			_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
 		})
 		// One open invoice, so both orders owe and both sit in the find's reach.
 		if _, err := pool.Exec(ctx, `
@@ -703,7 +696,6 @@ func plantOwingOrder(t *testing.T, pool *pgxpool.Pool, invoices []struct {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE order_id = $1`, orderID)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, orderID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
 	})
 	for _, inv := range invoices {
 		if _, err := pool.Exec(ctx, `
@@ -970,7 +962,6 @@ func TestIntegration_PayBalance_BrokenOrderRaiseRefusal_IsAFixedSentence(t *test
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE order_id = $1`, orderID)
 		_, _ = pool.Exec(c, `DELETE FROM order_lines WHERE order_id = $1`, orderID)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE id = $1`, orderID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
 	})
 	billingRepo := testBillingRepo(pool)
 	orderSvc := order.NewService(order.NewRepository(pool)).WithPickHoldReader(holdBridge{repo: billingRepo})
@@ -1014,7 +1005,6 @@ func plantFindCustomer(t *testing.T, pool *pgxpool.Pool, tag string) (name, cust
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE customer_id = $1::uuid`, custID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
 	})
 	return name, custID, branchID
 }
