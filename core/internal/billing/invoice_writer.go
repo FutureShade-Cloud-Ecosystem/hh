@@ -219,6 +219,10 @@ type OrderInvoiceFacts struct {
 	OrderNo    string
 	CustomerID string
 	BranchID   string
+	// JobID is the job the order was opened on (JA-2), "" when it names none. The order's job
+	// reaches its invoice: the writer carries it onto the document and dates the document by the
+	// job's own terms when the job carries any (termsFor below).
+	JobID string
 	// TermsDays is the customer's payment terms, resolved by the caller (the credit fact belongs to
 	// the customer module; see Service.AvailableCreditCents for the same ownership rule). 0 is the
 	// customer's own answer, Cash On Demand; a NEGATIVE value is the caller's "none resolved" and
@@ -673,19 +677,19 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 		// FINALIZED, not DRAFT. The order was delivered; the document is real the moment it exists,
 		// and a DRAFT invoice is a promise to remember to finalize it that nobody keeps.
 		err := tx.QueryRow(ctx, invoiceWriterSeqCTE+`
-INSERT INTO invoices (id, invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
+INSERT INTO invoices (id, invoice_no, customer_id, order_id, job_id, branch_id, status, issue_date, due_date,
                       discount_date, terms_code,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
                       doc_type, source_kind, idempotency_key, closes_order, org_id, seq, metadata)
 VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), '#INV-' || nextval('invoice_no_seq'),
-        $2, $3, $4, 'FINALIZED', $5, $6, $14, $15,
+        $2, $3, $16, $4, 'FINALIZED', $5, $6, $14, $15,
         $7, $8, $9, $9, now(), 'INVOICE', $10, $11, $12,
         (SELECT org_id FROM locations WHERE id = $4::uuid),
         (SELECT next_value FROM iseq), $13::jsonb)
 RETURNING id::text, invoice_no`,
 			docID, f.CustomerID, nullUUID(f.OrderID), f.BranchID, issueDate, dueDate,
 			subtotal, quote.TaxCents, total, sourceKind, idemKey, f.ClosesOrder, headerMetadata(f),
-			discountDate, termsCode,
+			discountDate, termsCode, nullUUID(f.JobID),
 		).Scan(&invoiceID, &invoiceNo)
 		if err != nil {
 			return fmt.Errorf("insert invoice: %w", err)

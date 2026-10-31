@@ -54,6 +54,11 @@ type SaleInput struct {
 	// Extra, sold-panel facts). Both optional free text.
 	JobAddress   string `json:"job_address,omitempty"`   // ≤200 chars
 	JobReference string `json:"job_reference,omitempty"` // ≤64 chars
+	// -- wave 3 JA-2: the JOB ACCOUNT the sale is opened on. Optional, a uuid, fenced through the
+	// job seam before the ring opens: another customer's job, a CLOSED job and a job outside the
+	// caller's reach are refused in words. The free text fields above stay what they are (what the
+	// customer calls the work); this names the account's own job row.
+	JobID string `json:"job_id,omitempty"`
 	// DIB-488 rev 6 (item F): the optional cash-tendered quick entry. Only meaningful on a plain
 	// CASH-tendered, fully-paid ring; must cover the total (change due = tendered − total). 0 =
 	// not entered, one-click cash is unchanged.
@@ -284,6 +289,9 @@ type orderRow struct {
 	// DIB-488 rev 8 (0170): the JOB fields, same pattern, same insert.
 	JobAddress   string
 	JobReference string
+	// JobID is the job account the order is opened on (JA-2), "" when the sale belongs to the
+	// account as a whole. Fenced before the ring; the order's job reaches its invoice.
+	JobID string
 }
 
 type orderLineRow struct {
@@ -331,6 +339,9 @@ type invoiceRow struct {
 	// document a supplier demanded (its GL posting is the liability, not
 	// revenue; sub item 9.5).
 	SourceKind string
+	// JobID is the order's job (JA-2): the order's job reaches its invoice,
+	// "" when the sale names none.
+	JobID string
 }
 
 type customerTxnRow struct {

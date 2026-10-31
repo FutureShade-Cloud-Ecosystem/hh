@@ -332,17 +332,19 @@ func (r *Repository) InsertOrder(ctx context.Context, tx pgx.Tx, o orderRow) (st
 	// DIB-488 rev 6 (0168): po_job_ref + salesperson_id ride the same insert, validated in the
 	// service (422 in words) before the CHECK/FK could 500.
 	// DIB-488 rev 8 (0170): job_address + job_reference join the same insert, same posture.
+	// Wave 3 JA-2: job_id names the job ACCOUNT the sale is opened on (fenced in the service,
+	// 422 in words before the FK could 500), beside the free text fields above.
 	const q = `
 INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, requested_date,
                     subtotal_cents, tax_cents, total_cents, created_by, metadata,
-                    po_job_ref, salesperson_id, job_address, job_reference, org_id)
-VALUES (next_order_no($2), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                    po_job_ref, salesperson_id, job_address, job_reference, job_id, org_id)
+VALUES (next_order_no($2), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
         (SELECT l.org_id FROM locations l WHERE l.id = $2))
 RETURNING id::text, order_no`
 	var id, no string
 	err = tx.QueryRow(ctx, q, o.CustomerID, o.BranchID, o.Status, o.Fulfillment, nullStr(o.RequestedDate),
 		o.SubtotalCents, o.TaxCents, o.TotalCents, nullStr(o.CreatedBy), meta,
-		o.POJobRef, nullStr(o.SalespersonID), o.JobAddress, o.JobReference).Scan(&id, &no)
+		o.POJobRef, nullStr(o.SalespersonID), o.JobAddress, o.JobReference, nullStr(o.JobID)).Scan(&id, &no)
 	return id, no, err
 }
 
@@ -380,8 +382,8 @@ WITH iseq AS (INSERT INTO scope_sequences (scope) VALUES ('invoices')
               RETURNING next_value)
 INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, created_by,
-                      source_kind, org_id, seq)
-VALUES ('#INV-' || nextval('invoice_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), $11, $12,
+                      source_kind, job_id, org_id, seq)
+VALUES ('#INV-' || nextval('invoice_no_seq'), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), $11, $12, $13,
         (SELECT org_id FROM locations WHERE id = $3::uuid),
         (SELECT next_value FROM iseq))
 RETURNING id::text, invoice_no`
@@ -389,7 +391,7 @@ RETURNING id::text, invoice_no`
 	err := tx.QueryRow(ctx, q, inv.CustomerID, nullStr(inv.OrderID), inv.BranchID, inv.Status,
 		inv.IssueDate, inv.DueDate,
 		inv.SubtotalCents, inv.TaxCents, inv.TotalCents, inv.BalanceCents, nullStr(inv.CreatedBy),
-		inv.SourceKind).Scan(&id, &no)
+		inv.SourceKind, nullStr(inv.JobID)).Scan(&id, &no)
 	return id, no, err
 }
 

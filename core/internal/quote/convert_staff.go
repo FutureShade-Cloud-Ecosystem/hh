@@ -129,8 +129,9 @@ func (s *StaffService) ConvertQuote(ctx context.Context, idOrNo string, opt Conv
 		return ConvertResult{}, ErrForbidden
 	}
 	// THE conversion, the same function, with the same arguments, as the contractor door. The only
-	// difference is the actor stamped on the history row.
-	res, err := runConvert(ctx, s.convertStore(), s.audit, customerID, quoteID, caller.UserID, opt)
+	// difference is the actor stamped on the history row. The job fence is this door's own: the
+	// staff caller's reach holds a named job, and the quote's own job, at the counter.
+	res, err := runConvert(ctx, s.convertStore(), s.audit, s.jobFence, customerID, quoteID, caller.UserID, opt)
 	var cb ErrCreditBlocked
 	if errors.As(err, &cb) && !s.positionAllowed(ctx, branchID) {
 		return ConvertResult{}, cb.withPositionWithheld()
