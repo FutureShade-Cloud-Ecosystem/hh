@@ -71,6 +71,13 @@ func walkDoors() []customerDoor {
 		{route: "GET /api/v1/ar/customers/{customerID}/ap-contact", class: doorWall, path: "/api/v1/ar/customers/%C%/ap-contact"},
 		{route: "PUT /api/v1/ar/customers/{customerID}/ap-contact", class: doorWall, path: "/api/v1/ar/customers/%C%/ap-contact", body: `{"contact_name":"Walk","email":"walk@example.test"}`},
 		{route: "DELETE /api/v1/ar/customers/{customerID}/ap-contact", class: doorWall, path: "/api/v1/ar/customers/%C%/ap-contact"},
+		// W3 FC-1b: the waiver is the Financial Controller's act on the account, not on a branch's books.
+		// RequireAdmin is the leadership tier AND a global scope (a branch scoped caller is refused at the
+		// gate), the handler narrows it to the Controller roles, and the waiver service refuses every role
+		// but the Financial Controller, whose scope is global, so no caller the doors admit has a branch
+		// wall to be held to (the finance charge route legs prove the 403 for every other role).
+		{route: "PUT /api/v1/ar/customers/{customerID}/finance-charge-waiver", class: doorExempt, reason: "requireAdmin is a global scope role, which reaches every account; the waiver service then admits the Financial Controller alone"},
+		{route: "POST /api/v1/ar/customers/{customerID}/finance-charge-waiver/clear", class: doorExempt, reason: "requireAdmin is a global scope role, which reaches every account; the waiver service then admits the Financial Controller alone"},
 		{route: "GET /api/v1/ar/customers/{customerID}/payment-policy", class: doorWall, path: "/api/v1/ar/customers/%C%/payment-policy"},
 		{route: "PUT /api/v1/ar/customers/{customerID}/payment-policy", class: doorWall, path: "/api/v1/ar/customers/%C%/payment-policy", body: `{"ach_first":true,"surcharge_rate_bps":100,"min_ach_cents":1}`},
 		{route: "GET /api/v1/ar/customers/{customerID}/statement", class: doorWall, path: "/api/v1/ar/customers/%C%/statement"},
