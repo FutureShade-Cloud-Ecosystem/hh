@@ -28,6 +28,8 @@ package billing
 // Cost and margin are not on this screen in any form, at any tier, under any policy value.
 
 import (
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+
 	"encoding/json"
 	"time"
 )
@@ -354,6 +356,11 @@ type Totals struct {
 	TaxCents      int64 `json:"tax_cents"`
 	TotalCents    int64 `json:"total_cents"`
 	AppliedCents  int64 `json:"applied_cents"`
+	// DiscountCents is the early payment discount the document's live applications took (TM-2):
+	// total less applied less discount is the balance (less credits), so a discounted invoice
+	// reads total 100000, applied 98000, discount 2000, balance 0 and the figures explain
+	// themselves.
+	DiscountCents int64 `json:"discount_cents"`
 	HoldbackCents int64 `json:"holdback_cents"`
 	BalanceCents  int64 `json:"balance_cents"`
 	PayableCents  int64 `json:"payable_cents"`
@@ -544,6 +551,15 @@ type ApplyPaymentInput struct {
 	InvoiceIDs     []string `json:"invoice_ids"`
 	IdempotencyKey string   `json:"idempotency_key"`
 	Preview        bool     `json:"preview"`
+	// LateDiscountReason asks for the early payment discount OUTSIDE its window on the invoices
+	// this payment names (TM-2): the manager's own words, recorded with the approval when the
+	// caller holds the approval wall and refused in words when not. Empty asks nothing, and a
+	// payment inside the window discounts automatically whatever this holds.
+	LateDiscountReason string `json:"late_discount_reason"`
+
+	// DiscountApproval is the route's own stamp of the ask above: who is asking, the words, and
+	// whether the caller passed the approval wall. Set by the handler, never read from the body.
+	DiscountApproval *payments.DiscountApproval `json:"-"`
 }
 
 // ReceiptResult is what the Record Payment control gets back. Replayed=true means the key had

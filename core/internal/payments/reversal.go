@@ -177,8 +177,12 @@ func (r *Repository) ReversePayment(ctx context.Context, in ReverseInput, now ti
 	// The allocations this payment made are exactly what must be given back. Only the APPLICATION
 	// rows: a reversal row (0450) is the undo of an application, and a payment that has not been
 	// bounced or voided carries none.
+	// The discount an application took is given back with its money (TM-2): the invoice's balance
+	// rose by the money and the discount together when the application landed, so the reversal
+	// restores both, and the GL's reversing journal (payment.reversed) carries the discount leg
+	// beside its own. discount_cents rides the APPLICATION row the read below carries.
 	rows, err := tx.Query(ctx,
-		`SELECT invoice_id::text, amount_cents FROM payment_allocations
+		`SELECT invoice_id::text, amount_cents, discount_cents FROM payment_allocations
 		  WHERE payment_id = $1::uuid AND kind = 'APPLICATION'`, in.PaymentID)
 	if err != nil {
 		return Reversal{}, fmt.Errorf("reverse: read allocations: %w", err)
@@ -186,11 +190,12 @@ func (r *Repository) ReversePayment(ctx context.Context, in ReverseInput, now ti
 	type alloc struct {
 		invoiceID string
 		cents     int64
+		discount  int64
 	}
 	var allocs []alloc
 	for rows.Next() {
 		var a alloc
-		if err := rows.Scan(&a.invoiceID, &a.cents); err != nil {
+		if err := rows.Scan(&a.invoiceID, &a.cents, &a.discount); err != nil {
 			rows.Close()
 			return Reversal{}, fmt.Errorf("reverse: scan allocation: %w", err)
 		}
@@ -286,27 +291,30 @@ INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, bra
 	reopened := make([]string, 0, len(allocs)+len(nsfIDs))
 	for _, a := range allocs {
 		// A reversal is a contra ALLOCATION too, so the payment_allocations sum for the invoice still
-		// reconciles against what the invoice believes it has been paid.
+		// reconciles against what the invoice believes it has been paid. The contra row carries the
+		// discount it gives back beside the money (TM-2), positive like its amount, the same
+		// encoding the application row itself uses.
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents) VALUES ($1::uuid, $2::uuid, $3)`,
-			revID, a.invoiceID, a.cents); err != nil {
+			`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents, discount_cents) VALUES ($1::uuid, $2::uuid, $3, $4)`,
+			revID, a.invoiceID, a.cents, a.discount); err != nil {
 			return Reversal{}, fmt.Errorf("reverse: insert contra allocation: %w", err)
 		}
 		// The invoice re-opens to FINALIZED when the whole balance comes back, PARTIALLY_PAID when
 		// some other payment still covers part of it. A VOID invoice is NOT re-opened, voiding an
 		// invoice is a separate act with its own reasons, and a payment reversal must not undo it.
 		// The re-open stamps the invoices feed seq beside the move (the settle's own recorded
-		// posture): a reversal is an invoice change the payer's device must see.
+		// posture): a reversal is an invoice change the payer's device must see. The balance comes
+		// back with the discount the application took (money and discount moved it together).
 		if _, err := tx.Exec(ctx, invoicesFeedSeqCTE+`
 UPDATE invoices
-			    SET balance_cents = balance_cents + $2,
+			    SET balance_cents = balance_cents + $2 + $3,
 			        status = CASE
-			                   WHEN balance_cents + $2 >= total_cents - holdback_cents THEN 'FINALIZED'
+			                   WHEN balance_cents + $2 + $3 >= total_cents THEN 'FINALIZED'
 			                   ELSE 'PARTIALLY_PAID'
 			                 END,
 			        updated_at = now(),
 			        seq = (SELECT next_value FROM iseq)
-			  WHERE id = $1::uuid AND status <> 'VOID'`, a.invoiceID, a.cents); err != nil {
+			  WHERE id = $1::uuid AND status <> 'VOID'`, a.invoiceID, a.cents, a.discount); err != nil {
 			return Reversal{}, fmt.Errorf("reverse: re-open invoice %s: %w", a.invoiceID, err)
 		}
 		runningAR += a.cents
@@ -316,6 +324,13 @@ UPDATE invoices
 			 VALUES ($1::uuid, 'PAYMENT', $2, $3, 'payment_reversal', $4::uuid, $5::uuid, $6)`,
 			customerID, a.cents, runningAR, revID, branchID, "reversal: "+in.Reason); err != nil {
 			return Reversal{}, fmt.Errorf("reverse: insert contra subledger txn: %w", err)
+		}
+		runningAR += a.discount
+		if err := GiveBackDiscountTx(ctx, tx, DiscountGiveBack{
+			CustomerID: customerID, BranchID: branchID, InvoiceID: a.invoiceID, Cents: a.discount,
+			BalanceAfter: runningAR, Memo: "reversal: early payment discount given back",
+		}); err != nil {
+			return Reversal{}, err
 		}
 		reopened = append(reopened, a.invoiceID)
 	}
@@ -351,14 +366,22 @@ UPDATE invoices
 
 	// 5. Transactional outbox, in the SAME transaction as the reversal, so the GL books the reversing
 	// journal exactly once, the identical discipline the settle path uses for payment.received.
+	var discountBack int64
+	for _, a := range allocs {
+		discountBack += a.discount
+	}
 	payload, err := json.Marshal(map[string]any{
 		"payment_id":          revID,
 		"reverses_payment_id": in.PaymentID,
 		"customer_id":         customerID,
 		"amount_cents":        amount,
-		"method":              method,
-		"reason":              in.Reason,
-		"invoice_ids":         reopened,
+		// The discount the reversal gives back with the money (TM-2): the reversing journal adds
+		// DR AR / CR discounts allowed for it beside its own two legs, so 1100 and the discount
+		// expense both stand where they stood before the receipt.
+		"discount_cents": discountBack,
+		"method":         method,
+		"reason":         in.Reason,
+		"invoice_ids":    reopened,
 		// The facts the GL's account choice needs, read under the payment row lock this transaction holds, so the
 		// account is fixed when the reversal happens and not when the consumer runs (SF-2d round 2): whether the
 		// original had been deposited (cleared to the bank), and its branch.

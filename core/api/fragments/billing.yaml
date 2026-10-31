@@ -2671,13 +2671,16 @@ components:
       description: >-
         The detail's totals card. applied_cents is the stored aggregate of
         payment allocations, not total minus balance; payable_cents is balance
-        minus the retained holdback, floored at zero.
-      required: [subtotal_cents, tax_cents, total_cents, applied_cents, holdback_cents, balance_cents, payable_cents]
+        minus the retained holdback, floored at zero. discount_cents is the
+        early payment discount the document's live applications took, so total,
+        applied, discount and balance add up on a discounted invoice.
+      required: [subtotal_cents, tax_cents, total_cents, applied_cents, discount_cents, holdback_cents, balance_cents, payable_cents]
       properties:
         subtotal_cents: { type: integer, format: int64 }
         tax_cents: { type: integer, format: int64 }
         total_cents: { type: integer, format: int64 }
         applied_cents: { type: integer, format: int64 }
+        discount_cents: { type: integer, format: int64 }
         holdback_cents: { type: integer, format: int64 }
         balance_cents: { type: integer, format: int64 }
         payable_cents: { type: integer, format: int64 }
@@ -3498,11 +3501,20 @@ components:
         preview:
           type: boolean
           description: Answer the same split without writing anything
+        late_discount_reason:
+          type: string
+          description: >-
+            Asks for the early payment discount on an invoice whose discount
+            window has closed. Inside the window the discount is automatic and
+            this is not read. Outside it, the ask is refused in words (400)
+            unless the caller passes the manager approval gate (the AR write
+            off route's access); a manager's ask posts the discount and records
+            who approved, when, the invoice, the amount and this reason.
 
     BillingApplyPaymentLine:
       type: object
       description: One invoice's share of the split
-      required: [invoice_id, invoice_no, applied_cents, outcome, balance_after_cents, stays_open_cents]
+      required: [invoice_id, invoice_no, applied_cents, outcome, balance_after_cents, stays_open_cents, discount_cents]
       properties:
         invoice_id: { type: string, format: uuid }
         invoice_no: { type: string }
@@ -3519,6 +3531,10 @@ components:
           type: integer
           format: int64
           description: What the account can still pay on this invoice after the split (balance less holdback)
+        discount_cents:
+          type: integer
+          format: int64
+          description: The early payment discount this application takes on the invoice, in integer cents (0 when none)
 
     BillingApplyPaymentAnswer:
       type: object

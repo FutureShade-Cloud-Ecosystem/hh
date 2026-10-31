@@ -87,6 +87,12 @@ type ApplyRequest struct {
 	Reference      string // cheque number / EFT trace, recorded, never invented
 	IdempotencyKey string
 	ReceivedBy     string // the staff caller; also the allocator (0043 allocated_by)
+	// DiscountApproval asks for the early payment discount OUTSIDE its window on the invoices the
+	// request names (TM-2): the route stamps who is asking and whether the caller passed the
+	// manager's approval gate, and the walk refuses the whole application in words when the
+	// approval is not a manager's. Inside the window the discount is automatic and no approval is
+	// read.
+	DiscountApproval *DiscountApproval
 	// BranchIDs is the caller's branch reach: nil reaches every branch (a global role), anything
 	// else lists the branches whose invoices the caller may pay, and an invoice outside it answers
 	// as not found. An empty non-nil list reaches nothing, fail closed.
@@ -103,9 +109,15 @@ type ApplyRequest struct {
 
 // ApplyLine is one invoice's share of the split.
 type ApplyLine struct {
-	InvoiceID         string `json:"invoice_id"`
-	InvoiceNo         string `json:"invoice_no"`
-	AppliedCents      int64  `json:"applied_cents"`
+	InvoiceID string `json:"invoice_id"`
+	InvoiceNo string `json:"invoice_no"`
+	// AppliedCents is the MONEY the invoice took of the payment.
+	AppliedCents int64 `json:"applied_cents"`
+	// DiscountCents is the early payment discount the application took beside that money (TM-2):
+	// the invoice's own terms percent, in integer cents rounded half to even, taken automatically
+	// inside the invoice's stored discount window or under a recorded manager approval outside it.
+	// The balance moves by the money and the discount together.
+	DiscountCents     int64  `json:"discount_cents"`
 	Outcome           string `json:"outcome"`
 	BalanceAfterCents int64  `json:"balance_after_cents"`
 	StaysOpenCents    int64  `json:"stays_open_cents"`
@@ -137,6 +149,16 @@ type applyInvoiceRow struct {
 	BalanceCents  int64
 	HoldbackCents int64
 	IsNSFFee      bool
+	// DiscountDate and TermsCode are the document's own discount facts (TM-2): the last house day
+	// its discount runs and the term it was dated by. An NSF fee carries neither.
+	DiscountDate *time.Time
+	TermsCode    string
+	// BaseCents and TakenDiscountCents bound the discount's running total (P3-3): the invoice's
+	// discountable base (total less the retained holdback) and the discount the live applications
+	// on it have already taken. The terms percent of the base, less the taken discount, is the
+	// room the next application has.
+	BaseCents          int64
+	TakenDiscountCents int64
 }
 
 // ApplyReceived records ONE received payment against a list of the account's open invoices and
@@ -210,12 +232,23 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	if err != nil {
 		return ApplyAnswer{}, err
 	}
+	// The discount context, resolved once on this transaction before any money moves: the house
+	// day, the percent each named document's own terms code carries, and the late approval the
+	// request brought. The walk below and the settle after it answer the discount with this one
+	// clock.
+	dctx, err := r.newDiscountContextTx(ctx, tx, rows, in.DiscountApproval)
+	if err != nil {
+		return ApplyAnswer{}, err
+	}
+	if err := judgeLateDiscount(rows, dctx); err != nil {
+		return ApplyAnswer{}, err
+	}
 	// ONE branch per payment (oneBranchPerPayment): the payment row carries a single branch, every
 	// subledger row is stamped with it and the GL consumer books the whole journal to it.
 	if err := oneBranchPerPayment(rows); err != nil {
 		return ApplyAnswer{}, err
 	}
-	lines, capacity := allocateOldestFirst(rows, in.AmountCents)
+	lines, capacity, lateLines := allocateOldestFirst(rows, in.AmountCents, dctx)
 	// W3 item 0.10: an amount larger than the named invoices can take is no longer refused. The
 	// invoices take what they can (oldest first), and the rest stays with the dealer as an on
 	// account credit for the customer and branch: the change rides the settle below, one negative
@@ -240,9 +273,10 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	for _, l := range lines {
 		if l.AppliedCents > 0 {
 			allocs = append(allocs, Allocation{
-				InvoiceID:   l.InvoiceID,
-				AmountCents: l.AppliedCents,
-				IsNSFFee:    nsfByID[l.InvoiceID],
+				InvoiceID:     l.InvoiceID,
+				AmountCents:   l.AppliedCents,
+				IsNSFFee:      nsfByID[l.InvoiceID],
+				DiscountCents: l.DiscountCents,
 			})
 		}
 	}
@@ -252,11 +286,11 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	// key can be judged against the body that posted, including an invoice the walk never reached.
 	named := append([]string(nil), in.InvoiceIDs...)
 	sort.Strings(named)
-	p, claimed, err := settleReceipt(ctx, tx, ReceiptRequest{
+	p, claimed, err := r.settleReceipt(ctx, tx, ReceiptRequest{
 		CustomerID: in.CustomerID, BranchID: rows[0].BranchID, Method: in.Method, Reference: in.Reference,
 		IdempotencyKey: in.IdempotencyKey, ReceivedBy: in.ReceivedBy,
 		Allocations: allocs, NamedInvoices: named, ChangeCents: change,
-	})
+	}, dctx)
 	if err != nil {
 		return ApplyAnswer{}, err
 	}
@@ -269,6 +303,12 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 			return r.replayAnswer(ctx, existing, in)
 		}
 		return ApplyAnswer{}, fmt.Errorf("payments: apply key %q was claimed and then vanished", in.IdempotencyKey)
+	}
+	// The manager's approval, recorded for every invoice whose discount rode it: who, when, the
+	// invoice, the amount and the reason, in the application's own transaction, so a discount
+	// taken on an approval never stands without its record.
+	if err := recordDiscountApprovals(ctx, tx, p, rows, lateLines, dctx); err != nil {
+		return ApplyAnswer{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ApplyAnswer{}, fmt.Errorf("apply: commit: %w", err)
@@ -296,13 +336,23 @@ func (r *Repository) previewApply(ctx context.Context, in ApplyRequest) (ApplyAn
 	if err != nil {
 		return ApplyAnswer{}, err
 	}
+	// The same discount context the apply will judge with, read on the pool (a preview holds no
+	// transaction): the desk's preview shows the discount the apply will take, or the refusal the
+	// apply would answer, never a split the apply cannot reproduce.
+	dctx, err := r.newDiscountContextTx(ctx, nil, rows, in.DiscountApproval)
+	if err != nil {
+		return ApplyAnswer{}, err
+	}
+	if err := judgeLateDiscount(rows, dctx); err != nil {
+		return ApplyAnswer{}, err
+	}
 	if err := oneBranchPerPayment(rows); err != nil {
 		return ApplyAnswer{}, err
 	}
 	// No ceiling refusal (W3 item 0.10): the preview answers the same split the apply will, with
 	// whatever the named invoices cannot take left as the unapplied change the apply leaves on
 	// account.
-	lines, _ := allocateOldestFirst(rows, in.AmountCents)
+	lines, _, _ := allocateOldestFirst(rows, in.AmountCents, dctx)
 	unapplied := in.AmountCents - sumApplied(lines)
 	return ApplyAnswer{
 		Preview: true, AmountCents: in.AmountCents, AppliedCents: sumApplied(lines),
@@ -430,10 +480,17 @@ func sameReplayBody(p Payment, storedReference string, storedNamed []string, in 
 // invoice's payable (balance less holdback, floored at zero) until the money runs out. It answers
 // one line for every row, applied or not, and the capacity the over-refusal reads.
 //
+// The early payment discount (TM-2) rides the walk through the discount context: an invoice inside
+// its own discount window closes at the discounted payoff (payable less the terms' percent, half to
+// even), and a partial payment takes the percent of the money it applied. The money an eligible
+// invoice takes is therefore its payoff, not its payable, and the capacity the change reads counts
+// the payoff for an eligible invoice (it is the money that closes it) and the payable for every
+// other row.
+//
 // The outcome words mirror the settle's own status flip, which closes an invoice at balance zero:
 // an invoice whose retained holdback keeps a balance stays PART however much of its payable it
 // paid, because the answer must say what the ledger will say, not what a rounded screen would.
-func allocateOldestFirst(rows []applyInvoiceRow, amountCents int64) (lines []ApplyLine, capacity int64) {
+func allocateOldestFirst(rows []applyInvoiceRow, amountCents int64, dctx *discountContext) (lines []ApplyLine, capacity int64, lateDiscounts []string) {
 	ordered := append([]applyInvoiceRow(nil), rows...)
 	sort.Slice(ordered, func(i, j int) bool {
 		a, b := ordered[i], ordered[j]
@@ -455,30 +512,49 @@ func allocateOldestFirst(rows []applyInvoiceRow, amountCents int64) (lines []App
 		if payable < 0 {
 			payable = 0
 		}
-		capacity += payable
-		take := payable
+		// The discounted payoff: what an invoice inside its window takes to close, money and
+		// discount together. With no discount facts (or none eligible) it is the payable itself
+		// and the walk is exactly the walk that ran before the discount existed.
+		payoff := payable
+		if dctx != nil {
+			if full := dctx.fullDiscountOn(payable, row); full > 0 {
+				payoff = payable - full
+			}
+		}
+		if payoff < 0 {
+			payoff = 0
+		}
+		capacity += payoff
+		take := payoff
 		if take > remaining {
 			take = remaining
 		}
-		after := row.BalanceCents - take
+		discount := int64(0)
+		if take > 0 && dctx != nil {
+			discount = dctx.discountOn(payable, take, row)
+		}
+		after := row.BalanceCents - take - discount
 		staysOpen := after - row.HoldbackCents
 		if staysOpen < 0 {
 			staysOpen = 0
 		}
 		outcome := ApplyOutcomeNone
 		switch {
-		case take > 0 && after <= 0:
+		case (take > 0 || discount > 0) && after <= 0:
 			outcome = ApplyOutcomeCloses
 		case take > 0:
 			outcome = ApplyOutcomePart
 		}
+		if discount > 0 && dctx.takesLate(discountDayOf(row), row.TermsCode) {
+			lateDiscounts = append(lateDiscounts, row.InvoiceID)
+		}
 		lines = append(lines, ApplyLine{
 			InvoiceID: row.InvoiceID, InvoiceNo: row.InvoiceNo, AppliedCents: take,
-			Outcome: outcome, BalanceAfterCents: after, StaysOpenCents: staysOpen,
+			DiscountCents: discount, Outcome: outcome, BalanceAfterCents: after, StaysOpenCents: staysOpen,
 		})
 		remaining -= take
 	}
-	return lines, capacity
+	return lines, capacity, lateDiscounts
 }
 
 func rowStatus(rows []applyInvoiceRow, invoiceID string) string {

@@ -1189,6 +1189,7 @@ function invoicePanel(model: DeskModel, account: AccountModel): TemplateResult {
         <dt>Due</dt><dd>${d.due_date}${(d.days_overdue ?? 0) > 0 ? ` (${d.days_overdue} days over)` : ""}</dd>
         <dt>Total</dt><dd>${formatMoney(d.totals.total_cents)}</dd>
         <dt>Applied</dt><dd>${formatMoney(d.totals.applied_cents)}</dd>
+        ${d.totals.discount_cents > 0 ? html`<dt>Early payment discount</dt><dd data-invoice-discount>${formatMoney(d.totals.discount_cents)}</dd>` : nothing}
         <dt>Balance</dt><dd data-invoice-balance>${formatMoney(d.totals.balance_cents)}</dd>
         ${d.promise !== undefined ? html`<dt>Promise to pay</dt><dd data-promise>${formatMoney(d.promise.promised_cents)} by ${d.promise.promised_date}${d.promise.note ? `: ${d.promise.note}` : ""}</dd>` : nothing}
         ${d.dispute !== undefined ? html`<dt>Dispute</dt><dd data-dispute>${d.dispute.status === "OPEN" ? "Open" : "Resolved"}: ${formatMoney(d.dispute.amount_cents)}${d.dispute.note ? `, ${d.dispute.note}` : ""}</dd>` : nothing}

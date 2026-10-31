@@ -329,6 +329,7 @@ export type BillingTotals = {
   tax_cents: number;
   total_cents: number;
   applied_cents: number;
+  discount_cents: number;
   holdback_cents: number;
   balance_cents: number;
   payable_cents: number;
@@ -680,6 +681,7 @@ export type BillingApplyPaymentInput = {
   invoice_ids: string[];
   idempotency_key: string;
   preview?: boolean;
+  late_discount_reason?: string;
 };
 export type BillingApplyPaymentLine = {
   invoice_id: string;
@@ -688,6 +690,7 @@ export type BillingApplyPaymentLine = {
   outcome: "CLOSES" | "PART" | "NONE";
   balance_after_cents: number;
   stays_open_cents: number;
+  discount_cents: number;
 };
 export type BillingApplyPaymentAnswer = {
   preview: boolean;

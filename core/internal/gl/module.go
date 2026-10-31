@@ -719,6 +719,7 @@ func (s *Service) RegisterPostingHandlers(d *notify.Dispatcher) {
 var PostedTopics = []string{
 	"ar.invoice.finalized",
 	"payment.received",
+	"payment.discount.taken",
 	"pos.sale.committed",
 	"tax.relief.assessed",
 	"payment.bounced",

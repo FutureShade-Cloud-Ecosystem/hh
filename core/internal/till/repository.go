@@ -999,11 +999,15 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	var status string
 	var reversed bool
 	var nsfAllocJSON []byte
+	// changeCents is the unapplied change this receipt left on account (W3 item 0.10), recorded in
+	// its metadata by the settle; the bounce counters it below, as the void and the reversal do.
+	var changeCents int64
 	err = tx.QueryRow(ctx,
 		`SELECT COALESCE(customer_id::text, ''), branch_id::text, method, status, amount_cents, reversed_at IS NOT NULL,
-		        COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb)
+		        COALESCE(metadata->'nsf_fee_allocations', '{}'::jsonb),
+		        COALESCE((metadata->>'change_cents')::bigint, 0)
 		 FROM payments WHERE id = $1 FOR UPDATE`, in.PaymentID,
-	).Scan(&res.CustomerID, &res.BranchID, &res.Method, &status, &res.AmountCents, &reversed, &nsfAllocJSON)
+	).Scan(&res.CustomerID, &res.BranchID, &res.Method, &status, &res.AmountCents, &reversed, &nsfAllocJSON, &changeCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nsfReverseResult{}, errNotFound
 	}
@@ -1037,7 +1041,7 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	// Only the APPLICATION rows: a reversal row (0450) is the undo of an application, and a payment
 	// that has not been bounced carries none.
 	rows, err := tx.Query(ctx,
-		`SELECT pa.id::text, pa.invoice_id::text, pa.amount_cents FROM payment_allocations pa
+		`SELECT pa.id::text, pa.invoice_id::text, pa.amount_cents, pa.discount_cents FROM payment_allocations pa
 		  WHERE pa.payment_id = $1 AND pa.kind = 'APPLICATION'`, in.PaymentID)
 	if err != nil {
 		return nsfReverseResult{}, fmt.Errorf("till: read allocations: %w", err)
@@ -1046,11 +1050,14 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 		id  string
 		inv string
 		amt int64
+		// disc is the early payment discount the application took (TM-2): the invoice's balance fell
+		// by the money and the discount together, so the bounce gives both back.
+		disc int64
 	}
 	var allocs []alloc
 	for rows.Next() {
 		var a alloc
-		if err := rows.Scan(&a.id, &a.inv, &a.amt); err != nil {
+		if err := rows.Scan(&a.id, &a.inv, &a.amt, &a.disc); err != nil {
 			rows.Close()
 			return nsfReverseResult{}, fmt.Errorf("till: scan allocation: %w", err)
 		}
@@ -1102,7 +1109,7 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 			return nsfReverseResult{}, fmt.Errorf("till: lock nsf fee %s: %w", id, err)
 		}
 	}
-	var invReversedCents int64
+	var invReversedCents, invDiscountBack int64
 	for _, a := range allocs {
 		// The re-open stamps the invoices feed seq beside the move
 		// (the settle's own posture in the payments module): a bounced
@@ -1115,16 +1122,17 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 				RETURNING next_value
 			)
 			UPDATE invoices
-			 SET balance_cents = balance_cents + $2,
+			 SET balance_cents = balance_cents + $2 + $3,
 			     status = CASE WHEN status = 'VOID' THEN status
-			                   WHEN balance_cents + $2 >= total_cents THEN 'FINALIZED'
+			                   WHEN balance_cents + $2 + $3 >= total_cents THEN 'FINALIZED'
 			                   ELSE 'PARTIALLY_PAID' END,
 			     updated_at = now(),
 			     seq = (SELECT next_value FROM iseq)
-			 WHERE id = $1`, a.inv, a.amt); err != nil {
+			 WHERE id = $1`, a.inv, a.amt, a.disc); err != nil {
 			return nsfReverseResult{}, fmt.Errorf("till: reopen invoice: %w", err)
 		}
 		invReversedCents += a.amt
+		invDiscountBack += a.disc
 		res.ReversedCents += a.amt
 		res.ReopenedInvoices++
 	}
@@ -1149,10 +1157,10 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 	for _, a := range allocs {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO payment_allocations
-			   (payment_id, invoice_id, amount_cents, kind, reverses_allocation_id, allocated_by, created_at)
-			 VALUES ($1::uuid, $2::uuid, $3, 'REVERSAL', $4::uuid, $5::uuid,
+			   (payment_id, invoice_id, amount_cents, discount_cents, kind, reverses_allocation_id, allocated_by, created_at)
+			 VALUES ($1::uuid, $2::uuid, $3, $7, 'REVERSAL', $4::uuid, $5::uuid,
 			         GREATEST($6::timestamptz, (SELECT app.created_at FROM payment_allocations app WHERE app.id = $4::uuid)))`,
-			in.PaymentID, a.inv, -a.amt, a.id, actorUUID(in.ActorID), in.At); err != nil {
+			in.PaymentID, a.inv, -a.amt, a.id, actorUUID(in.ActorID), in.At, -a.disc); err != nil {
 			return nsfReverseResult{}, fmt.Errorf("till: write the reversal row: %w", err)
 		}
 	}
@@ -1199,6 +1207,16 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 				return nsfReverseResult{}, fmt.Errorf("till: insert reversal txn: %w", err)
 			}
 		}
+		// The discount each application took is given back beside the money, by the one helper every
+		// undo door uses (reversal, void and this bounce), against the invoice like the taking.
+		for _, a := range allocs {
+			if err := payments.GiveBackDiscountTx(ctx, tx, payments.DiscountGiveBack{
+				CustomerID: res.CustomerID, BranchID: res.BranchID, InvoiceID: a.inv, Cents: a.disc,
+				BalanceAfter: arAfter, Memo: "NSF reversal: early payment discount given back", At: in.At,
+			}); err != nil {
+				return nsfReverseResult{}, err
+			}
+		}
 		for _, origNSFID := range nsfFeeIDs {
 			feeAmt := nsfAllocs[origNSFID]
 			arAfter += feeAmt
@@ -1209,6 +1227,23 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 				res.CustomerID, feeAmt, arAfter, origNSFID, nullStr(res.BranchID),
 				"NSF reversal: "+in.Reason, in.At); err != nil {
 				return nsfReverseResult{}, fmt.Errorf("till: insert nsf fee reversal txn: %w", err)
+			}
+		}
+		// The change on account the receipt left (TM-2 fix round 2): the GL consumer debits 1100 by the
+		// payment's WHOLE amount, change included, so the change's credit is countered here inside its
+		// own 'receipt_change' group (source_ref_id the receipt), exactly as the void and the reversal
+		// do. Like them it counters the whole recorded change and refuses nothing: if part of it was
+		// already applied to another invoice through the credit door, the group nets to that applied
+		// part, a receivable the customer owes back, and the other invoice stays paid to that extent.
+		if changeCents > 0 {
+			arAfter += changeCents
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO customer_transactions
+				   (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
+				 VALUES ($1, 'ADJUSTMENT', $2, $3, 'receipt_change', $4, $5, $6, $7)`,
+				res.CustomerID, changeCents, arAfter, in.PaymentID, nullStr(res.BranchID),
+				"NSF reversal: "+in.Reason, in.At); err != nil {
+				return nsfReverseResult{}, fmt.Errorf("till: insert the change's contra txn: %w", err)
 			}
 		}
 		// Fee ADJUSTMENT row, COUNTED non-invoice AR (the customer now owes the NSF fee).
@@ -1247,6 +1282,7 @@ func (r *Repository) MarkNSF(ctx context.Context, in nsfReverseInput) (nsfRevers
 		"method":           res.Method,
 		"amount_cents":     res.AmountCents,
 		"reversed_cents":   res.ReversedCents,
+		"discount_cents":   invDiscountBack, // TM-2: the early payment discount given back with the money
 		"fee_cents":        in.FeeCents,
 		"fee_taxable":      in.FeeTaxable,
 		"fee_account_code": in.FeeAccountCode,

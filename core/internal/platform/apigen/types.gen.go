@@ -394,6 +394,7 @@ type BillingTotals struct {
 	TaxCents      int64 `json:"tax_cents"`
 	TotalCents    int64 `json:"total_cents"`
 	AppliedCents  int64 `json:"applied_cents"`
+	DiscountCents int64 `json:"discount_cents"`
 	HoldbackCents int64 `json:"holdback_cents"`
 	BalanceCents  int64 `json:"balance_cents"`
 	PayableCents  int64 `json:"payable_cents"`
@@ -776,13 +777,14 @@ type BillingCreditMemoResult struct {
 }
 
 type BillingApplyPaymentInput struct {
-	CustomerId     string   `json:"customer_id"`
-	Method         string   `json:"method"`
-	AmountCents    int64    `json:"amount_cents"`
-	Reference      string   `json:"reference"`
-	InvoiceIds     []string `json:"invoice_ids"`
-	IdempotencyKey string   `json:"idempotency_key"`
-	Preview        *bool    `json:"preview,omitempty"`
+	CustomerId         string   `json:"customer_id"`
+	Method             string   `json:"method"`
+	AmountCents        int64    `json:"amount_cents"`
+	Reference          string   `json:"reference"`
+	InvoiceIds         []string `json:"invoice_ids"`
+	IdempotencyKey     string   `json:"idempotency_key"`
+	Preview            *bool    `json:"preview,omitempty"`
+	LateDiscountReason *string  `json:"late_discount_reason,omitempty"`
 }
 
 type BillingApplyPaymentLine struct {
@@ -792,6 +794,7 @@ type BillingApplyPaymentLine struct {
 	Outcome           string `json:"outcome"`
 	BalanceAfterCents int64  `json:"balance_after_cents"`
 	StaysOpenCents    int64  `json:"stays_open_cents"`
+	DiscountCents     int64  `json:"discount_cents"`
 }
 
 type BillingApplyPaymentAnswer struct {

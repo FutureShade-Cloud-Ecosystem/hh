@@ -33,8 +33,45 @@ package billing
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
+
+// PaymentsDiscountTerms adapts the customer module's terms master onto the payments module's
+// discount seam (TM-2): the percent one terms code carries, read through the customer module's own
+// read so no payments statement names the master's table, and riding the caller's transaction when
+// the application holds one (the same carrier the invoice writer's terms read rides, PR 722's
+// car 18).
+type PaymentsDiscountTerms struct{ terms *customer.Service }
+
+// NewPaymentsDiscountTerms binds the discount's terms read to the customer module's master.
+func NewPaymentsDiscountTerms(terms *customer.Service) PaymentsDiscountTerms {
+	return PaymentsDiscountTerms{terms: terms}
+}
+
+// DiscountTermsByCode answers the terms code's discount rate, read on the caller's transaction
+// when there is one.
+func (p PaymentsDiscountTerms) DiscountTermsByCode(ctx context.Context, tx pgx.Tx, code string) (payments.DiscountTerms, error) {
+	t, err := p.terms.TermsByCode(customer.WithCallerTx(ctx, tx), code)
+	if err != nil {
+		return payments.DiscountTerms{}, err
+	}
+	return payments.DiscountTerms{DiscountBps: t.DiscountBps}, nil
+}
+
+// NewPaymentsRepository builds the payments repository every money door that applies money to an
+// invoice shares: its early payment discount bound to the customer module's terms master and
+// judged in the dealer's own business day zone, read live at each application. A repository built
+// without them applies money at face, exactly as before the discount existed.
+func NewPaymentsRepository(pool *pgxpool.Pool, zone houseday.Source) *payments.Repository {
+	return payments.NewRepository(pool).
+		WithZoneSource(zone).
+		WithDiscountTerms(NewPaymentsDiscountTerms(customer.NewService(customer.NewRepository(pool))))
+}
 
 // PaymentsReceiptWriter adapts *payments.Repository onto the register's money seam.
 type PaymentsReceiptWriter struct{ repo *payments.Repository }
@@ -81,15 +118,16 @@ func (w *PaymentsReceiptWriter) PayableCentsFor(ctx context.Context, invoiceID s
 // the whole of this adapter's job, and the walk's words are the operator's words.
 func (w *PaymentsReceiptWriter) ApplyReceived(ctx context.Context, in ApplyReceivedCommand) (payments.ApplyAnswer, error) {
 	return w.repo.ApplyReceived(ctx, payments.ApplyRequest{
-		CustomerID:     in.CustomerID,
-		Method:         in.Method,
-		Reference:      in.Reference,
-		IdempotencyKey: in.IdempotencyKey,
-		ReceivedBy:     in.ReceivedBy,
-		BranchIDs:      in.BranchIDs,
-		InvoiceIDs:     in.InvoiceIDs,
-		AmountCents:    in.AmountCents,
-		Preview:        in.Preview,
+		CustomerID:       in.CustomerID,
+		Method:           in.Method,
+		Reference:        in.Reference,
+		IdempotencyKey:   in.IdempotencyKey,
+		ReceivedBy:       in.ReceivedBy,
+		BranchIDs:        in.BranchIDs,
+		InvoiceIDs:       in.InvoiceIDs,
+		AmountCents:      in.AmountCents,
+		Preview:          in.Preview,
+		DiscountApproval: in.DiscountApproval,
 	})
 }
 

@@ -18,9 +18,10 @@ import (
 	"testing"
 	"time"
 
+	coreidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,6 +34,8 @@ type applyRouteWorld struct {
 	customerID string
 	otherID    string
 	tag        string
+	// last runs after the world's own rows are gone (a user those rows referenced).
+	last []func(context.Context)
 }
 
 func newApplyRouteWorld(t *testing.T) *applyRouteWorld {
@@ -53,20 +56,35 @@ func newApplyRouteWorld(t *testing.T) *applyRouteWorld {
 	w.customerID = mk("main")
 	w.otherID = mk("other")
 	repo := NewRepository(pool)
+	// The money seam carries the early payment discount's terms read (TM-2), the same binding the
+	// composition root gives the register's door: a route leg that names a discount terms invoice
+	// exercises the real discount, not a seam left unbound.
 	w.svc = NewRegisterService(repo).
-		WithMoney(NewPaymentsReceiptWriter(payments.NewRepository(pool))).
+		WithMoney(NewPaymentsReceiptWriter(NewPaymentsRepository(pool, nil))).
 		WithClock(func() time.Time { return d510Now })
 	w.h = NewRegisterHandler(w.svc, repo, nil)
+	// Every delete fails the leg loudly naming its table (FROM-PRINCIPAL 202), in dependency
+	// order: approval rows before the payments and invoices they name, then the rest, then whatever
+	// a leg registered to run last (a staff user the rows above referenced).
 	t.Cleanup(func() {
 		c := context.Background()
+		del := func(table, q string, args ...any) {
+			if _, err := pool.Exec(c, q, args...); err != nil {
+				t.Errorf("cleanup of %s failed: %v", table, err)
+			}
+		}
 		for _, cid := range []string{w.customerID, w.otherID} {
-			_, _ = pool.Exec(c, `DELETE FROM ar_promises_to_pay WHERE customer_id = $1::uuid`, cid)
-			_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, cid)
-			_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, cid)
-			_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, cid)
-			_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, cid)
-			_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, cid)
-			_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, cid)
+			del("invoice_discount_approvals", `DELETE FROM invoice_discount_approvals WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, cid)
+			del("ar_promises_to_pay", `DELETE FROM ar_promises_to_pay WHERE customer_id = $1::uuid`, cid)
+			del("customer_transactions", `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, cid)
+			del("events_outbox", `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, cid)
+			del("payment_allocations", `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, cid)
+			del("payments", `DELETE FROM payments WHERE customer_id = $1::uuid`, cid)
+			del("invoices", `DELETE FROM invoices WHERE customer_id = $1::uuid`, cid)
+			del("customers", `DELETE FROM customers WHERE id = $1::uuid`, cid)
+		}
+		for _, f := range w.last {
+			f(c)
 		}
 	})
 	return w
@@ -104,7 +122,9 @@ func (w *applyRouteWorld) post(t *testing.T, caller identity.StaffContext, body 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/ar/payments/apply", strings.NewReader(string(raw)))
 	req = req.WithContext(identity.ContextWithStaff(req.Context(), caller))
 	rec := httptest.NewRecorder()
-	w.h.applyReceived(rec, req, guards.StaffCaller{})
+	w.h.applyReceived(rec, req, guards.StaffCaller{
+		StaffAuthority: coreidentity.StaffAuthority{Tier: int(caller.Tier), Scope: string(caller.Scope)},
+	})
 	return rec
 }
 
@@ -494,4 +514,153 @@ func TestApplyRoute_TheReplayJudgementRunsBeforeBodyValidation(t *testing.T) {
 	if !strings.Contains(mrec.Body.String(), "the request body must be JSON") {
 		t.Fatalf("the unreadable body refusal says what happened: %q", mrec.Body.String())
 	}
+}
+
+// lateDiscountWorld is the apply route with the late discount approval wall bound: the holder the
+// composition root binds to the role gate, on a double the leg controls.
+type lateDiscountWorld struct {
+	*applyRouteWorld
+	repo      *Repository
+	approvals *LateDiscountApprovals
+	held      *bool
+}
+
+func newLateDiscountWorld(t *testing.T, held bool) *lateDiscountWorld {
+	t.Helper()
+	w := &lateDiscountWorld{applyRouteWorld: newApplyRouteWorld(t)}
+	w.repo = NewRepository(w.pool)
+	w.approvals = &LateDiscountApprovals{}
+	w.approvals.Bind(lateDiscountFakeSource{w: w})
+	h := held
+	w.held = &h
+	w.h = NewRegisterHandler(w.svc, w.repo, nil).WithLateDiscountApprovals(w.approvals)
+	return w
+}
+
+type lateDiscountFakeSource struct{ w *lateDiscountWorld }
+
+func (f lateDiscountFakeSource) HoldsLateDiscountApproval(ctx context.Context, platformUserID, orgID string) (bool, error) {
+	return *f.w.held, nil
+}
+
+// discountInvoiceOnTerms plants one open invoice on 2/10 net 30 whose window closed yesterday.
+func (w *lateDiscountWorld) discountInvoiceOnTerms(t *testing.T, label string, total int64, daysAgo int) string {
+	t.Helper()
+	today := time.Now().In(houseday.DefaultZone().Location())
+	day := today.AddDate(0, 0, -daysAgo)
+	dayText := day.Format("2006-01-02")
+	var id string
+	if err := w.pool.QueryRow(context.Background(),
+		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
+		                       discount_date, terms_code,
+		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		 VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', $4::date, $5::date, $6::date, '2-10-NET30',
+		         $7, 0, $7, $7, $4, 'INVOICE')
+		 RETURNING id::text`,
+		w.tag+"-"+label, w.customerID, trentonBranch,
+		dayText, day.AddDate(0, 0, 30).Format("2006-01-02"), dayText, total).Scan(&id); err != nil {
+		t.Fatalf("seed discount invoice %s: %v", label, err)
+	}
+	return id
+}
+
+// TestApplyRoute_LateDiscountClerkRefusedManagerApproved is item 2 at the route: an ask the
+// approval wall does not admit is refused in words with nothing applied; the same ask from a
+// caller the wall admits posts the discount with the approval recorded.
+func TestApplyRoute_LateDiscountClerkRefusedManagerApproved(t *testing.T) {
+	// The clerk: the wall answers no, and the walk's refusal is the answer the desk reads.
+	clerk := newLateDiscountWorld(t, false)
+	inv := clerk.discountInvoiceOnTerms(t, "LATE-CLERK", 100000, 1)
+	code, body := decodeApply(t, clerk.post(t, applyGlobalCaller(), map[string]any{
+		"customer_id": clerk.customerID, "method": "cheque", "amount_cents": 98000,
+		"reference": "CHQ 931", "invoice_ids": []string{inv},
+		"idempotency_key": clerk.tag + "-clerk", "late_discount_reason": "customer phoned",
+	}))
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("a clerk's late discount ask is refused in words, got %d body %v", code, body)
+	}
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "window closed") || !strings.Contains(msg, "manager") {
+		t.Fatalf("the refusal names the closed window and asks for a manager, got %q", msg)
+	}
+	if balance, _ := clerkInvoiceState(t, clerk.pool, inv); balance != 100000 {
+		t.Fatalf("the refused ask applied nothing, balance %d", balance)
+	}
+
+	// The manager: the same ask through the same route, the wall admitting the caller, with the
+	// approver a real staff user the approval row names.
+	manager := newLateDiscountWorld(t, true)
+	inv2 := manager.discountInvoiceOnTerms(t, "LATE-MGR", 100000, 1)
+	var approver string
+	if err := manager.pool.QueryRow(context.Background(),
+		`INSERT INTO users (email, display_name, status)
+		 VALUES ($1, 'TM2 Route Approver', 'ACTIVE') RETURNING id::text`,
+		manager.tag+"-approver@example.test").Scan(&approver); err != nil {
+		t.Fatalf("seed the approver: %v", err)
+	}
+	manager.last = append(manager.last, func(c context.Context) {
+		if _, err := manager.pool.Exec(c, `DELETE FROM users WHERE id = $1::uuid`, approver); err != nil {
+			t.Errorf("cleanup of users failed: %v", err)
+		}
+	})
+	caller := applyGlobalCaller()
+	caller.UserID = approver
+	code2, body2 := decodeApply(t, manager.post(t, caller, map[string]any{
+		"customer_id": manager.customerID, "method": "cheque", "amount_cents": 98000,
+		"reference": "CHQ 932", "invoice_ids": []string{inv2},
+		"idempotency_key": manager.tag + "-mgr", "late_discount_reason": "cheque mailed inside the window",
+	}))
+	if code2 != http.StatusOK {
+		t.Fatalf("a manager's approved late discount posts, got %d body %v", code2, body2)
+	}
+	lines, _ := body2["lines"].([]any)
+	if len(lines) != 1 {
+		t.Fatalf("the answer carries one line, got %v", body2["lines"])
+	}
+	line := lines[0].(map[string]any)
+	if line["discount_cents"].(float64) != 2000 || line["outcome"] != "CLOSES" {
+		t.Fatalf("the approved discount closes the line with the discount: %v", line)
+	}
+	var n int
+	if err := manager.pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM invoice_discount_approvals WHERE invoice_id = $1::uuid`, inv2).Scan(&n); err != nil {
+		t.Fatalf("read the approval rows: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("the approval is recorded once, found %d", n)
+	}
+}
+
+// TestApplyRoute_LateDiscountWallNeedsTheManagerTierToo is P3-4: a caller the role gate admits on
+// the money desk's level but who is not a tier 1 or tier 2 manager (a clerk a dealer raised to
+// manage on the money desk) is refused the late discount, exactly as the write off route refuses
+// them. One predicate (guards.HoldsManagerTier) serves both.
+func TestApplyRoute_LateDiscountWallNeedsTheManagerTierToo(t *testing.T) {
+	w := newLateDiscountWorld(t, true) // the role gate's level check says yes
+	inv := w.discountInvoiceOnTerms(t, "LATE-TIER", 100000, 1)
+	front := applyGlobalCaller()
+	front.Tier = identity.TierFrontline
+	code, body := decodeApply(t, w.post(t, front, map[string]any{
+		"customer_id": w.customerID, "method": "cheque", "amount_cents": 98000,
+		"reference": "CHQ 933", "invoice_ids": []string{inv},
+		"idempotency_key": w.tag + "-tier", "late_discount_reason": "customer phoned",
+	}))
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("a front line caller the level check admits is still refused the late discount, got %d body %v", code, body)
+	}
+	if balance, _ := clerkInvoiceState(t, w.pool, inv); balance != 100000 {
+		t.Fatalf("the refused ask applied nothing, balance %d", balance)
+	}
+}
+
+// clerkInvoiceState reads one invoice's balance.
+func clerkInvoiceState(t *testing.T, pool *pgxpool.Pool, invoiceID string) (int64, string) {
+	t.Helper()
+	var balance int64
+	var status string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT balance_cents, status::text FROM invoices WHERE id = $1::uuid`, invoiceID).
+		Scan(&balance, &status); err != nil {
+		t.Fatalf("read invoice: %v", err)
+	}
+	return balance, status
 }
