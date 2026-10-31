@@ -35,6 +35,8 @@ package billing
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/jobs"
@@ -48,6 +50,12 @@ const FinanceChargeJobName = "billing.finance_charge_run"
 // month before it.
 const financeChargeCatchUpDays = 3
 
+// FinanceChargeFailure is one branch the sweep could not press: its id and the error's words.
+type FinanceChargeFailure struct {
+	BranchID string
+	Cause    string
+}
+
 // FinanceChargeSweep is one sweep's answer.
 type FinanceChargeSweep struct {
 	// Month is the house month the sweep pressed (empty when it was skipped).
@@ -57,6 +65,8 @@ type FinanceChargeSweep struct {
 	// Branches is how many branches were pressed; Failed is how many of those failed.
 	Branches int
 	Failed   int
+	// Failures names each failing branch and its cause, in the order the sweep walked them.
+	Failures []FinanceChargeFailure
 	// Charged and ChargedCents are what this sweep charged; AlreadyCharged is what earlier presses had.
 	Charged        int
 	AlreadyCharged int
@@ -97,6 +107,9 @@ func (w *InvoiceWriter) runDueFinanceCharges(ctx context.Context, only []string)
 		res, err := w.RunFinanceCharges(ctx, FinanceChargeRequest{BranchID: b, Month: month})
 		if err != nil {
 			sweep.Failed++
+			sweep.Failures = append(sweep.Failures, FinanceChargeFailure{BranchID: b, Cause: err.Error()})
+			slog.ErrorContext(ctx, "billing: the finance charge sweep failed on a branch",
+				"branch_id", b, "month", month, "error", err)
 			continue
 		}
 		sweep.Charged += res.Charged
@@ -104,7 +117,12 @@ func (w *InvoiceWriter) runDueFinanceCharges(ctx context.Context, only []string)
 		sweep.ChargedCents += res.ChargedCents
 	}
 	if sweep.Failed > 0 {
-		return sweep, fmt.Errorf("billing: the finance charge sweep for %s failed on %d of %d branches", month, sweep.Failed, sweep.Branches)
+		ids := make([]string, 0, len(sweep.Failures))
+		for _, f := range sweep.Failures {
+			ids = append(ids, f.BranchID)
+		}
+		return sweep, fmt.Errorf("billing: the finance charge sweep for %s failed on %d of %d branches (%s), first cause: %s",
+			month, sweep.Failed, sweep.Branches, strings.Join(ids, ", "), sweep.Failures[0].Cause)
 	}
 	return sweep, nil
 }
@@ -114,14 +132,24 @@ func (w *InvoiceWriter) runDueFinanceCharges(ctx context.Context, only []string)
 func FinanceChargeJob(w *InvoiceWriter) jobs.JobFunc {
 	return func(ctx context.Context) (jobs.Result, error) {
 		sweep, err := w.RunDueFinanceCharges(ctx)
-		return jobs.Result{
-			RowsRead:    int64(sweep.Branches),
-			RowsWritten: int64(sweep.Charged),
-			Skipped:     sweep.Skipped,
-			Detail: map[string]any{
-				"month": sweep.Month, "charged": sweep.Charged, "charged_cents": sweep.ChargedCents,
-				"already_charged": sweep.AlreadyCharged, "failed": sweep.Failed,
-			},
-		}, err
+		return financeChargeJobResult(sweep, err)
 	}
+}
+
+// financeChargeJobResult is the sweep's record in the job's run: the counts, and each failing branch
+// with its cause, so an operator knows which branch to press by hand.
+func financeChargeJobResult(sweep FinanceChargeSweep, err error) (jobs.Result, error) {
+	failures := make([]map[string]any, 0, len(sweep.Failures))
+	for _, f := range sweep.Failures {
+		failures = append(failures, map[string]any{"branch_id": f.BranchID, "cause": f.Cause})
+	}
+	return jobs.Result{
+		RowsRead:    int64(sweep.Branches),
+		RowsWritten: int64(sweep.Charged),
+		Skipped:     sweep.Skipped,
+		Detail: map[string]any{
+			"month": sweep.Month, "charged": sweep.Charged, "charged_cents": sweep.ChargedCents,
+			"already_charged": sweep.AlreadyCharged, "failed": sweep.Failed, "failures": failures,
+		},
+	}, err
 }
