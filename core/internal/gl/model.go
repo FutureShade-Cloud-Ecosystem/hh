@@ -183,6 +183,8 @@ type RuleRef struct {
 type ExportRow struct {
 	EntryNo     int
 	PostedAt    string
+	PeriodYear  int
+	PeriodMonth int
 	AccountCode string
 	AccountName string
 	DebitCents  int64

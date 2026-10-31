@@ -2103,7 +2103,7 @@ func (r *Repository) ExportRows(ctx context.Context, year int, months []int, bra
 		return nil, err
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT entry_no, COALESCE(to_char(posted_at AT TIME ZONE $4, 'YYYY-MM-DD'),''), account_code::text, account_name,
+		`SELECT entry_no, COALESCE(to_char(posted_at AT TIME ZONE $4, 'YYYY-MM-DD'),''), period_year, period_month, account_code::text, account_name,
 		        COALESCE(debit_cents,0), COALESCE(credit_cents,0), COALESCE(memo,'')
 		 FROM v_gl_detail
 		 WHERE period_year = $1
@@ -2117,7 +2117,7 @@ func (r *Repository) ExportRows(ctx context.Context, year int, months []int, bra
 	var out []ExportRow
 	for rows.Next() {
 		var e ExportRow
-		if err := rows.Scan(&e.EntryNo, &e.PostedAt, &e.AccountCode, &e.AccountName, &e.DebitCents, &e.CreditCents, &e.Memo); err != nil {
+		if err := rows.Scan(&e.EntryNo, &e.PostedAt, &e.PeriodYear, &e.PeriodMonth, &e.AccountCode, &e.AccountName, &e.DebitCents, &e.CreditCents, &e.Memo); err != nil {
 			return nil, fmt.Errorf("gl: scan export row: %w", err)
 		}
 		out = append(out, e)
