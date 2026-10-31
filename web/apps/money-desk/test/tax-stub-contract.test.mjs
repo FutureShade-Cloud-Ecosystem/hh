@@ -17,7 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SCHEMA_DESCRIPTORS } from "../../../packages/api-client/src/testing.ts";
 import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
-import { IDS, LEGAL_REASONS, RECON, olderMonth, taxMonth } from "./stub/tax-world.mjs";
+import { IDS, LEGAL_REASONS, RECON, WORKSHEET, olderMonth, olderQuarter, taxMonth, taxQuarter } from "./stub/tax-world.mjs";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
@@ -173,6 +173,8 @@ function refused(res, status, fragment) {
 
 const prior = taxMonth();
 const older = olderMonth();
+const priorQ = taxQuarter();
+const olderQ = olderQuarter();
 
 test("the lists answer under a name, as the core writes them, and every row fits the contract", async () => {
   await reset();
@@ -234,17 +236,24 @@ test("the guards: a read is a manager's, a write an administrator's, a capture a
     'r.Handle("POST /api/v1/tax/config", g.RequireAdmin(',
     'r.Handle("POST /api/v1/tax/recompute", g.RequireAdmin(',
     'r.Handle("GET /api/v1/tax/recon", g.RequireManager(',
+    'r.Handle("GET /api/v1/tax/worksheet", g.RequireManager(',
     'r.Handle("POST /api/v1/tax/evidence", g.RequireStaff(',
     'r.Handle("POST /api/v1/tax/evidence/{id}/download", g.RequireManager(',
     'r.Handle("GET /api/v1/tax/review-queue", g.RequireManager(',
   ]) {
     assert.ok(moduleSource.includes(line), `the core's guard moved: ${line}`);
   }
-  // The recon names Point Loma for the manager leg: it is fenced to the caller's branch reach
-  // (FW1-10), and the unnamed figure is a dealer wide caller's read. The certificate book and the
-  // review queue are the dealer's whole book (615 round 2, P2-3): dealer wide reads, refused to a
-  // branch manager in the core's own sentence.
-  const reads = ["/api/v1/tax/rates", "/api/v1/tax/profiles", "/api/v1/tax/config", `/api/v1/tax/recon?year=${prior.year}&branch_id=b0000000-0000-4000-8000-000000000001`];
+  // The recon and worksheet name Point Loma for the manager leg: both are fenced to the caller's
+  // branch reach (FW1-10), and the unnamed figure is a dealer wide caller's read. The certificate
+  // book and the review queue are the dealer's whole book (615 round 2, P2-3): dealer wide reads,
+  // refused to a branch manager in the core's own sentence.
+  const reads = [
+    "/api/v1/tax/rates",
+    "/api/v1/tax/profiles",
+    "/api/v1/tax/config",
+    `/api/v1/tax/recon?year=${prior.year}&branch_id=b0000000-0000-4000-8000-000000000001`,
+    `/api/v1/tax/worksheet?year=${priorQ.year}&quarter=${priorQ.quarter}&branch_id=b0000000-0000-4000-8000-000000000001`,
+  ];
   for (const path of reads) {
     const staff = await call(SALES, "GET", path);
     assert.equal(staff.status, 403, `${path} is not a staff member's`);
@@ -383,16 +392,20 @@ test("the config reads, saves, rounds by one of two modes and refuses the dorman
   const read = await ctl("GET", "/api/v1/tax/config");
   holds("TaxConfig", read.json);
   assert.equal(read.json.round_mode, "INVOICE_TOTAL");
+  assert.equal(read.json.filing_frequency, "QUARTERLY");
   refused(await ctl("POST", "/api/v1/tax/config", { hst_registration_no: "X", round_mode: "WHENEVER" }), 400, "round_mode must be INVOICE_TOTAL or PER_LINE");
+  refused(await ctl("POST", "/api/v1/tax/config", { hst_registration_no: "X", round_mode: "INVOICE_TOTAL", filing_frequency: "WEEKLY" }), 400, "filing_frequency must be QUARTERLY, MONTHLY or YEARLY");
   refused(await ctl("POST", "/api/v1/tax/config", { hst_registration_no: "X", round_mode: "PER_LINE", avalara_enabled: true }), 400, "avalara/postal routing are dormant at W6 and cannot be enabled");
   refused(await ctl("POST", "/api/v1/tax/config", { hst_registration_no: "X", postal_routing_enabled: true }), 400, "avalara/postal routing are dormant at W6 and cannot be enabled");
-  const saved = await ctl("POST", "/api/v1/tax/config", { hst_registration_no: "SR-DEMO-0002", round_mode: "PER_LINE", avalara_enabled: false, postal_routing_enabled: false });
+  const saved = await ctl("POST", "/api/v1/tax/config", { hst_registration_no: "SR-DEMO-0002", round_mode: "PER_LINE", filing_frequency: "MONTHLY", avalara_enabled: false, postal_routing_enabled: false });
   assert.equal(saved.status, 200);
   holds("TaxConfig", saved.json);
   assert.equal((await ctl("GET", "/api/v1/tax/config")).json.round_mode, "PER_LINE");
-  // A blank mode means the invoice total.
+  assert.equal((await ctl("GET", "/api/v1/tax/config")).json.filing_frequency, "MONTHLY");
+  // A blank mode means the invoice total, and an omitted filing_frequency keeps the saved one.
   const blank = await ctl("POST", "/api/v1/tax/config", { hst_registration_no: "SR-DEMO-0002", avalara_enabled: false, postal_routing_enabled: false });
   assert.equal(blank.json.round_mode, "INVOICE_TOTAL");
+  assert.equal(blank.json.filing_frequency, "MONTHLY");
 });
 
 test("a recompute adds rows once and a second run skips them; a date the core cannot read is a server fault", async () => {
@@ -441,4 +454,57 @@ test("the reconciliation needs a year, ties out one month and is off in the othe
   assert.equal(empty.json.opening_balance_count, 0);
   assert.equal(empty.json.opening_balance_hst_cents, 0);
   assert.equal(empty.json.tied_out, true);
+});
+
+test("the GST/HST return worksheet needs a year and period, follows filing_frequency, ties out one period and is off in the other, in the core's fields", async () => {
+  await reset();
+  refused(await ctl("GET", "/api/v1/tax/worksheet"), 400, "year required");
+  refused(await ctl("GET", "/api/v1/tax/worksheet?year=1999&quarter=1"), 400, "year must be 2000..2100");
+  refused(await ctl("GET", `/api/v1/tax/worksheet?year=${priorQ.year}`), 400, "quarter must be 1..4 for QUARTERLY filing");
+  refused(await call(IDS.manager, "GET", `/api/v1/tax/worksheet?year=${priorQ.year}&quarter=${priorQ.quarter}`), 403, "tax: caller cannot access this branch");
+  refused(await call(IDS.manager, "GET", `/api/v1/tax/worksheet?year=${priorQ.year}&quarter=${priorQ.quarter}&branch_id=b0000000-0000-4000-8000-000000000002`), 403, "tax: caller cannot access this branch");
+
+  const tied = await ctl("GET", `/api/v1/tax/worksheet?year=${priorQ.year}&quarter=${priorQ.quarter}`);
+  assert.equal(tied.status, 200);
+  holds("TaxWorksheet", tied.json);
+  tied.json.lines.forEach((l) => holds("TaxWorksheetLine", l));
+  assert.equal(tied.json.filing_frequency, "QUARTERLY");
+  assert.equal(tied.json.quarter, priorQ.quarter);
+  assert.deepEqual(
+    tied.json.lines.map((l) => l.line_no),
+    ["101", "103", "104", "105", "106", "107", "108", "109", "110", "111", "112", "113", "114", "115"],
+  );
+  assert.deepEqual(
+    tied.json.lines.filter((l) => l.entered_by_hand).map((l) => l.line_no),
+    ["104", "107", "110", "111"],
+  );
+  const byLine = Object.fromEntries(tied.json.lines.map((l) => [l.line_no, l.amount_cents]));
+  assert.equal(byLine["101"], WORKSHEET.tiedSalesCents);
+  assert.equal(byLine["103"], RECON.tiedCollectedCents - RECON.tiedReturnsCents);
+  assert.equal(byLine["106"], RECON.tiedITCsCents);
+  assert.equal(byLine["109"], RECON.tiedCollectedCents - RECON.tiedReturnsCents - RECON.tiedITCsCents);
+  assert.equal(tied.json.variance_cents, 0);
+  assert.equal(tied.json.tied_out, true);
+  assert.ok(coreSource.includes(tied.json.manual_entry_note), "manual_entry_note must match core");
+
+  const off = await ctl("GET", `/api/v1/tax/worksheet?year=${olderQ.year}&quarter=${olderQ.quarter}`);
+  assert.equal(off.status, 200);
+  holds("TaxWorksheet", off.json);
+  assert.equal(off.json.variance_cents, RECON.olderLedgerCents - (RECON.olderCollectedCents - RECON.olderReturnsCents - RECON.olderITCsCents));
+  assert.equal(off.json.tied_out, false);
+  assert.ok(coreSource.includes("variance := gl2200 - (line105 - line108)"), "core worksheet variance formula moved");
+
+  await ctl("POST", "/api/v1/tax/config", { hst_registration_no: "SR-DEMO-0001", round_mode: "INVOICE_TOTAL", filing_frequency: "MONTHLY" });
+  refused(await ctl("GET", `/api/v1/tax/worksheet?year=${prior.year}`), 400, "month must be 1..12 for MONTHLY filing");
+  const monthly = await ctl("GET", `/api/v1/tax/worksheet?year=${prior.year}&month=${prior.month}`);
+  assert.equal(monthly.status, 200);
+  holds("TaxWorksheet", monthly.json);
+  assert.equal(monthly.json.filing_frequency, "MONTHLY");
+  assert.equal(monthly.json.month, prior.month);
+
+  await ctl("POST", "/api/v1/tax/config", { hst_registration_no: "SR-DEMO-0001", round_mode: "INVOICE_TOTAL", filing_frequency: "YEARLY" });
+  const yearly = await ctl("GET", `/api/v1/tax/worksheet?year=${prior.year}`);
+  assert.equal(yearly.status, 200);
+  holds("TaxWorksheet", yearly.json);
+  assert.equal(yearly.json.filing_frequency, "YEARLY");
 });

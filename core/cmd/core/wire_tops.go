@@ -161,6 +161,9 @@ type topsSpine struct {
 	// read the engine's own reconcile (the finance box's read only check) runs the
 	// engine this box serves and not a second copy of it.
 	taxSvc *tax.Service
+	// reportingSvc is held so the composition root can bind the role gate onto
+	// RunDataset after the tops modules are constructed.
+	reportingSvc *reporting.Service
 }
 
 // feedbackActorNames resolves a linked ERP user id to the display name and
@@ -486,7 +489,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// The AR console (DIB-65/52/166/170): credit and statement services,
 	// the month-end handler, the counter's aging reader, the AR landing
 	// half.
-	w3bCreditSvc := billing.NewCreditService(billingRepo).WithAudit(auditSvc)
+	w3bCreditSvc := billing.NewCreditService(billingRepo).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	w3bStatementSvc := billing.NewStatementService(billingRepo).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	monthEndHandler := billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
 		WithZone(newDealerZone(pool)).
@@ -736,11 +739,26 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	quoteAssistSvc.WithAI(quoteRails)
 	quoteassist.NewHandler(quoteAssistSvc).WithUserLinker(link).RegisterRoutes(r, g)
 
-	// SWARM-W6-B: reporting and commissions.
+	// SWARM-W6-B: reporting and commissions. W3-RW1 binds the five curated data set sources beside
+	// the same service: each set reads its owning module's own fenced read (w3rw1_dataset_sources.go),
+	// and the one adapter value satisfies all five consumer-declared interfaces.
+	dsSources := w3rw1DatasetSources{
+		credit:   w3bCreditSvc,
+		invoices: billingRepo,
+		ap:       ops.purchasingSvc,
+		gl:       spine.glSvc,
+		stock:    inventorySvc,
+	}
 	reportingSvc := reporting.NewService(reporting.NewRepository(pool)).
 		WithLogger(log).
 		WithAudit(auditSvc).
-		WithRepAssignments(w6bRepAssignmentReader{svc: ops.messagingSvc})
+		WithRoleConfig(roleCfg).
+		WithRepAssignments(w6bRepAssignmentReader{svc: ops.messagingSvc}).
+		WithDatasetARSource(dsSources).
+		WithDatasetAPSource(dsSources).
+		WithDatasetGLSource(dsSources).
+		WithDatasetSalesSource(dsSources).
+		WithDatasetStockSource(dsSources)
 	reporting.NewHandler(reportingSvc).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// DIB-478: the assist deep readers over every landed service.
@@ -895,6 +913,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		posSvc:        posSvc,
 		assistSvc:     assistSvc,
 		taxSvc:        taxSvc,
+		reportingSvc:  reportingSvc,
 	}
 }
 

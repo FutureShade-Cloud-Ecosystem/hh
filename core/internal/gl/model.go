@@ -189,6 +189,32 @@ type ExportRow struct {
 	Memo        string
 }
 
+// The accounting package export's targets (W3 AX-1, decision 1.6): QuickBooks Online first, Sage 50
+// next. The words are the 0454 CHECK vocabulary verbatim; a third package is one more word there,
+// by a later forward migration.
+const (
+	TargetQuickBooksOnline = "QUICKBOOKS_ONLINE"
+	TargetSage50           = "SAGE_50"
+)
+
+// AccountMapping is one HH GL account's row in a target package's books: the target package's
+// account code the HH account exports under, with the HH account's own name beside it (W3 AX-1).
+// ID is the row's own uuid; it stays off the wire and rides only the set's audit trail.
+type AccountMapping struct {
+	ID             string `json:"-"`
+	Target         string `json:"target"`
+	AccountCode    string `json:"account_code"`
+	AccountName    string `json:"account_name"`
+	PackageAccount string `json:"package_account"`
+}
+
+// UnmappedAccount is one HH GL account that moved in an export period and has no mapping for the
+// target asked: the export refuses and names these, in words.
+type UnmappedAccount struct {
+	AccountCode string
+	AccountName string
+}
+
 // - inputs -
 
 // CreateJournalInput builds a manual DRAFT journal.
@@ -340,6 +366,10 @@ var (
 	errNotControllerCloseYear = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may close the fiscal year"}
 	errNotControllerQueue     = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may read the posting queue"}
 	errQueueNotWired          = clientError{status: http.StatusServiceUnavailable, msg: "gl: the posting queue is not wired"}
+	// errNotControllerMapping is the export account mapping's own word (W3 AX-1): the mapping decides
+	// what the books say in another package's name, so its set is the Controller's act and speaks for
+	// itself, never through the reopen's or the head office set's words.
+	errNotControllerMapping = clientError{status: http.StatusForbidden, msg: "gl: only the Financial Controller may set the export account mapping"}
 	// errForbidden is DIB-392's horizontal-read boundary: a manager asking for a branch's (or the whole
 	// org's) ledger that their scope does not reach.
 	errForbidden      = clientError{status: http.StatusForbidden, msg: "gl: caller cannot access this branch"}

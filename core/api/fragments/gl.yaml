@@ -726,11 +726,14 @@ paths:
     post:
       operationId: glExport
       tags: [staff-gl]
-      summary: Run the GP-parity export for a fiscal period
+      summary: Run the export for a period, the parity draft or one target package
       description: >-
-        Produces the parity batch for the period. The shipped export is a
-        parity draft (extract artifacts pending cutover confirmation), which
-        is_draft carries on the result.
+        Produces the export batch for the period. With no target the export is
+        the parity draft (extract artifacts pending cutover confirmation), which
+        is_draft carries on the result. With a target it is the accounting
+        package export for that package: every account with movement in the
+        period must be mapped for the target, and one unmapped account refuses
+        the export in words naming it.
       x-role: requireAdmin
       x-access:
         surfaces: [money-desk]
@@ -750,6 +753,71 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GlExportResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- gl: the accounting package export's account mapping (W3 AX-1) ----------
+  /api/v1/gl/export-mapping:
+    get:
+      operationId: glListAccountMapping
+      tags: [staff-gl]
+      summary: List the export account mapping, one target or every target
+      description: >-
+        The rows that point HH GL accounts at a target package's account codes
+        (QuickBooks Online first, Sage 50 next). With no target query parameter
+        the answer is every target's rows, ordered by target then account code.
+        A manager read: the desk must see what the books export under.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: target
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [QUICKBOOKS_ONLINE, SAGE_50]
+          description: Absent or empty means every target
+      responses:
+        "200":
+          description: The mapping rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlAccountMappingPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: glSetAccountMapping
+      tags: [staff-gl]
+      summary: Point one HH account at a target package's account code
+      description: >-
+        The Financial Controller's act: the service refuses any other role in
+        words, and the set is audited. The row upserts on (target, account_code),
+        so re-setting an account moves its mapping and never grows a second row.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GlAccountMappingSet"
+      responses:
+        "200":
+          description: The mapping row as set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlAccountMapping"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1910,10 +1978,34 @@ components:
         notes: { type: string }
     GlExportBody:
       type: object
+      description: >-
+        The period pick is counted on the dealer's house days (the fiscal
+        periods the ledger files by): a month is itself, a quarter is its three
+        consecutive months starting in January, and neither is the whole year.
+        A month and a quarter together are refused.
       required: [year, month, branch_id]
       properties:
         year: { type: integer, format: int32 }
-        month: { type: integer, format: int32, minimum: 1, maximum: 12 }
+        month:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 12
+          description: >-
+            0 with no quarter is the whole year, the desk's Whole year pick;
+            1 to 12 is one month
+        quarter:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 4
+          description: Narrows the pick to the quarter's three months
+        target:
+          type: string
+          enum: [QUICKBOOKS_ONLINE, SAGE_50]
+          description: >-
+            Absent is the GP-parity draft. A named target is the accounting
+            package export, and demands a full mapping for the period
         branch_id:
           type: string
           format: uuid
@@ -1929,6 +2021,38 @@ components:
           type: boolean
           description: True while the export ships as a parity draft pending cutover confirmation
         content: { type: string }
+
+    # --- gl: the accounting package export's account mapping (W3 AX-1) --------
+    GlAccountMapping:
+      type: object
+      description: One HH GL account's row in a target package's books
+      required: [target, account_code, account_name, package_account]
+      properties:
+        target:
+          type: string
+          enum: [QUICKBOOKS_ONLINE, SAGE_50]
+        account_code: { type: string }
+        account_name: { type: string }
+        package_account: { type: string }
+    GlAccountMappingPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GlAccountMapping" }
+        next_cursor: { type: [string, "null"] }
+        limit: { type: integer, format: int32 }
+    GlAccountMappingSet:
+      type: object
+      description: The set body; only the Financial Controller's caller is accepted
+      required: [target, account_code, package_account]
+      properties:
+        target:
+          type: string
+          enum: [QUICKBOOKS_ONLINE, SAGE_50]
+        account_code: { type: string }
+        package_account: { type: string }
 
     # --- finstmt ---------------------------------------------------------------
     FinStmtStatementRow:

@@ -288,6 +288,83 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  # --- reporting: curated data sets (W3-RW1): catalog staff, read manager -------------------
+  /api/v1/reporting/datasets:
+    get:
+      operationId: reportingListDatasets
+      tags: [staff-reporting]
+      summary: List the curated data sets with their column catalogs
+      description: >-
+        The five sets the report writer reads (accounts receivable aging,
+        accounts payable aging, general ledger journal lines, invoice lines,
+        stock on hand with value), each read through its owning module's own
+        seam, with the columns a read may name and what each column can
+        filter, group or sum. The catalog is the whole contract: a read is
+        refused in words for any column or operator outside it, and there is
+        no free query.
+      x-role: requireStaff
+      x-access:
+        surfaces: [manager-home]
+        level: read
+      x-addition: "W3-RW1 the report writer's curated data sets; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The data sets with their column catalogs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingDatasetCatalog"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/reporting/datasets/{set}/read:
+    post:
+      operationId: reportingReadDataset
+      tags: [staff-reporting]
+      summary: Run one curated data set read
+      description: >-
+        The body names the columns (from the set's catalog), optional filters
+        (a catalog column, an operator its kind carries, the values), an
+        optional group by over requested groupable columns, and, for the sets
+        that answer as of a day, as_of. The gl set reads one fiscal year at a
+        time (filter fiscal_year eq, optionally fiscal_month); the sales set
+        reads a window of issue dates (filters invoice_date ge and le). An
+        unknown column or operator is refused with 400 in words; a branch
+        outside the caller's reach with 403. Rows are positional and align
+        with columns by index; totals sum every requested summable column.
+        Nothing is persisted.
+      x-role: requireManager
+      x-access:
+        surfaces: [manager-home]
+        level: read
+        reason: runs a data set read and returns the grid
+      x-addition: "W3-RW1 the report writer's curated data sets; no ERP source route"
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: set
+          in: path
+          required: true
+          description: The data set code
+          schema: { type: string, enum: [ar, ap, gl, sales, stock] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportingDatasetQuery"
+      responses:
+        "200":
+          description: The executed read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingDatasetResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   # --- reporting: commission rules (reads manager, writes admin) ------------
   /api/v1/reporting/commission/rules:
     get:
@@ -1132,6 +1209,113 @@ components:
           items: { $ref: "#/components/schemas/ReportingSavedView" }
         next_cursor: { type: [string, "null"] }
         limit: { type: integer, format: int32 }
+    ReportingDatasetColumn:
+      type: object
+      description: >-
+        One entry of a set's column catalog. kind decides how a value is read,
+        compared and rendered; filter, group and sum mark what a read may do
+        with the column.
+      required: [name, label, kind, filter, group, sum]
+      properties:
+        name: { type: string }
+        label: { type: string }
+        kind:
+          type: string
+          enum: [text, int, cents, qty, date, bool]
+        filter: { type: boolean }
+        group: { type: boolean }
+        sum: { type: boolean }
+    ReportingDataset:
+      type: object
+      description: >-
+        One curated set: what it holds and the columns a read may name. as_of
+        marks a set that answers as of a house day (the two agings).
+      required: [set, label, description, as_of, columns]
+      properties:
+        set:
+          type: string
+          enum: [ar, ap, gl, sales, stock]
+        label: { type: string }
+        description: { type: string }
+        as_of: { type: boolean }
+        columns:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingDatasetColumn" }
+    ReportingDatasetCatalog:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingDataset" }
+    ReportingDatasetFilter:
+      type: object
+      description: >-
+        One filter: a catalog column, an operator the column's kind carries
+        (a text column carries eq, ne, in; an int, cents, qty or date column
+        carries eq, ne, gt, ge, lt, le, in; a bool column carries eq), and
+        the values to compare. Money and counts are whole numbers; dates are
+        YYYY-MM-DD.
+      required: [column, op, values]
+      properties:
+        column: { type: string }
+        op:
+          type: string
+          enum: [eq, ne, gt, ge, lt, le, in]
+        values:
+          type: array
+          description: >-
+            The values to compare: text and dates as strings, money and
+            counts as whole numbers, bools as true or false. A value that is
+            not the column's kind is refused in words.
+          items: true
+    ReportingDatasetQuery:
+      type: object
+      description: >-
+        One read. columns must name the set's catalog columns; group_by must
+        name requested columns the catalog marks groupable, and a grouped
+        read cannot carry a column that is neither in the group by nor
+        summable. as_of (the ar and ap sets) is a day, YYYY-MM-DD.
+      required: [columns]
+      properties:
+        columns:
+          type: array
+          items: { type: string }
+        filters:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingDatasetFilter" }
+        group_by:
+          type: array
+          items: { type: string }
+        as_of:
+          type: string
+          format: date
+    ReportingDatasetResult:
+      type: object
+      description: >-
+        One executed read. rows are positional and align with columns by
+        index; totals sum every requested summable column over the returned
+        rows, so a grouped read's totals are the sums of its groups. query
+        echoes what was applied. Nothing is persisted.
+      required: [set, label, columns, rows, row_count, totals, query, run_at]
+      properties:
+        set: { type: string }
+        label: { type: string }
+        columns:
+          type: array
+          items: { $ref: "#/components/schemas/ReportingDatasetColumn" }
+        rows:
+          type: array
+          items:
+            type: array
+            items: true
+        row_count: { type: integer, format: int32 }
+        totals:
+          type: object
+          additionalProperties: true
+        query:
+          $ref: "#/components/schemas/ReportingDatasetQuery"
+        run_at: { type: string, format: date-time }
     ReportingCommissionRule:
       type: object
       description: >-
