@@ -27,8 +27,16 @@
 -- instruction in that note is unchanged and is what the release does: one RELEASE row per invoice and the
 -- column lowered in the same call, so the readers of the column and the readers of the function agree.
 
+-- RT-3 FIX ROUND, THE CONSERVATIVE DUE DAY (awaiting counsel's confirmation). The Act counts the period from
+-- the PUBLICATION of the certificate of substantial performance (csp_published_on), which follows the date of
+-- substantial performance, and for a supplier in some cases from the last supply. The period therefore ends
+-- at the LATEST of the dates the job carries that can start it (publication, substantial performance, last
+-- supply) plus preserve_days, so a release is never early. lien.preservationStart is the one place the rule
+-- lives. A job with none of the three dates has no start and is refused.
+--
 -- 1. A preserved lien blocks the release. Recorded on the lien job (lien owns the table).
 ALTER TABLE lien_jobs
+  ADD COLUMN csp_published_on    DATE,
   ADD COLUMN lien_preserved_on   DATE,
   ADD COLUMN lien_preserved_note TEXT NOT NULL DEFAULT '',
   ADD COLUMN lien_discharged_on  DATE;

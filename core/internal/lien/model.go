@@ -17,6 +17,10 @@ type Job struct {
 	HoldbackPctBps      int    `json:"holdback_pct_bps"`
 	SubstantialPerfDate string `json:"substantial_perf_date,omitempty"`
 	LastSupplyDate      string `json:"last_supply_date,omitempty"`
+	CSPPublishedOn      string `json:"csp_published_on,omitempty"` // the certificate of substantial performance's publication date, when known (RT-3 fix)
+	LienPreservedOn     string `json:"lien_preserved_on,omitempty"`
+	LienPreservedNote   string `json:"lien_preserved_note,omitempty"`
+	LienDischargedOn    string `json:"lien_discharged_on,omitempty"`
 	Status              string `json:"status"`
 	Direction           string `json:"holdback_direction"` // RECEIVABLE | PAYABLE (from metadata)
 	HSTOnHoldback       bool   `json:"hst_on_holdback"`    // config flag (from metadata)
@@ -33,6 +37,7 @@ type JobInput struct {
 	HoldbackPctBps      int    `json:"holdback_pct_bps"`
 	SubstantialPerfDate string `json:"substantial_perf_date"`
 	LastSupplyDate      string `json:"last_supply_date"`
+	CSPPublishedOn      string `json:"csp_published_on"` // optional
 	Direction           string `json:"holdback_direction"`
 	HSTOnHoldback       bool   `json:"hst_on_holdback"`
 }

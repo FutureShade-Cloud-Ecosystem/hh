@@ -29,6 +29,7 @@ import (
 
 // Basis names the date a preservation period counts from.
 const (
+	BasisPublication            = "CSP_PUBLICATION"
 	BasisSubstantialPerformance = "SUBSTANTIAL_PERFORMANCE"
 	BasisCompletion             = "COMPLETION"
 	BasisNone                   = "NONE"
@@ -68,12 +69,7 @@ func (s *Service) PreservationFor(ctx context.Context, customerJobID string) (Pr
 		LienJobID: jobID, LienJobNo: f.jobNo, BranchID: f.branchID, Basis: BasisNone, PreserveDays: rule.PreserveDays,
 		LienPreserved: f.preservedOn != nil && f.dischargedOn == nil, LienPreservedOn: dateStr(f.preservedOn),
 	}
-	switch {
-	case f.perf != nil:
-		p.Basis, p.BasisDate = BasisSubstantialPerformance, dateStr(f.perf)
-	case f.lastSupply != nil:
-		p.Basis, p.BasisDate = BasisCompletion, dateStr(f.lastSupply)
-	}
+	p.Basis, p.BasisDate = preservationStart(f.cspPublished, f.perf, f.lastSupply)
 	if p.BasisDate != "" {
 		base, err := time.Parse("2006-01-02", p.BasisDate)
 		if err != nil {
@@ -87,8 +83,8 @@ func (s *Service) PreservationFor(ctx context.Context, customerJobID string) (Pr
 }
 
 type preservationFacts struct {
-	jobNo, branchID                             string
-	perf, lastSupply, preservedOn, dischargedOn *time.Time
+	jobNo, branchID                                           string
+	cspPublished, perf, lastSupply, preservedOn, dischargedOn *time.Time
 }
 
 func (r *Repository) preservationFacts(ctx context.Context, jobID string) (preservationFacts, error) {
@@ -98,13 +94,37 @@ func (r *Repository) preservationFacts(ctx context.Context, jobID string) (prese
 	}
 	var f preservationFacts
 	err = q.QueryRow(ctx, `
-		SELECT job_no::text, branch_id::text, substantial_perf_date, last_supply_date, lien_preserved_on, lien_discharged_on
+		SELECT job_no::text, branch_id::text, csp_published_on, substantial_perf_date, last_supply_date, lien_preserved_on, lien_discharged_on
 		  FROM lien_jobs WHERE id = $1::uuid`, jobID).
-		Scan(&f.jobNo, &f.branchID, &f.perf, &f.lastSupply, &f.preservedOn, &f.dischargedOn)
+		Scan(&f.jobNo, &f.branchID, &f.cspPublished, &f.perf, &f.lastSupply, &f.preservedOn, &f.dischargedOn)
 	if err != nil {
 		return preservationFacts{}, fmt.Errorf("lien: read the job's preservation facts: %w", err)
 	}
 	return f, nil
+}
+
+// preservationStart is THE RULE for the date a job's preservation period counts from: the LATEST of the dates
+// the job carries that can start it, the publication of the certificate of substantial performance, the date
+// of substantial performance, and the last supply. A later start means a later end, so a release is never
+// early. The Act's reading differs by claimant (the period runs from publication for some, from the earlier
+// of publication and last supply for a supplier); this is the conservative union of them and AWAITS
+// COUNSEL'S CONFIRMATION. If counsel names a different rule, it changes here and nowhere else.
+// Basis names the date that won ("" date and BasisNone when the job carries none).
+func preservationStart(published, performance, lastSupply *time.Time) (basis, date string) {
+	var best *time.Time
+	pick := func(t *time.Time, name string) {
+		// Ties keep the earlier-listed basis: publication, then performance, then last supply.
+		if t != nil && (best == nil || t.After(*best)) {
+			best, basis = t, name
+		}
+	}
+	pick(published, BasisPublication)
+	pick(performance, BasisSubstantialPerformance)
+	pick(lastSupply, BasisCompletion)
+	if best == nil {
+		return BasisNone, ""
+	}
+	return basis, dateStr(best)
 }
 
 // ReleaseBooking is one invoice's release the caller asks the ledger to hold.

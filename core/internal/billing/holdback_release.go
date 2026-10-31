@@ -79,11 +79,14 @@ func holdbackDue(p lien.Preservation, linked bool, today string) (kind, msg stri
 			p.LienJobNo, p.LienPreservedOn)
 	case p.BasisDate == "":
 		return RefusedNoDate, fmt.Sprintf(
-			"lien job %s has neither a substantial performance date nor a last supply date, so the preservation period has no start", p.LienJobNo)
+			"lien job %s has no date to start the preservation period from (the publication of the certificate of substantial performance, the date of substantial performance or the last supply), so the holdback cannot be released", p.LienJobNo)
 	case today <= p.LastDayToPreserve:
 		basis := "substantial performance"
-		if p.Basis == lien.BasisCompletion {
-			basis = "completion of supply"
+		switch p.Basis {
+		case lien.BasisCompletion:
+			basis = "last supply"
+		case lien.BasisPublication:
+			basis = "publication of the certificate of substantial performance"
 		}
 		return RefusedNotDue, fmt.Sprintf(
 			"the holdback is not due: lien job %s counts %d days from %s (%s), so a lien can be preserved through %s and the holdback is releasable from %s",
