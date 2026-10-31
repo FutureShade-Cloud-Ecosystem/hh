@@ -394,6 +394,7 @@ type BillingTotals struct {
 	TaxCents      int64 `json:"tax_cents"`
 	TotalCents    int64 `json:"total_cents"`
 	AppliedCents  int64 `json:"applied_cents"`
+	DiscountCents int64 `json:"discount_cents"`
 	HoldbackCents int64 `json:"holdback_cents"`
 	BalanceCents  int64 `json:"balance_cents"`
 	PayableCents  int64 `json:"payable_cents"`

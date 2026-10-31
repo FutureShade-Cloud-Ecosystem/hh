@@ -356,6 +356,11 @@ type Totals struct {
 	TaxCents      int64 `json:"tax_cents"`
 	TotalCents    int64 `json:"total_cents"`
 	AppliedCents  int64 `json:"applied_cents"`
+	// DiscountCents is the early payment discount the document's live applications took (TM-2):
+	// total less applied less discount is the balance (less credits), so a discounted invoice
+	// reads total 100000, applied 98000, discount 2000, balance 0 and the figures explain
+	// themselves.
+	DiscountCents int64 `json:"discount_cents"`
 	HoldbackCents int64 `json:"holdback_cents"`
 	BalanceCents  int64 `json:"balance_cents"`
 	PayableCents  int64 `json:"payable_cents"`

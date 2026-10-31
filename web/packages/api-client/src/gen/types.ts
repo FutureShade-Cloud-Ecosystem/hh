@@ -329,6 +329,7 @@ export type BillingTotals = {
   tax_cents: number;
   total_cents: number;
   applied_cents: number;
+  discount_cents: number;
   holdback_cents: number;
   balance_cents: number;
   payable_cents: number;

@@ -401,6 +401,16 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 	if err != nil {
 		return InvoiceDetail{}, err
 	}
+	// The early payment discount (TM-2) is read beside the applied figure when the store can say
+	// it (the repository does); a store that cannot leaves it zero.
+	var discount int64
+	if dr, ok := s.store.(interface {
+		DiscountCents(ctx context.Context, invoiceID string) (int64, error)
+	}); ok {
+		if discount, err = dr.DiscountCents(ctx, invoiceID); err != nil {
+			return InvoiceDetail{}, err
+		}
+	}
 	// Re-application writes no allocation, so the payments module's own read adds the slices of a reversed payment's
 	// held money applied to this invoice: the Applied figure and the timeline both carry them (SF-2r).
 	var slices []ReappliedSlice
@@ -496,7 +506,7 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 	}
 	d.Totals = Totals{
 		SubtotalCents: h.SubtotalCents, TaxCents: h.TaxCents, TotalCents: h.TotalCents,
-		AppliedCents: applied, HoldbackCents: h.HoldbackCents, BalanceCents: h.BalanceCents,
+		AppliedCents: applied, DiscountCents: discount, HoldbackCents: h.HoldbackCents, BalanceCents: h.BalanceCents,
 		PayableCents: payable,
 	}
 

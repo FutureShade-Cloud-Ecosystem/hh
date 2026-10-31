@@ -1144,6 +1144,7 @@ function detail(inv) {
       tax_cents: 0,
       total_cents: inv.total_cents,
       applied_cents: inv.total_cents - inv.balance_cents,
+      discount_cents: 0,
       holdback_cents: inv.holdback_cents,
       balance_cents: inv.balance_cents,
       payable_cents: Math.max(inv.balance_cents - inv.holdback_cents, 0),

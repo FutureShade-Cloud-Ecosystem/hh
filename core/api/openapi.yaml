@@ -31836,12 +31836,13 @@ components:
           format: int64
     BillingTotals:
       type: object
-      description: The detail's totals card. applied_cents is the stored aggregate of payment allocations, not total minus balance; payable_cents is balance minus the retained holdback, floored at zero.
+      description: The detail's totals card. applied_cents is the stored aggregate of payment allocations, not total minus balance; payable_cents is balance minus the retained holdback, floored at zero. discount_cents is the early payment discount the document's live applications took, so total, applied, discount and balance add up on a discounted invoice.
       required:
         - subtotal_cents
         - tax_cents
         - total_cents
         - applied_cents
+        - discount_cents
         - holdback_cents
         - balance_cents
         - payable_cents
@@ -31856,6 +31857,9 @@ components:
           type: integer
           format: int64
         applied_cents:
+          type: integer
+          format: int64
+        discount_cents:
           type: integer
           format: int64
         holdback_cents:
