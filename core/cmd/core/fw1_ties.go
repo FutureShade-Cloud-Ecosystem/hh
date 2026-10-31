@@ -289,6 +289,42 @@ func TieHoldbackLedgerToGL1150(ctx context.Context, seams TieSeams, m TieMonth) 
 		detail = fmt.Sprintf("holdback ledger %s does not tie to GL 1150 %s: the ledger is %s %s",
 			fw1Dollars(ledger), fw1Dollars(gl1150), shorter(ledger, gl1150), byDollars(variance))
 	}
+	// Branch by branch too: the ledger carries the branch of every row, and so does GL 1150, so one
+	// branch's variance cannot hide behind another's. The first branch off is named.
+	if variance == 0 {
+		perBranch := map[string]int64{}
+		for _, e := range entries {
+			if e.CreatedAt.After(m.MonthEnd) {
+				continue
+			}
+			switch e.EntryType {
+			case "RETENTION":
+				perBranch[e.BranchID] += e.AmountCents
+			case "RELEASE":
+				perBranch[e.BranchID] -= e.AmountCents
+			}
+		}
+		ids := append([]string(nil), seams.Branches...)
+		for b := range perBranch {
+			ids = append(ids, b)
+		}
+		sort.Strings(ids)
+		for i, b := range ids {
+			if b == "" || (i > 0 && ids[i-1] == b) {
+				continue
+			}
+			bal, _, err := seams.GLStore.AccountBalanceAsOf(ctx, "1150", m.MonthEnd, b)
+			if err != nil {
+				return TieResult{}, fmt.Errorf("the GL 1150 read for branch %s: %w", b, err)
+			}
+			if v := perBranch[b] - bal; v != 0 {
+				variance = v
+				detail = fmt.Sprintf("holdback ledger %s does not tie to GL 1150 %s for branch %s: the ledger is %s %s",
+					fw1Dollars(perBranch[b]), fw1Dollars(bal), b, shorter(perBranch[b], bal), byDollars(v))
+				break
+			}
+		}
+	}
 	return TieResult{Name: TieNameHoldback, Pass: variance == 0, Applicable: true, VarianceCents: variance, Detail: detail}, nil
 }
 

@@ -381,3 +381,30 @@ func TestRT2Fix_StatementsAndTheRunningBalanceShowTheNetWithHoldbackOnItsOwnLine
 	eq(t, "the open balance after the credit", age.OpenCents, int64(45_000))
 	eq(t, "the holdback after the credit", age.HoldbackCents, int64(5_000))
 }
+
+// P3-4: the 1150 tie also runs per branch: a branch's variance cannot hide behind another's.
+func TestRT2Fix_TheHoldbackTieRunsPerBranch(t *testing.T) {
+	l := rt2Setup(t, "tiebr")
+	l.newJob(true)
+	l.invoice(100_000, 0)
+	var other string
+	if err := l.pool.QueryRow(context.Background(), `SELECT id::text FROM locations WHERE loc_type = 'BRANCH' AND id <> $1::uuid ORDER BY id LIMIT 1`, l.branch).Scan(&other); err != nil {
+		t.Fatalf("a second branch: %v", err)
+	}
+	seams := l.seams()
+	seams.Branches = []string{l.branch, other}
+	m := TieMonth{MonthEnd: time.Now().Add(24 * time.Hour)}
+	res, err := TieHoldbackLedgerToGL1150(context.Background(), seams, m)
+	if err != nil || !res.Pass {
+		t.Fatalf("the books tie per branch as written: %+v %v", res, err)
+	}
+	// The ledger's row filed under the other branch: the company wide totals still agree.
+	mustExec(t, context.Background(), l.pool, `UPDATE holdback_ledger SET branch_id = $1::uuid`, other)
+	res, err = TieHoldbackLedgerToGL1150(context.Background(), seams, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Pass || res.VarianceCents == 0 {
+		t.Errorf("a branch variance hid behind another's: %+v", res)
+	}
+}
