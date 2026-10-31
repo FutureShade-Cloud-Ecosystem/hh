@@ -597,3 +597,38 @@ test("pricing audit change deltas format is_active booleans, starts_at/ends_at t
   assert.equal(deltaWords("2026-08-31T23:59:59Z", "2026-09-30T23:59:59Z", "ends_at"), "Aug 31 to Sep 30");
   assert.equal(deltaWords("SF", "PLT", "price_uom"), "square foot (SF) to pallet (PLT)");
 });
+
+// -- UX-125: the floor check's shorthand values, worded for a dealer -----------------------------------
+
+import { floorValueWords, floorDeltaWords } from "../src/pricing-logic.ts";
+
+test("UX-125: the rule shape reads as a rule price and its discount", () => {
+  assert.equal(floorValueWords("rule 745 at 12%"), "Rule price $7.45, 12% off");
+  assert.equal(floorValueWords("rule 745 at 0%"), "Rule price $7.45, 0% off");
+});
+
+test("UX-125: the net shape reads as net, margin and floor", () => {
+  assert.equal(floorValueWords("net 655 margin 1189 floor 2000"), "Net $6.55, margin 11.89%, floor 20.00%");
+});
+
+test("UX-125: the counter and rung shapes read plainly, the clerk resolved through the staff lookup", () => {
+  assert.equal(floorValueWords("counter 1000 at 500 bps"), "Counter price $10.00, 5.00% off");
+  assert.equal(floorValueWords("counter 1000"), "Counter price $10.00");
+  assert.equal(floorValueWords("net 900 off 100 rung by u-1", (id) => (id === "u-1" ? "Sales (demo)" : "")), "Net $9.00, $1.00 off, rung by Sales (demo)");
+  assert.equal(floorValueWords("net 900 off 100 rung by u-2", () => ""), "Net $9.00, $1.00 off");
+});
+
+test("UX-125: a value that matches no shape comes back unchanged, never an error", () => {
+  assert.equal(floorValueWords("something else 12"), "something else 12");
+  assert.equal(floorValueWords("net x margin 1 floor 2"), "net x margin 1 floor 2");
+  assert.equal(floorValueWords(""), "");
+});
+
+test("UX-125: the delta joins the worded values like any other change", () => {
+  assert.equal(
+    floorDeltaWords("rule 745 at 12%", "net 655 margin 1189 floor 2000"),
+    "Rule price $7.45, 12% off to Net $6.55, margin 11.89%, floor 20.00%",
+  );
+  assert.equal(floorDeltaWords(null, "net 655 margin 1189 floor 2000"), "set to Net $6.55, margin 11.89%, floor 20.00%");
+  assert.equal(floorDeltaWords(null, null), "");
+});
