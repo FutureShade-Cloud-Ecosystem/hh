@@ -361,20 +361,53 @@ func TestIntegration_W3FX2_RevaluationRun(t *testing.T) {
 		}
 	})
 
-	t.Run("5_a_zero_difference_run_posts_nothing", func(t *testing.T) {
+	t.Run("5_a_zero_difference_run_books_nothing_but_is_recorded", func(t *testing.T) {
 		// A single USD bill at its own rate, revalued at that rate: the open document
-		// amount at the month end rate equals the CAD carried, so the run is complete and
-		// posts no journal.
+		// amount at the month end rate equals the CAD carried, so the run books no
+		// difference. The GL cannot carry a zero line, so the run is recorded under its key
+		// by a marker journal that nets to zero on every account; a second press for the
+		// month is then judged against it, never a second run.
 		fx2PostUSDBillInBranch(t, rig, "w3fx2-zero", branchKGN, "2026-09-15", "2026-10-15", 100_000, fx2BillARate, fx2Instant(15, 9, 0))
+		zeroKey := "purchasing.ap.revaluation:" + branchKGN + ":" + fx2Month
 		run, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: branchKGN, Month: fx2Month, FXRate: fx2BillARate})
 		if err != nil {
 			t.Fatalf("RevalueAP on the zero difference branch: %v", err)
 		}
-		if run.Bills != 1 || run.DifferenceCents != 0 || run.Posted || run.JournalID != "" {
-			t.Fatalf("W3-FX2 red: zero difference run = %+v, want one bill, zero difference, no journal", run)
+		if run.Bills != 1 || run.DifferenceCents != 0 || run.Posted || run.JournalID == "" {
+			t.Fatalf("W3-FX2 fix red: zero difference run = %+v, want one bill, zero difference, nothing booked (Posted false) and its recording journal named", run)
 		}
-		if n := fx2JournalCount(t, rig, "purchasing.ap.revaluation:"+branchKGN+":"+fx2Month); n != 0 {
-			t.Fatalf("W3-FX2 red: %d journals carry the zero difference key, want 0", n)
+		if n := fx2JournalCount(t, rig, zeroKey); n != 1 {
+			t.Fatalf("W3-FX2 fix red: %d journals carry the zero difference key, want 1 (the recording)", n)
+		}
+		for code, legs := range fx2JournalLegs(t, rig, zeroKey) {
+			if legs[0] != legs[1] {
+				t.Fatalf("W3-FX2 fix red: the zero run's recording leaves %s at DR %d CR %d, want it net zero", code, legs[0], legs[1])
+			}
+		}
+		again, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: branchKGN, Month: fx2Month, FXRate: fx2BillARate})
+		if err != nil || again.JournalID != run.JournalID || again.Posted || again.DifferenceCents != 0 {
+			t.Fatalf("W3-FX2 fix red: a second press at the same rate = %+v, %v, want the same run replayed", again, err)
+		}
+		_, err = rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: branchKGN, Month: fx2Month, FXRate: 1.45})
+		var ce clientError
+		if err == nil || !errors.As(err, &ce) || ce.status != http.StatusConflict || !strings.Contains(err.Error(), "already revalued") {
+			t.Fatalf("W3-FX2 fix red: a second press for the month at another rate = %v, want a 409 saying it is already revalued", err)
+		}
+		if n := fx2JournalCount(t, rig, zeroKey); n != 1 {
+			t.Fatalf("W3-FX2 fix red: the refused press left %d journals under the key, want 1", n)
+		}
+
+		// Its reversal is a no-op that is also recorded, and replays.
+		rev, err := rig.svc.ReverseAPRevaluation(rig.ctx, branchKGN, fx2Month)
+		if err != nil || rev.DifferenceCents != 0 || rev.ReversalJournalID == "" {
+			t.Fatalf("W3-FX2 fix red: reversal of the zero run = %+v, %v, want difference 0 and a recorded reversal journal", rev, err)
+		}
+		if n := fx2JournalCount(t, rig, zeroKey+":reverse"); n != 1 {
+			t.Fatalf("W3-FX2 fix red: %d reversal journals under the zero run's key, want 1", n)
+		}
+		rev2, err := rig.svc.ReverseAPRevaluation(rig.ctx, branchKGN, fx2Month)
+		if err != nil || rev2.ReversalJournalID != rev.ReversalJournalID {
+			t.Fatalf("W3-FX2 fix red: a second reversal = %+v, %v, want the first replayed", rev2, err)
 		}
 	})
 }

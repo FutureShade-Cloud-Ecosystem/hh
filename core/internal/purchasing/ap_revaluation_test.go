@@ -165,3 +165,18 @@ func TestW3FX2_RevaluationLegs(t *testing.T) {
 		t.Fatalf("postedLegsDifference(down) = %d, want -4000", got)
 	}
 }
+
+// TestW3FX2_ZeroRunMarker proves a zero difference run is recorded by a marker that moves
+// nothing: one cent each way on 2100, read back as a zero difference, never mistaken for a
+// real run's legs.
+func TestW3FX2_ZeroRunMarker(t *testing.T) {
+	legs := revaluationLegs(0, "2026-09")
+	if !isRevaluationMarker(legs) || postedLegsDifference(legs) != 0 {
+		t.Fatalf("zero run legs = %+v, want the one cent marker reading as difference 0", legs)
+	}
+	for _, d := range []int64{1, -1, 10_000} {
+		if isRevaluationMarker(revaluationLegs(d, "2026-09")) {
+			t.Fatalf("a run of %d cents was read as the zero marker", d)
+		}
+	}
+}

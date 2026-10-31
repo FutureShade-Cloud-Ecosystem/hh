@@ -230,7 +230,7 @@ func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAP
 					monthWords, branchID, postedLegsDifference(posted.Lines), in.FXRate)
 			}
 			run.JournalID = posted.ID
-			run.Posted = true
+			run.Posted = !isRevaluationMarker(posted.Lines)
 			return run, nil
 		}
 	}
@@ -241,20 +241,6 @@ func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAP
 	}
 	s.resolveRevaluationLegsTx(ctx, tx, branchID, legs)
 
-	if run.DifferenceCents == 0 {
-		// Nothing to book: the open document amount at the month end rate already equals
-		// the CAD carried in 2100. The run is complete and posts no journal (a zero leg is
-		// not a leg the GL can carry).
-		if err := tx.Commit(ctx); err != nil {
-			return RevalueAPRun{}, fmt.Errorf("purchasing: commit revaluation run: %w", err)
-		}
-		s.log.Info("purchasing: AP revaluation posted nothing", "branch_id", branchID, "month", monthWords)
-		s.record(ctx, "purchasing.ap_revaluation.run", branchID, map[string]any{
-			"month": monthWords, "bills": run.Bills, "difference_cents": int64(0), "posted": false,
-		})
-		return run, nil
-	}
-
 	journalID, err := s.postRevaluationJournalTx(ctx, tx, branchID, monthWords, monthEnd, in.FXRate, legs)
 	if err != nil {
 		return RevalueAPRun{}, err
@@ -262,12 +248,15 @@ func (s *Service) RevalueAP(ctx context.Context, in RevalueAPRequest) (RevalueAP
 	if err := tx.Commit(ctx); err != nil {
 		return RevalueAPRun{}, fmt.Errorf("purchasing: commit revaluation run: %w", err)
 	}
-	run.Posted = true
+	// A zero difference books nothing but is still a complete run: its marker journal holds
+	// the month's key, so a second press is judged against it and the reversal has a run to
+	// retrace.
+	run.Posted = run.DifferenceCents != 0
 	run.JournalID = journalID
-	s.log.Info("purchasing: AP revaluation posted", "branch_id", branchID, "month", monthWords,
+	s.log.Info("purchasing: AP revaluation run", "branch_id", branchID, "month", monthWords,
 		"bills", run.Bills, "difference_cents", run.DifferenceCents, "journal_id", journalID)
 	s.record(ctx, "purchasing.ap_revaluation.run", branchID, map[string]any{
-		"month": monthWords, "bills": run.Bills, "difference_cents": run.DifferenceCents, "posted": true,
+		"month": monthWords, "bills": run.Bills, "difference_cents": run.DifferenceCents, "posted": run.Posted,
 	})
 	return run, nil
 }
@@ -342,7 +331,18 @@ func (s *Service) revalueAPCompute(ctx context.Context, branchID string, monthEn
 // against it. A positive difference is a liability increase (the month end rate exceeds
 // what the bills carry), so 2100 is credited and the unrealised loss debited; a negative
 // one debits 2100 and credits the unrealised gain.
+//
+// A zero difference has no leg the GL can carry (every line is a positive amount), so the
+// run is recorded under its key by a marker: one cent debited and credited on 2100, which
+// nets to zero on every account and which the reversal swaps like any other run.
 func revaluationLegs(differenceCents int64, monthWords string) []GLJournalLeg {
+	if differenceCents == 0 {
+		memo := "AP revaluation " + monthWords + " (nothing to book)"
+		return []GLJournalLeg{
+			{AccountCode: glAccountAPCode, DebitCents: 1, Memo: memo},
+			{AccountCode: glAccountAPCode, CreditCents: 1, Memo: memo},
+		}
+	}
 	apLeg := GLJournalLeg{AccountCode: glAccountAPCode, CreditCents: differenceCents, Memo: "AP revaluation " + monthWords}
 	fxLeg := GLJournalLeg{AccountCode: glAccountFXGainLoss, DebitCents: differenceCents, Memo: "Unrealised FX " + monthWords}
 	if differenceCents < 0 {
@@ -361,8 +361,15 @@ func (s *Service) resolveRevaluationLegsTx(ctx context.Context, tx pgx.Tx, branc
 	if s.rules == nil || len(legs) < 2 {
 		return
 	}
+	marker := isRevaluationMarker(legs)
 	if resolved, rErr := s.rules.ResolveRuleTx(ctx, tx, eventBillPosted, roleAP, branchID); rErr == nil && strings.TrimSpace(resolved) != "" {
 		legs[0].AccountCode = resolved
+		if marker {
+			legs[1].AccountCode = resolved
+		}
+	}
+	if marker {
+		return
 	}
 	if resolved, rErr := s.rules.ResolveRuleTx(ctx, tx, eventBillPosted, roleFXUnrealised, branchID); rErr == nil && strings.TrimSpace(resolved) != "" {
 		legs[1].AccountCode = resolved
@@ -416,10 +423,19 @@ func sameJournalLegs(want, posted []GLJournalLeg) bool {
 // credit less its debit (a two line journal, so the FX leg carries the same figure the
 // other way).
 func postedLegsDifference(legs []GLJournalLeg) int64 {
-	if len(legs) == 0 {
+	if len(legs) == 0 || isRevaluationMarker(legs) {
 		return 0
 	}
 	return legs[0].CreditCents - legs[0].DebitCents
+}
+
+// isRevaluationMarker answers whether the legs are a zero run's marker: the same account
+// debited and credited by one cent, which moves nothing. A real run's legs sit on two
+// accounts, the 2100 move and the FX account.
+func isRevaluationMarker(legs []GLJournalLeg) bool {
+	return len(legs) == 2 && legs[0].AccountCode == legs[1].AccountCode &&
+		legs[0].DebitCents == 1 && legs[0].CreditCents == 0 &&
+		legs[1].DebitCents == 0 && legs[1].CreditCents == 1
 }
 
 // APRevaluationReversal is the reversal's answer: the run's journal it undid, the
@@ -520,7 +536,7 @@ func (s *Service) ReverseAPRevaluation(ctx context.Context, branchID, month stri
 		return APRevaluationReversal{}, err
 	}
 	if !found {
-		return APRevaluationReversal{}, unprocessable("purchasing: month %s in branch %s has no revaluation journal, there is nothing to reverse (a run whose difference was zero posts none)",
+		return APRevaluationReversal{}, unprocessable("purchasing: month %s in branch %s has no revaluation journal, there is nothing to reverse",
 			monthWords, branch)
 	}
 	if run.SourceRefID != branch {
