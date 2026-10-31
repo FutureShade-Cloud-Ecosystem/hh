@@ -193,6 +193,9 @@ func worker(getenv func(string) string) error {
 			})
 			return purchasing.APRevaluationReversalJob(graph.ops.purchasingSvc)(sysCtx)
 		}).
+		// W3 FC-1b: press the previous house month's finance charge run for every branch, on the
+		// first house days of a month (idempotent by the run's claim key, safe under two instances).
+		Register(billing.FinanceChargeJobName, billing.FinanceChargeJob(newFinanceChargeWriter(pool, graph.money.auditSvc))).
 		Register("warranty.sla.sweep", func(jobCtx context.Context) (jobs.Result, error) {
 			// The SLA sweep runs under a GLOBAL system identity:
 			// SweepSLA resolves a StaffContext and branch-scopes; the

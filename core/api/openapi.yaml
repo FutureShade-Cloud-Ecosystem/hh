@@ -1841,6 +1841,159 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/ar/finance-charges:
+    get:
+      operationId: billingListFinanceCharges
+      tags:
+        - staff-billing
+      x-addition: "W3 FC-1b: the Controller reads a branch's finance charge runs; no ERP source route"
+      summary: List a branch's finance charge runs
+      description: "The finance charge runs of one branch, newest house month first, each with every charge it raised: the customer, the balance more than 30 days past due the charge was measured on, the charge and the invoice it became. A branch outside the caller's reach is refused."
+      x-role: requireAdmin
+      x-access:
+        surfaces:
+          - money-desk
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The branch's finance charge runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingFinanceChargeRunList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: billingRunFinanceCharges
+      tags:
+        - staff-billing
+      x-addition: "W3 FC-1b: the Controller presses a house month's finance charge run for a branch; no ERP source route"
+      summary: Press a month's finance charge run for a branch
+      description: Charges each customer of the branch the balance more than 30 days past due at the month's last house day, at one and a half percent with a two dollar minimum, one charge invoice a customer, once a customer and month. A re-press answers what is already charged and charges nothing new. A month is run only once it has ended on the dealer's day (422 until then). The worker also presses the previous month on the first house days of a month, so this is the Controller's own way to press it by hand. Only the Controller roles may press it.
+      x-role: requireAdmin
+      x-access:
+        surfaces:
+          - money-desk
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingRunFinanceChargesRequest"
+      responses:
+        "200":
+          description: The run, or the same month again on a re-press
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingFinanceChargeRunResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: The month has not ended on the dealer's day
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/ar/customers/{customerID}/finance-charge-waiver:
+    put:
+      operationId: billingSetFinanceChargeWaiver
+      tags:
+        - staff-billing
+      x-addition: "W3 FC-1b: the Financial Controller waives a customer's finance charges; no ERP source route"
+      summary: Waive a customer's finance charges
+      description: "Holds the customer out of every finance charge run until the waiver is cleared. The reason is required and recorded with who set it and when. Setting it again refreshes the record. The Financial Controller's act alone: any other role is refused in words (403)."
+      x-role: requireAdmin
+      x-access:
+        surfaces:
+          - money-desk
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingFinanceChargeWaiverRequest"
+      responses:
+        "200":
+          description: The waiver, active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingFinanceChargeWaiver"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/ar/customers/{customerID}/finance-charge-waiver/clear:
+    post:
+      operationId: billingClearFinanceChargeWaiver
+      tags:
+        - staff-billing
+      x-addition: "W3 FC-1b: the Financial Controller releases a customer's finance charge waiver; no ERP source route"
+      summary: Clear a customer's finance charge waiver
+      description: Releases a waived customer back to the runs. The reason is required and the clearing is recorded with who and when; the waiver row is kept. A customer with no active waiver is refused in words (400). The Financial Controller's act alone.
+      x-role: requireAdmin
+      x-access:
+        surfaces:
+          - money-desk
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingFinanceChargeWaiverRequest"
+      responses:
+        "200":
+          description: The waiver, cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingFinanceChargeWaiver"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/ar/register/reminders:
     post:
       operationId: billingSendRegisterReminders
@@ -35977,6 +36130,164 @@ components:
         limit:
           type: integer
           format: int32
+    BillingRunFinanceChargesRequest:
+      type: object
+      required:
+        - branch_id
+        - month
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+        month:
+          type: string
+          description: The house month, YYYY-MM
+    BillingFinanceCharge:
+      type: object
+      description: One customer's charge in a run
+      required:
+        - customer_id
+        - past_due_cents
+        - charge_cents
+        - invoice_id
+        - invoice_no
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        past_due_cents:
+          type: integer
+          format: int64
+          description: The balance more than 30 days past due, integer cents
+        charge_cents:
+          type: integer
+          format: int64
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+    BillingFinanceChargeRunResult:
+      type: object
+      description: "The run's answer: what was measured, what this press charged, and what an earlier press had already charged."
+      required:
+        - branch_id
+        - month
+        - month_end
+        - charged
+        - already_charged
+        - charged_cents
+        - past_due_cents
+        - charges
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+        month:
+          type: string
+        month_end:
+          type: string
+          format: date
+          description: The month's last house day, the day the balance was measured as of
+        charged:
+          type: integer
+          format: int32
+        already_charged:
+          type: integer
+          format: int32
+        charged_cents:
+          type: integer
+          format: int64
+        past_due_cents:
+          type: integer
+          format: int64
+        charges:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingFinanceCharge"
+    BillingFinanceChargeRunMonth:
+      type: object
+      description: One house month of one branch's run with every charge it raised
+      required:
+        - branch_id
+        - month
+        - month_end
+        - charged
+        - charged_cents
+        - past_due_cents
+        - charges
+      properties:
+        branch_id:
+          type: string
+          format: uuid
+        month:
+          type: string
+        month_end:
+          type: string
+          format: date
+        charged:
+          type: integer
+          format: int32
+        charged_cents:
+          type: integer
+          format: int64
+        past_due_cents:
+          type: integer
+          format: int64
+        charges:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingFinanceCharge"
+    BillingFinanceChargeRunList:
+      type: object
+      required:
+        - items
+        - next_cursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingFinanceChargeRunMonth"
+        next_cursor:
+          type:
+            - string
+            - "null"
+    BillingFinanceChargeWaiverRequest:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          description: The Controller's own words for why; required
+    BillingFinanceChargeWaiver:
+      type: object
+      required:
+        - customer_id
+        - reason
+        - active
+        - waived_at
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        active:
+          type: boolean
+          description: True while the waiver holds the customer out of the runs
+        waived_by:
+          type: string
+          format: uuid
+        waived_at:
+          type: string
+          format: date-time
+        cleared_by:
+          type: string
+          format: uuid
+        cleared_at:
+          type: string
+          format: date-time
     AssistArgSpec:
       type: object
       required:
