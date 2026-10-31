@@ -1266,6 +1266,7 @@ export type BillingStatementPreviewAging = {
   days_90_plus_cents: number;
   open_cents: number;
   overdue_cents: number;
+  holdback_cents?: number;
 };
 export type BillingCreditChangeInput = {
   customer_id: string;

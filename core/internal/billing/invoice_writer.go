@@ -746,7 +746,7 @@ VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8::numeric, $9, $10, $11, $12)`,
 		// transaction so a concurrent sale cannot interleave a stale one.
 		var open int64
 		if err := tx.QueryRow(ctx,
-			`SELECT COALESCE(SUM(balance_cents),0) FROM invoices
+			`SELECT COALESCE(SUM(balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0))),0) FROM invoices
 			  WHERE customer_id = $1 AND status IN ('FINALIZED','PARTIALLY_PAID')`,
 			f.CustomerID).Scan(&open); err != nil {
 			return fmt.Errorf("read open balance: %w", err)

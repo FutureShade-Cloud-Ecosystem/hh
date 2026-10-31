@@ -181,7 +181,7 @@ func (r *Repository) OpenBalanceCents(ctx context.Context, customerID string) (i
 	}
 	var sum int64
 	err := r.pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(balance_cents),0) FROM invoices
+		`SELECT COALESCE(SUM(balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0))),0) FROM invoices
 		 WHERE customer_id = $1 AND status IN ('FINALIZED','PARTIALLY_PAID')`, customerID).Scan(&sum)
 	if err != nil {
 		return 0, fmt.Errorf("open balance for %q: %w", customerID, err)

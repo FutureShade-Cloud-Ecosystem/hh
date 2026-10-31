@@ -1190,7 +1190,7 @@ func (w *InvoiceWriter) FinalizeParkedCreditMemoTx(ctx context.Context, tx pgx.T
 	}
 	var open int64
 	if err := tx.QueryRow(ctx, `
-	SELECT COALESCE(SUM(balance_cents),0) FROM invoices
+	SELECT COALESCE(SUM(balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0))),0) FROM invoices
 	  WHERE customer_id = $1 AND status IN ('FINALIZED','PARTIALLY_PAID')`, customerID).Scan(&open); err != nil {
 		return fmt.Errorf("billing: read open balance: %w", err)
 	}

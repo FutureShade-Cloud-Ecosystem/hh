@@ -1439,13 +1439,14 @@ type BillingStatementPreviewLine struct {
 }
 
 type BillingStatementPreviewAging struct {
-	CurrentCents    int64 `json:"current_cents"`
-	Days30Cents     int64 `json:"days_30_cents"`
-	Days60Cents     int64 `json:"days_60_cents"`
-	Days90Cents     int64 `json:"days_90_cents"`
-	Days90PlusCents int64 `json:"days_90_plus_cents"`
-	OpenCents       int64 `json:"open_cents"`
-	OverdueCents    int64 `json:"overdue_cents"`
+	CurrentCents    int64  `json:"current_cents"`
+	Days30Cents     int64  `json:"days_30_cents"`
+	Days60Cents     int64  `json:"days_60_cents"`
+	Days90Cents     int64  `json:"days_90_cents"`
+	Days90PlusCents int64  `json:"days_90_plus_cents"`
+	OpenCents       int64  `json:"open_cents"`
+	OverdueCents    int64  `json:"overdue_cents"`
+	HoldbackCents   *int64 `json:"holdback_cents,omitempty"`
 }
 
 type BillingCreditChangeInput struct {

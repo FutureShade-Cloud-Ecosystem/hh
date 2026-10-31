@@ -319,3 +319,65 @@ func TestRT2Fix_CollectionsAndTheARLandingNeverAskForTheHoldback(t *testing.T) {
 	eq(t, "the reminder names no invoice (nothing is past due)", rc.InvoiceNo, "")
 	eq(t, "the reminder names no balance", rc.BalanceCents, int64(0))
 }
+
+func (l *rt2Leg) lastBalanceAfter() int64 {
+	l.t.Helper()
+	var b int64
+	if err := l.pool.QueryRow(context.Background(), `
+		SELECT balance_after FROM customer_transactions WHERE customer_id = $1::uuid ORDER BY occurred_at DESC, created_at DESC LIMIT 1`, l.cust).Scan(&b); err != nil {
+		l.t.Fatalf("read the account's last balance: %v", err)
+	}
+	return b
+}
+
+// P2-2: the statement, the preview, the account's running balance (which the credit gates read) all show
+// the net owed, and the holdback is its own line.
+func TestRT2Fix_StatementsAndTheRunningBalanceShowTheNetWithHoldbackOnItsOwnLine(t *testing.T) {
+	l := rt2Setup(t, "stmt")
+	l.newJob(true)
+	doc := l.invoice(100_000, 0) // 100,000 gross, 10,000 held
+	ctx := context.Background()
+	eq(t, "the account's running balance after the invoice (the credit gate's figure)", l.lastBalanceAfter(), int64(90_000))
+
+	repo := billing.NewRepository(l.pool)
+	lines, err := repo.StatementLines(ctx, l.cust, time.Now().Add(time.Hour), billing.BranchReach{Global: true})
+	if err != nil {
+		t.Fatalf("statement lines: %v", err)
+	}
+	var holdbackLines int
+	for _, ln := range lines {
+		if ln.DocNo == doc.InvoiceNo && ln.CreditCents == 10_000 {
+			holdbackLines++
+		}
+	}
+	eq(t, "the holdback is one line of its own", holdbackLines, 1)
+	eq(t, "the statement's closing balance is the net owed", lines[len(lines)-1].BalanceRun, int64(90_000))
+
+	prev, err := repo.PreviewLines(ctx, l.cust, time.Now())
+	if err != nil {
+		t.Fatalf("preview lines: %v", err)
+	}
+	var sum int64
+	for _, p := range prev {
+		sum += p.BalanceCents
+	}
+	eq(t, "the preview lines sum to the net", sum, int64(90_000))
+	age, err := repo.PreviewAging(ctx, l.cust)
+	if err != nil {
+		t.Fatalf("preview aging: %v", err)
+	}
+	eq(t, "the preview's open balance is the net", age.OpenCents, int64(90_000))
+	eq(t, "the preview's holdback is its own figure", age.HoldbackCents, int64(10_000))
+
+	// A half credit, applied: the running balance and the statement follow the net.
+	memo := l.creditMemo(doc.InvoiceID, 50_000, "rt2fix-stmt")
+	if _, err := l.applyMemo(memo.InvoiceID, doc.InvoiceID, 45_000, "rt2fix-stmt-apply"); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	age, err = repo.PreviewAging(ctx, l.cust)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(t, "the open balance after the credit", age.OpenCents, int64(45_000))
+	eq(t, "the holdback after the credit", age.HoldbackCents, int64(5_000))
+}

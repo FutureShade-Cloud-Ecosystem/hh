@@ -448,7 +448,7 @@ func (r *Repository) OrderDispatchFacts(ctx context.Context, orderID string) (Di
 	var f DispatchFacts
 	err := r.pool.QueryRow(ctx,
 		`SELECT o.id::text, o.customer_id::text, o.branch_id::text, c.payment_terms_days, COALESCE(c.name,''),
-		        COALESCE((SELECT SUM(i.balance_cents) FROM invoices i
+		        COALESCE((SELECT SUM(i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))) FROM invoices i
 		                   WHERE i.order_id = o.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')), 0),
 		        EXISTS (SELECT 1 FROM credit_holds h WHERE h.customer_id = o.customer_id AND h.status = 'ACTIVE'),
 		        COALESCE((SELECT h.hold_kind FROM credit_holds h

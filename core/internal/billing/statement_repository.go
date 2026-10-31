@@ -55,6 +55,9 @@ type StatementPreviewAging struct {
 	Days90PlusCents int64 `json:"days_90_plus_cents"`
 	OpenCents       int64 `json:"open_cents"`
 	OverdueCents    int64 `json:"overdue_cents"`
+	// HoldbackCents is the holdback the account's open invoices still withhold: owed later, on its own
+	// line, and in none of the buckets or OpenCents above (RT-2).
+	HoldbackCents int64 `json:"holdback_cents"`
 }
 
 // BillingStatementPreview is the wire shape the preview handler returns. Reconciles is the
@@ -149,6 +152,28 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			          AND ct.source_ref_id = i.id
 			          AND ct.txn_type IN ('INVOICE', 'CREDIT_MEMO')
 			   )
+			UNION ALL
+			-- The holdback an invoice still withholds is its own line: money the customer owes later,
+			-- not now, so the statement's running balance and closing figure are the net owed (the
+			-- aging's figure). As of the statement date the parts of credits taken after it are still
+			-- withheld (RT-2).
+			SELECT (i.issue_date::timestamp AT TIME ZONE $4::text) AS occurred_at,
+			       i.created_at + interval '1 microsecond',
+			       'HOLDBACK' AS txn_type,
+			       -(GREATEST(i.holdback_cents, 0)
+			         + COALESCE((SELECT -SUM(m.holdback_cents) FROM invoices m
+			                      WHERE m.reverses_invoice_id = i.id AND m.doc_type = 'CREDIT_MEMO'
+			                        AND m.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
+			                        AND (COALESCE(m.finalized_at, m.created_at) AT TIME ZONE $4::text)::date > $2::date), 0)) AS amount_cents,
+			       i.invoice_no::text AS invoice_no,
+			       'Holdback withheld on ' || i.invoice_no::text AS memo
+			  FROM invoices i
+			 WHERE i.customer_id = $1::uuid
+			   AND i.doc_type = 'INVOICE'
+			   AND i.status IN ('FINALIZED', 'PARTIALLY_PAID')
+			   AND i.holdback_cents > 0
+			   AND i.issue_date <= $2::date
+			   AND ($3::uuid[] IS NULL OR i.branch_id = ANY($3::uuid[]))
 		)
 		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo
 		  FROM activity
@@ -514,12 +539,12 @@ func (r *Repository) PreviewLines(ctx context.Context, customerID string, asOf t
 			SELECT i.id::text AS doc_id,
 			       i.invoice_no::text AS doc_no,
 			       i.due_date,
-			       i.balance_cents,
+			       i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0)) AS balance_cents,
 			       GREATEST(0, (($2::date - i.due_date))::int) AS days_overdue
 			  FROM invoices i
 			 WHERE i.customer_id = $1::uuid
 			   AND i.status IN ('FINALIZED','PARTIALLY_PAID')
-			   AND i.balance_cents <> 0
+			   AND i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0)) <> 0
 			UNION ALL
 			SELECT COALESCE(ct.source_ref_id, ct.id)::text AS doc_id,
 			       COALESCE(NULLIF(MIN(ct.memo), ''), MIN(ct.txn_type)) AS doc_no,
@@ -568,11 +593,11 @@ func (r *Repository) PreviewAging(ctx context.Context, customerID string) (State
 	var a StatementPreviewAging
 	err = r.pool.QueryRow(ctx,
 		`WITH open_ar AS (
-			SELECT balance_cents, due_date
+			SELECT balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0)) AS balance_cents, due_date
 			  FROM invoices
 			 WHERE customer_id = $1::uuid
 			   AND status IN ('FINALIZED','PARTIALLY_PAID')
-			   AND balance_cents <> 0
+			   AND balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0)) <> 0
 			UNION ALL
 			SELECT SUM(amount_cents) AS balance_cents,
 			       MIN((occurred_at AT TIME ZONE $3::text)::date) AS due_date
@@ -589,10 +614,12 @@ func (r *Repository) PreviewAging(ctx context.Context, customerID string) (State
 		       COALESCE(SUM(CASE WHEN ($2::date - due_date) BETWEEN 61 AND 90 THEN balance_cents ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN ($2::date - due_date) > 90 THEN balance_cents ELSE 0 END), 0),
 		       COALESCE(SUM(balance_cents), 0),
-		       COALESCE(SUM(CASE WHEN ($2::date - due_date) > 0 THEN balance_cents ELSE 0 END), 0)
+		       COALESCE(SUM(CASE WHEN ($2::date - due_date) > 0 THEN balance_cents ELSE 0 END), 0),
+		       (SELECT COALESCE(SUM(GREATEST(holdback_cents, 0)), 0) FROM invoices
+		         WHERE customer_id = $1::uuid AND doc_type = 'INVOICE' AND status IN ('FINALIZED','PARTIALLY_PAID'))
 		  FROM open_ar`, customerID, today, zone.Name()).
 		Scan(&a.CurrentCents, &a.Days30Cents, &a.Days60Cents, &a.Days90Cents, &a.Days90PlusCents,
-			&a.OpenCents, &a.OverdueCents)
+			&a.OpenCents, &a.OverdueCents, &a.HoldbackCents)
 	if err != nil {
 		return StatementPreviewAging{}, fmt.Errorf("billing: read statement preview aging: %w", err)
 	}

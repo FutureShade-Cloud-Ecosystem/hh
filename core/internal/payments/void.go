@@ -254,7 +254,7 @@ func (r *Repository) VoidPayment(ctx context.Context, in VoidInput, now time.Tim
 	var runningAR int64
 	if customerID != "" {
 		if err := tx.QueryRow(ctx,
-			`SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
+			`SELECT COALESCE(SUM(balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0))), 0) FROM invoices
 			  WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`, customerID).Scan(&runningAR); err != nil {
 			return Void{}, fmt.Errorf("void: read AR balance: %w", err)
 		}

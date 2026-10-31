@@ -282,7 +282,7 @@ INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, bra
 	// 3 + 4. Re-open each invoice (and any NSF fee this payment settled) and mirror the subledger.
 	var runningAR int64
 	if err := tx.QueryRow(ctx,
-		`SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
+		`SELECT COALESCE(SUM(balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0))), 0) FROM invoices
 		  WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`,
 		customerID).Scan(&runningAR); err != nil {
 		return Reversal{}, fmt.Errorf("reverse: read AR balance: %w", err)
