@@ -117,15 +117,22 @@ func (s *Service) SyncHoldbacks(ctx context.Context, jobID string) (SyncResult, 
 			res.SkippedCount++
 			continue
 		}
-		if _, err := s.store.InsertHoldbackEntry(ctx, HoldbackEntry{
+		// The guard is the ledger's own: the invoice's retention is booked once, however many syncs run.
+		n, err := s.store.InsertRetentionOnce(ctx, HoldbackEntry{
 			JobID:       jobID,
 			InvoiceID:   inv.InvoiceID,
 			BranchID:    job.BranchID,
 			EntryType:   "RETENTION",
 			AmountCents: amount,
 			Reason:      "synced from invoice " + inv.InvoiceNo,
-		}); err != nil {
+		})
+		if err != nil {
 			return SyncResult{}, err
+		}
+		if n == 0 {
+			res.SkippedCount++
+			held[inv.InvoiceID] = true
+			continue
 		}
 		held[inv.InvoiceID] = true // guard against a duplicate invoice id inside the same batch
 		res.BookedCount++

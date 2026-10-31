@@ -12,6 +12,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -689,5 +690,63 @@ func TestIntegration_ReleaseDeadlineRegisteredAt45Days(t *testing.T) {
 	}
 	if ruleDays != 45 {
 		t.Fatalf("HOLDBACK_RELEASE rule_days=%d, want 45", ruleDays)
+	}
+}
+
+// barrierHoldback releases its callers together, so concurrent syncs of one lien job read the same
+// unheld invoice before either has booked it.
+type barrierHoldback struct {
+	fakeIntHoldback
+	wg *sync.WaitGroup
+}
+
+func (b barrierHoldback) InvoicesWithHoldback(ctx context.Context, branch string) ([]HoldbackInvoice, error) {
+	b.wg.Done()
+	b.wg.Wait()
+	return b.fakeIntHoldback.InvoicesWithHoldback(ctx, branch)
+}
+
+// RT-2 fix round 2, P3: two concurrent syncs of one lien job book an invoice once.
+func TestIntegration_TwoConcurrentSyncsBookAnInvoiceOnce(t *testing.T) {
+	w := rt1Plant(t)
+	ctx := context.Background()
+	lienID := w.lienJob(t, w.customerA, w.branchA)
+	t.Cleanup(func() { rt1Del(t, w.pool, "holdback_ledger", "job_id = $1", lienID) })
+	if _, err := w.pool.Exec(ctx, `UPDATE lien_jobs SET customer_job_id = $2 WHERE id = $1`, lienID, w.jobOnSiteON); err != nil {
+		t.Fatalf("link the lien job: %v", err)
+	}
+	const callers = 6
+	wg := &sync.WaitGroup{}
+	wg.Add(callers)
+	svc := w.svc
+	svc.WithHoldbackFacts(barrierHoldback{
+		fakeIntHoldback: fakeIntHoldback{inv: "19000000-0000-4000-9000-000000000001", branch: w.branchA, job: w.jobOnSiteON},
+		wg:              wg,
+	})
+	booked := make([]int, callers)
+	var run sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		run.Add(1)
+		go func(i int) {
+			defer run.Done()
+			r, err := svc.SyncHoldbacks(w.as(gm("gm-int")), lienID)
+			if err != nil {
+				t.Errorf("sync %d: %v", i, err)
+				return
+			}
+			booked[i] = r.BookedCount
+		}(i)
+	}
+	run.Wait()
+	total := 0
+	for _, n := range booked {
+		total += n
+	}
+	var rows int
+	if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM holdback_ledger WHERE job_id = $1 AND entry_type = 'RETENTION' AND amount_cents > 0`, lienID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 || total != 1 {
+		t.Errorf("concurrent syncs: %d ledger rows and %d reported booked, want 1 and 1", rows, total)
 	}
 }

@@ -88,6 +88,15 @@ func (f *fakeStore) InsertHoldbackEntry(_ context.Context, e HoldbackEntry) (str
 	f.entries = append(f.entries, e)
 	return e.ID, nil
 }
+func (f *fakeStore) InsertRetentionOnce(ctx context.Context, e HoldbackEntry) (int64, error) {
+	for _, x := range f.entries {
+		if x.InvoiceID == e.InvoiceID && x.EntryType == "RETENTION" && x.AmountCents > 0 {
+			return 0, nil
+		}
+	}
+	_, err := f.InsertHoldbackEntry(ctx, e)
+	return 1, err
+}
 func (f *fakeStore) HoldbackEntriesForJob(_ context.Context, jobID string) ([]HoldbackEntry, error) {
 	var out []HoldbackEntry
 	for _, e := range f.entries {

@@ -53,22 +53,32 @@ func (r *Repository) JobHoldingInvoice(ctx context.Context, invoiceID string) (s
 }
 
 // InsertRetentionOnce books an invoice's RETENTION unless the invoice already has a positive one.
-// It answers the rows written.
+// It answers the rows written. Two callers booking the same invoice at once book it once: the guard
+// is a read, so the invoice's id is locked (a transaction scoped advisory lock) before it, and the
+// second caller reads the first one's row once the lock is its own.
 func (r *Repository) InsertRetentionOnce(ctx context.Context, e HoldbackEntry) (int64, error) {
-	q, err := r.q(ctx)
-	if err != nil {
-		return 0, err
-	}
-	tag, err := q.Exec(ctx, `
-		INSERT INTO holdback_ledger (job_id, invoice_id, branch_id, entry_type, amount_cents, reason)
-		SELECT $1::uuid, $2::uuid, $3::uuid, 'RETENTION', $4, $5
-		 WHERE NOT EXISTS (SELECT 1 FROM holdback_ledger
-		                    WHERE invoice_id = $2::uuid AND entry_type = 'RETENTION' AND amount_cents > 0)`,
-		e.JobID, e.InvoiceID, e.BranchID, e.AmountCents, e.Reason)
-	if err != nil {
-		return 0, fmt.Errorf("lien: book the retention of invoice %s: %w", e.InvoiceID, err)
-	}
-	return tag.RowsAffected(), nil
+	var n int64
+	err := r.InTx(ctx, func(ctx context.Context) error {
+		q, err := r.q(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('holdback_ledger:' || $1::text, 0))`, e.InvoiceID); err != nil {
+			return fmt.Errorf("lien: lock the invoice's retention: %w", err)
+		}
+		tag, err := q.Exec(ctx, `
+			INSERT INTO holdback_ledger (job_id, invoice_id, branch_id, entry_type, amount_cents, reason)
+			SELECT $1::uuid, $2::uuid, $3::uuid, 'RETENTION', $4, $5
+			 WHERE NOT EXISTS (SELECT 1 FROM holdback_ledger
+			                    WHERE invoice_id = $2::uuid AND entry_type = 'RETENTION' AND amount_cents > 0)`,
+			e.JobID, e.InvoiceID, e.BranchID, e.AmountCents, e.Reason)
+		if err != nil {
+			return fmt.Errorf("lien: book the retention of invoice %s: %w", e.InvoiceID, err)
+		}
+		n = tag.RowsAffected()
+		return nil
+	})
+	return n, err
 }
 
 // InsertReversalOnce books one signed RETENTION move unless the invoice already has a move with that
