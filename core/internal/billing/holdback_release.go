@@ -453,6 +453,10 @@ const HoldbackReleasedTopic = "ar.holdback.released"
 func (r *Repository) replayRelease(ctx context.Context, tx pgx.Tx, in HoldbackReleaseInput, prior []lien.ReleasedRow, today string) (HoldbackReleaseResult, error) {
 	res := HoldbackReleaseResult{CustomerJobID: in.CustomerJobID, ReleasedOn: today, Replayed: true}
 	for _, p := range prior {
+		if p.Reversed {
+			return HoldbackReleaseResult{}, HoldbackReleaseRefused{Kind: RefusedAlreadyReversed,
+				Msg: "the release this idempotency key made was reversed, so nothing stands released; release the holdback again with a new key"}
+		}
 		var job, no, branch string
 		err := tx.QueryRow(ctx, `SELECT COALESCE(job_id::text, ''), invoice_no::text, branch_id::text FROM invoices WHERE id = $1::uuid`, p.InvoiceID).Scan(&job, &no, &branch)
 		if err != nil {
@@ -513,23 +517,35 @@ func (s *HoldbackReleaseService) Reverse(ctx context.Context, in HoldbackReversa
 		}
 		in.ActorID = actor.String()
 	}
-	res, err := s.repo.ReverseHoldbackRelease(ctx, in, s.now())
-	if err != nil {
-		return HoldbackReversalResult{}, err
-	}
+	// The audit row, with the reason, is written on the reversal's own transaction: a failure to write it
+	// rolls the reversal back, so no reversal stands without its reason on record.
+	var record func(ctx context.Context, tx pgx.Tx, res HoldbackReversalResult) error
 	if s.audit != nil {
-		_ = s.audit.Record(ctx, audit.SensitiveAccess{
-			Action: ActHoldbackReleaseReversed, EntityType: "holdback_release", EntityID: res.ReleaseID,
-			ActorID: in.ActorID, Purpose: "HOLDBACK_RELEASE_REVERSAL", Reason: in.Reason,
-			Extra: map[string]any{"invoice_id": res.InvoiceID, "restored_cents": res.RestoredCents},
-		})
+		record = func(ctx context.Context, tx pgx.Tx, res HoldbackReversalResult) error {
+			a := audit.SensitiveAccess{
+				Action: ActHoldbackReleaseReversed, EntityType: "holdback_release", EntityID: res.ReleaseID,
+				ActorID: in.ActorID, Purpose: "HOLDBACK_RELEASE_REVERSAL", Reason: in.Reason,
+				Extra: map[string]any{"invoice_id": res.InvoiceID, "restored_cents": res.RestoredCents},
+			}
+			if tr, ok := s.audit.(interface {
+				RecordTx(ctx context.Context, q audit.Execer, a audit.SensitiveAccess) error
+			}); ok {
+				return tr.RecordTx(ctx, tx, a)
+			}
+			return s.audit.Record(ctx, a)
+		}
 	}
-	return res, nil
+	return s.repo.reverseHoldbackRelease(ctx, in, s.now(), record)
 }
 
 // ReverseHoldbackRelease is the repository write: one transaction under the invoice's job lock, so a reversal
 // and a release of the same job run one after the other.
 func (r *Repository) ReverseHoldbackRelease(ctx context.Context, in HoldbackReversalInput, now time.Time) (HoldbackReversalResult, error) {
+	return r.reverseHoldbackRelease(ctx, in, now, nil)
+}
+
+// reverseHoldbackRelease is ReverseHoldbackRelease with the audit write that rides the transaction.
+func (r *Repository) reverseHoldbackRelease(ctx context.Context, in HoldbackReversalInput, now time.Time, record func(ctx context.Context, tx pgx.Tx, res HoldbackReversalResult) error) (HoldbackReversalResult, error) {
 	if r.pool == nil {
 		return HoldbackReversalResult{}, errNoDB
 	}
@@ -587,8 +603,14 @@ func (r *Repository) ReverseHoldbackRelease(ctx context.Context, in HoldbackReve
 	}); err != nil {
 		return HoldbackReversalResult{}, err
 	}
+	out := HoldbackReversalResult{ReleaseID: row.ID, InvoiceID: row.InvoiceID, InvoiceNo: invNo, RestoredCents: row.AmountCents, ReversedOn: today}
+	if record != nil {
+		if err := record(txCtx, tx, out); err != nil {
+			return HoldbackReversalResult{}, fmt.Errorf("holdback reversal: record the reversal: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return HoldbackReversalResult{}, fmt.Errorf("holdback reversal: commit: %w", err)
 	}
-	return HoldbackReversalResult{ReleaseID: row.ID, InvoiceID: row.InvoiceID, InvoiceNo: invNo, RestoredCents: row.AmountCents, ReversedOn: today}, nil
+	return out, nil
 }

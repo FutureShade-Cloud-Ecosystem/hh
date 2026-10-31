@@ -152,6 +152,7 @@ type ReleasedRow struct {
 	ID          string
 	InvoiceID   string
 	AmountCents int64
+	Reversed    bool // the release was reversed (it no longer stands)
 }
 
 const releaseReasonPrefix = "holdback release "
@@ -196,7 +197,7 @@ func (s *Service) ReleasesForKey(ctx context.Context, key string) ([]ReleasedRow
 		return nil, err
 	}
 	rows, err := q.Query(ctx, `
-		SELECT id::text, invoice_id::text, amount_cents FROM holdback_ledger
+		SELECT id::text, invoice_id::text, amount_cents, reversed_at IS NOT NULL FROM holdback_ledger
 		 WHERE entry_type = 'RELEASE' AND invoice_id IS NOT NULL AND reason = $1
 		 ORDER BY created_at, id`, releaseReasonPrefix+key)
 	if err != nil {
@@ -206,7 +207,7 @@ func (s *Service) ReleasesForKey(ctx context.Context, key string) ([]ReleasedRow
 	var out []ReleasedRow
 	for rows.Next() {
 		var r ReleasedRow
-		if err := rows.Scan(&r.ID, &r.InvoiceID, &r.AmountCents); err != nil {
+		if err := rows.Scan(&r.ID, &r.InvoiceID, &r.AmountCents, &r.Reversed); err != nil {
 			return nil, fmt.Errorf("lien: scan a release: %w", err)
 		}
 		out = append(out, r)
