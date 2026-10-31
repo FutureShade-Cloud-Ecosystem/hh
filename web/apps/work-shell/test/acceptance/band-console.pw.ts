@@ -35,3 +35,22 @@ test("a shell served no console config stays DEMO", async ({ page, shellUrl }) =
   await expect(band.getByText(/^demo$/i)).toHaveCount(1);
   await expect(band).not.toContainText("Acme Stone");
 });
+
+// UX-127: every frame is served the console config too (the door frame and a framed app). The shell band names
+// the dealer with no DEMO, a framed app wears no second band, and its page copy has no "Demo data only".
+test("a console box serves its config to every frame: dealer band, no second band, no demo-data words", async ({ page, shellUrl }) => {
+  await page.route("**/config.json", (route) => route.fulfill({ json: CONSOLE_CONFIG }));
+  await page.route("https://console.invalid/**", (route) => route.abort());
+  await page.goto(`${shellUrl}/`);
+  await page.frameLocator('[data-testid="door-frame"]').getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-phase", "desk");
+  const band = page.locator("hh-shell-header");
+  await expect(band).toHaveCount(1);
+  await expect(band).toContainText("Acme Stone");
+  await expect(band.getByText(/^demo$/i)).toHaveCount(0);
+  const framed = page.frames().filter((f) => f !== page.mainFrame());
+  for (const frame of framed) {
+    await expect(frame.locator("hh-shell-header")).toHaveCount(0);
+    await expect(frame.locator("body")).not.toContainText("Demo data only");
+  }
+});
