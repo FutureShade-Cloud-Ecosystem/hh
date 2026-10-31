@@ -191,7 +191,7 @@ type ExportRow struct {
 }
 
 // The accounting package export's targets (W3 AX-1, decision 1.6): QuickBooks Online first, Sage 50
-// next. The words are the 0454 CHECK vocabulary verbatim; a third package is one more word there,
+// next. The words are the 0464 CHECK vocabulary verbatim; a third package is one more word there,
 // by a later forward migration.
 const (
 	TargetQuickBooksOnline = "QUICKBOOKS_ONLINE"

@@ -812,7 +812,7 @@ func (s *Service) Export(ctx context.Context, q ExportQuery) (ExportResult, erro
 	format := "GP_PARITY"
 	var content string
 	if q.Target == "" {
-		content = renderGPParity(q.Year, q.Month, rows)
+		content = renderGPParity(q, rows)
 	} else {
 		// The mapping precondition: every account with movement in the period must be mapped for
 		// the target, and one refusal names every account missing, in words. An export that
@@ -847,7 +847,10 @@ func (s *Service) Export(ctx context.Context, q ExportQuery) (ExportResult, erro
 				return ExportResult{}, err
 			}
 		default:
-			content = renderTargetExport(q, rows, packageAccount)
+			content, err = renderTargetExport(q, rows, packageAccount)
+			if err != nil {
+				return ExportResult{}, err
+			}
 		}
 		format = q.Target
 	}
@@ -866,10 +869,12 @@ func (s *Service) Export(ctx context.Context, q ExportQuery) (ExportResult, erro
 
 // renderGPParity produces the deterministic GP-parity text: a PARITY DRAFT banner line, then a CSV with a
 // header and one row per posted line. Money is rendered as signed dollars (GP convention) from integer cents.
-func renderGPParity(year, month int, rows []ExportRow) string {
+// The banner names the pick it rendered, the quarter included (S7's P3-2 on 719): a quarter's file says
+// its quarter, never a month 0 that names no month.
+func renderGPParity(q ExportQuery, rows []ExportRow) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n", parityBanner)
-	fmt.Fprintf(&b, "# fiscal_year=%d month=%d rows=%d\n", year, month, len(rows))
+	fmt.Fprintf(&b, "# fiscal_year=%d month=%d quarter=%d rows=%d\n", q.Year, q.Month, q.Quarter, len(rows))
 	b.WriteString("entry_no,posted_at,account_code,account_name,debit,credit,memo\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "%d,%s,%s,%s,%s,%s,%s\n",
@@ -882,9 +887,11 @@ func renderGPParity(year, month int, rows []ExportRow) string {
 // renderTargetExport renders the accounting package export for a target without its own import
 // format yet (Sage 50 is AX-3): the period's rows under the package's account codes, the HH code
 // and name beside each for provenance, and a totals line whose two sides are the file's own
-// balance assertion. QuickBooks Online has its own body, renderQBOJournals (AX-2); this one keeps
-// the row set and the totals the same for the target that replaces it next.
-func renderTargetExport(q ExportQuery, rows []ExportRow, packageAccount map[string]string) string {
+// balance assertion. The pair is ASSERTED, not just printed (S7's P3-4 on 719): an unequal pair
+// refuses the file in words before any row is written, so a partial read or a bad loader cannot
+// ship a draft whose own banner lies. QuickBooks Online has its own body, renderQBOJournals
+// (AX-2); this one keeps the row set and the totals the same for the target that replaces it next.
+func renderTargetExport(q ExportQuery, rows []ExportRow, packageAccount map[string]string) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# ACCOUNTING PACKAGE EXPORT, %s; mapped draft, not a filing.\n", exportTargetWords(q.Target))
 	fmt.Fprintf(&b, "# fiscal_year=%d month=%d quarter=%d rows=%d\n", q.Year, q.Month, q.Quarter, len(rows))
@@ -897,8 +904,12 @@ func renderTargetExport(q ExportQuery, rows []ExportRow, packageAccount map[stri
 		totalDebit += r.DebitCents
 		totalCredit += r.CreditCents
 	}
+	if totalDebit != totalCredit {
+		return "", badReq("gl: the %s export refuses the period: the file's debits (%s) do not equal its credits (%s); no row was written",
+			exportTargetWords(q.Target), dollarsExact(totalDebit), dollarsExact(totalCredit))
+	}
 	fmt.Fprintf(&b, "# total_debit=%s,total_credit=%s\n", dollars(totalDebit), dollars(totalCredit))
-	return b.String()
+	return b.String(), nil
 }
 
 func dollars(cents int64) string {

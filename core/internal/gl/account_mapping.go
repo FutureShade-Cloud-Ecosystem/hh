@@ -82,6 +82,14 @@ func (s *Service) SetAccountMapping(ctx context.Context, target, accountCode, pa
 	if packageAccount == "" {
 		return AccountMapping{}, badReq("gl: the mapping needs the target package's account code")
 	}
+	// The mapping points an account the CHART holds at a package's code (S7's P3-1 on 719): a code
+	// the chart does not hold is refused here, in words, never by the storage layer's foreign key
+	// answering a 500 for a typo.
+	if _, ok, err := s.store.AccountByCode(ctx, accountCode); err != nil {
+		return AccountMapping{}, err
+	} else if !ok {
+		return AccountMapping{}, badReq("gl: no HH account %s to map; the mapping needs a chart of accounts code", accountCode)
+	}
 	m, err := s.store.SetAccountMapping(ctx, target, accountCode, packageAccount, caller.UserID, func(ctx context.Context, tx pgx.Tx, m AccountMapping) error {
 		if s.auditTx != nil && tx != nil {
 			return s.auditTx.RecordTx(ctx, tx, s.mappingAuditEntry(m, caller.UserID))
