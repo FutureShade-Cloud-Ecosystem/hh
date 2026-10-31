@@ -882,7 +882,7 @@ export class ArDesk {
     if (account === null || this.#busy || !canWorkCreditChanges(this.#who.roleCode)) return;
     const cents = parseAmountToCents(this.#host.field("credit-limit-amount"));
     const reason = this.#host.field("credit-limit-reason").trim();
-    if (cents === null) return this.#stop("Enter the new limit as dollars and cents, such as 55000.00.");
+    if (cents === null) return this.#stop("Enter the new limit as dollars and cents, such as 55,000.00.");
     if (reason === "") return this.#stop("Enter why the change is asked for; a request without a reason is refused.");
     this.#busy = true;
     this.#clearMessages();
@@ -898,6 +898,9 @@ export class ArDesk {
     }
     this.#notice = creditRequestWords(result.value);
     this.#reveal = "[data-notice]";
+    // The ask is filed: the form is empty again, so a second press cannot send it twice.
+    this.#host.setField("credit-limit-amount", "");
+    this.#host.setField("credit-limit-reason", "");
     await this.#loadAccountCreditChanges(account.customerId);
     // The aging's limit figure is the server's now; a decrease has already moved it.
     await this.#reloadBook();

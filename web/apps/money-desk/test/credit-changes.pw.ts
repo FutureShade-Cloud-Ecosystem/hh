@@ -150,3 +150,34 @@ test("at 390 the approver list reads the name, then From, then To, and no box ov
     expect(name.y, "the name reads before From").toBeLessThan(from.y);
   }
 });
+
+test("the request form clears after a send, and a double press files one request", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openCreditLimit(page, "Granite Edge Landscaping");
+  const sends: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "POST" && r.url().endsWith("/api/v1/ar/credit-changes")) sends.push(r.url());
+  });
+  await page.locator("[data-field='credit-limit-amount']").fill("90000.00");
+  await page.locator("[data-field='credit-limit-reason']").fill("Two large jobs");
+  await page.getByRole("button", { name: "Request the change" }).dblclick();
+  await expect(page.locator("[data-notice]")).toContainText("waiting for two approvals");
+  await expect(page.locator("[data-field='credit-limit-amount']")).toHaveValue("");
+  await expect(page.locator("[data-field='credit-limit-reason']")).toHaveValue("");
+  expect(sends).toHaveLength(1);
+  await expect(page.locator("[data-credit-history] [data-creditchange-row]").filter({ hasText: "Two large jobs" })).toHaveCount(1);
+});
+
+test("the notes use a bookkeeper's words: no engine terms", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openCreditLimit(page, "Granite Edge Landscaping");
+  const history = page.locator("[data-credit-history]");
+  await expect(history).not.toContainText(/\bcore\b/i);
+  await expect(history).toContainText("limits on record with each ask");
+  await expect(page.locator("[data-field='credit-limit-amount']")).toHaveAttribute("placeholder", "Such as 55,000.00");
+  await page.getByRole("button", { name: "‹ Receivables" }).first().click();
+  await page.getByRole("button", { name: "Credit changes" }).click();
+  const panel = page.locator("[data-creditchanges]");
+  await expect(panel).not.toContainText(/\bcore\b|approval line/i);
+  await expect(panel).toContainText("Branches you cover");
+});

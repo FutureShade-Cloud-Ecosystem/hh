@@ -801,7 +801,7 @@ function creditLimitPanel(model: DeskModel, account: AccountModel): TemplateResu
               <p class="callout" data-credit-limit-words>An increase waits for approval before the limit moves; a decrease or the same limit takes effect at once. Every ask and every decision is on the record.</p>
               <label>
                 <span>New limit</span>
-                <input type="text" inputmode="decimal" class="amount" data-field="credit-limit-amount" placeholder="Such as 55000.00" autocomplete="off" />
+                <input type="text" inputmode="decimal" class="amount" data-field="credit-limit-amount" placeholder="Such as 55,000.00" autocomplete="off" />
               </label>
               <label>
                 <span>Why the change is asked for (required)</span>
@@ -869,7 +869,7 @@ function creditHistoryPanel(model: DeskModel, account: AccountModel): TemplateRe
     <section class="panel" aria-label="Credit change history" data-credit-history>
       <div class="panel-head"><h3>The history</h3></div>
       ${body}
-      <p class="dim small foot">Newest first. Before and after are the limits the core recorded with each ask.</p>
+      <p class="dim small foot">Newest first. Before and after are the limits on record with each ask.</p>
     </section>
   `;
 }
@@ -891,7 +891,7 @@ export function renderCreditChanges(model: DeskModel): TemplateResult {
       <div class="actions"><button type="button" class="btn btn-secondary" data-action="retry-credit-changes">Try again</button></div>
     `;
   } else if (read.items.length === 0) {
-    body = html`<div class="empty"><strong>No credit change is waiting.</strong><span class="dim">An ask over the two approval line, or a second approval, lands here.</span></div>`;
+    body = html`<div class="empty"><strong>No credit change is waiting.</strong><span class="dim">A raise above the amount that needs two approvals, or a second approval, lands here.</span></div>`;
   } else {
     body = html`
       <div class="scroll">
@@ -953,9 +953,9 @@ export function renderCreditChanges(model: DeskModel): TemplateResult {
     </div>
     ${tabsBar(model)} ${messages(model)}
     <section class="panel" aria-label="Credit changes waiting" data-creditchanges>
-      <div class="panel-head"><h3>Waiting for a decision</h3><span class="dim small">The branches you reach</span></div>
+      <div class="panel-head"><h3>Waiting for a decision</h3><span class="dim small">Branches you cover</span></div>
       ${body}
-      <p class="dim small foot">The approver can never be the person who asked, and the same person never approves twice. Over the two approval line the first approval is recorded and the limit moves only on the second.</p>
+      <p class="dim small foot">The approver can never be the person who asked, and the same person never approves twice. A raise above the amount that needs two approvals records the first approval, and the limit moves only on the second.</p>
     </section>
   `;
 }
