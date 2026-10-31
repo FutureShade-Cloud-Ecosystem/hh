@@ -126,11 +126,11 @@ func (r *ARLandingRepository) OpenInvoices(ctx context.Context, asOf time.Time, 
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT i.id::text, i.invoice_no::text, c.id::text, c.name, c.account_no::text,
-		       COALESCE(i.branch_id::text, ''), i.balance_cents, i.due_date
+		       COALESCE(i.branch_id::text, ''), (i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))), i.due_date
 		  FROM invoices i
 		  JOIN customers c ON c.id = i.customer_id
 		 WHERE i.status IN ('FINALIZED','PARTIALLY_PAID')
-		   AND i.balance_cents <> 0
+		   AND (i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))) <> 0
 		   AND ($1 = '' OR i.branch_id = $1::uuid)
 		   AND ($2::uuid[] IS NULL OR i.branch_id = ANY($2::uuid[]))`, branchID, reach.SQLArg())
 	if err != nil {
@@ -304,11 +304,12 @@ func (r *ARLandingRepository) ReminderContextFor(ctx context.Context, customerID
 		       COALESCE(i.balance_cents, 0)
 		  FROM customers c
 		  LEFT JOIN LATERAL (
-		       SELECT iv.invoice_no, iv.due_date, iv.balance_cents
+		       SELECT iv.invoice_no, iv.due_date,
+		              iv.balance_cents - LEAST(GREATEST(iv.holdback_cents, 0), GREATEST(iv.balance_cents, 0)) AS balance_cents
 		         FROM invoices iv
 		        WHERE iv.customer_id = c.id
 		          AND iv.status IN ('FINALIZED','PARTIALLY_PAID')
-		          AND iv.balance_cents > 0
+		          AND iv.balance_cents - LEAST(GREATEST(iv.holdback_cents, 0), GREATEST(iv.balance_cents, 0)) > 0
 		          AND iv.doc_type = 'INVOICE'
 		          AND ($2::uuid IS NULL OR iv.id = $2::uuid)
 		          AND ($4::uuid[] IS NULL OR iv.branch_id = ANY($4::uuid[]))

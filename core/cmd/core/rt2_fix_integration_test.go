@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"testing"
 	"time"
 
@@ -277,4 +278,44 @@ func TestRT2Fix_ASecondLienJobNeverReBooksTheFirstJobsInvoice(t *testing.T) {
 	eq(t, "lien job B holds its own invoice only", onB, int64(5_000))
 	_, _ = docA, docB
 	l.ties("after two lien jobs")
+}
+
+// P2-1: an invoice whose net is paid (status PARTIALLY_PAID, balance = holdback) is not overdue: the
+// collections text sweep does not name it, the AR landing does not list it as open past due, and a
+// reminder is not about it.
+func TestRT2Fix_CollectionsAndTheARLandingNeverAskForTheHoldback(t *testing.T) {
+	l := rt2Setup(t, "coll")
+	l.newJob(true)
+	doc := l.invoice(100_000, 0) // 100,000 gross, 10,000 held, 90,000 owed now
+	l.ageInvoice(doc.InvoiceID, 90)
+	l.plantPayment(doc.InvoiceID, 90_000, time.Now().AddDate(0, 0, -30))
+	eq(t, "the invoice now carries only its holdback as balance", l.invoiceRow(doc.InvoiceID).balance, int64(10_000))
+	ctx := context.Background()
+
+	swept, err := messagingprovider.NewPgARAging(l.pool).OverdueInvoices(ctx, time.Now(), 1, 5000)
+	if err != nil {
+		t.Fatalf("the text sweep: %v", err)
+	}
+	for _, s := range swept {
+		if s.InvoiceID == doc.InvoiceID {
+			t.Errorf("the text sweep names the invoice whose net is paid: balance %d", s.BalanceCents)
+		}
+	}
+
+	open, err := billing.NewARLandingRepository(l.pool).OpenInvoices(ctx, time.Now(), l.branch, billing.BranchReach{Global: true})
+	if err != nil {
+		t.Fatalf("the landing's open invoices: %v", err)
+	}
+	for _, o := range open {
+		if o.InvoiceID == doc.InvoiceID && o.BalanceCents != 0 {
+			t.Errorf("the AR landing lists %d cents of holdback as open", o.BalanceCents)
+		}
+	}
+
+	rc, err := billing.NewARLandingRepository(l.pool).ReminderContextFor(ctx, l.cust, "", "EMAIL", billing.BranchReach{Global: true})
+	if err != nil {
+		t.Fatalf("the reminder context: %v", err)
+	}
+	eq(t, "the reminder names no invoice (nothing is past due)", rc.InvoiceNo, "")
+	eq(t, "the reminder names no balance", rc.BalanceCents, int64(0))
 }
