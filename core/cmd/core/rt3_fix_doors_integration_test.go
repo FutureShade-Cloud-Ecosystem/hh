@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -138,4 +139,79 @@ func TestRT3Fix_AControllerReversesAReleaseMadeInError(t *testing.T) {
 	l.drain()
 	eq(t, "released again", l.holdbackOf(doc.InvoiceID), int64(0))
 	l.ties("after the second release")
+}
+
+// Item 5, P3-2: one idempotency key used on two jobs at once releases one of them. The key names one release.
+func TestRT3Fix_AKeyUsedOnTwoJobsAtOnceReleasesOne(t *testing.T) {
+	l := rt2Setup(t, "fxk")
+	type pair struct{ job, invoice string }
+	var pairs []pair
+	for i := 0; i < 6; i++ {
+		l.newJob(true)
+		doc := l.invoice(100_000, 0)
+		l.rt3PerfOn(70)
+		pairs = append(pairs, pair{l.job, doc.InvoiceID})
+	}
+	for round := 0; round < 3; round++ {
+		a, b := pairs[round*2], pairs[round*2+1]
+		key := "fxk-shared-" + string(rune('a'+round))
+		errs := make([]error, 2)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i, p := range []pair{a, b} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				in := l.rt3Input(key)
+				in.CustomerJobID = p.job
+				_, errs[i] = l.rt3Service(time.Now()).Release(context.Background(), in)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		won := 0
+		for _, e := range errs {
+			if e == nil {
+				won++
+			} else if rt3Refusal(e) != billing.RefusedKeyReused {
+				t.Errorf("round %d: the loser must be told the key is spent, got %v", round, e)
+			}
+		}
+		if won != 1 {
+			t.Errorf("round %d: one key must release exactly one job, %d released", round, won)
+		}
+		eq(t, "one release row for the key", l.rt3Releases(a.invoice)+l.rt3Releases(b.invoice), 1)
+	}
+}
+
+// Item 5, P3-3 and P3-4: a Controller who does not reach every branch the job's holdback sits at is told so in
+// words, and nothing is released (the job is released whole or refused).
+func TestRT3Fix_AControllerOutsideTheBranchIsToldSo(t *testing.T) {
+	l := rt2Setup(t, "fxl")
+	l.newJob(true)
+	first := l.invoice(100_000, 0)
+	second := l.invoice(50_000, 0)
+	l.rt3PerfOn(70)
+	var other string
+	if err := l.pool.QueryRow(context.Background(), `SELECT id::text FROM locations WHERE loc_type = 'BRANCH' AND id <> $1::uuid ORDER BY id LIMIT 1`, l.branch).Scan(&other); err != nil {
+		t.Fatalf("a second branch: %v", err)
+	}
+	mustExec(t, context.Background(), l.pool, `UPDATE invoices SET branch_id = $2::uuid WHERE id = $1::uuid`, second.InvoiceID, other)
+
+	check := func(what string, reach func(string) bool) {
+		in := l.rt3Input("fxl-" + what)
+		in.CanAccessBranch = reach
+		_, err := l.rt3Service(time.Now()).Release(context.Background(), in)
+		if rt3Refusal(err) != billing.RefusedOutsideBranches {
+			t.Fatalf("%s: want an outside your branches refusal, got %v", what, err)
+		}
+		if !strings.Contains(err.Error(), "outside your") {
+			t.Errorf("%s: the words must say the branches are outside the caller's reach, got %v", what, err)
+		}
+		eq(t, what+": nothing released", l.holdbackOf(first.InvoiceID), int64(10_000))
+		eq(t, what+": nothing released (second)", l.holdbackOf(second.InvoiceID), int64(5_000))
+	}
+	check("none", func(string) bool { return false })
+	check("part", func(b string) bool { return b == l.branch })
 }

@@ -56,6 +56,7 @@ const (
 	RefusedNotController   = "NOT_CONTROLLER"
 	RefusedKeyReused       = "KEY_REUSED"
 	// The reversal's refusals.
+	RefusedOutsideBranches   = "OUTSIDE_BRANCHES"
 	RefusedReleaseNotFound   = "RELEASE_NOT_FOUND"
 	RefusedAlreadyReversed   = "ALREADY_REVERSED"
 	RefusedReversalPaidSince = "PAID_SINCE"
