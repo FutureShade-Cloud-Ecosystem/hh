@@ -43,13 +43,116 @@ const DOCUMENTS = [
   { n: 10, payee: 6, doc: "LC-2207", kind: "LANDED_COST", landed: "DUTY", po: "PO-1108", issued: -105, due: -75, total: 112_000 },
 ];
 
-// The vendors the Financial Controller has marked as subcontractors (W3-T51), with the CRA
+// The vendors the Financial Controller has marked as subcontractors (W3-T51, W3-T52), with the CRA
 // business number each one gave (the second gave none, so the report says the number is missing)
-// and what the year paid them. These are the same invented vendors the board reads.
+// and the bills paid to them during the year. Each payment's Paid in <year>, Box 22 services share
+// (tax included), pre-tax services subtotal, $500 threshold mark and unmarked bill line note are
+// computed by the core's own pro-rata half-to-even rules (t5018_report.go).
 const SUBCONTRACTORS = [
-  { n: 1, name: "Ironwood Timber Supply (demo)", no: "V-1001", number: "123456789", paid: 482_500 },
-  { n: 2, name: "Meadowlark Landscape Lighting (demo)", no: "V-1003", number: "", paid: 88_750 },
+  {
+    n: 1,
+    name: "Ironwood Timber Supply (demo)",
+    no: "V-1001",
+    number: "123456789",
+    bills: [
+      {
+        tax_cents: 55_509,
+        paid_cents: 482_500,
+        lines: [{ supply_kind: null, line_total_cents: 426_991 }],
+      },
+    ],
+  },
+  {
+    n: 2,
+    name: "Meadowlark Landscape Lighting (demo)",
+    no: "V-1003",
+    number: "",
+    bills: [
+      {
+        tax_cents: 10_210,
+        paid_cents: 88_750,
+        lines: [
+          { supply_kind: "SERVICES", line_total_cents: 60_000 },
+          { supply_kind: "GOODS", line_total_cents: 18_540 },
+        ],
+      },
+    ],
+  },
+  {
+    n: 4,
+    name: "Saltmarsh Fasteners (demo)",
+    no: "V-1004",
+    number: "987654321",
+    bills: [
+      {
+        tax_cents: 6_240,
+        paid_cents: 54_240,
+        lines: [{ supply_kind: "SERVICES", line_total_cents: 48_000 }],
+      },
+    ],
+  },
 ];
+
+export const T5018_RULE_NOTE = "T5018 applies only where construction is more than half the dealer's business income.";
+const T5018_THRESHOLD_CENTS = 50_000;
+export const T5018_UNDER_THRESHOLD_NOTE = "under the $500 slip threshold, no slip.";
+export const T5018_GOODS_SHARE_PREFIX = "Box 22 counts services only;";
+export const T5018_GOODS_SHARE_SUFFIX = "of goods is not counted.";
+export const T5018_NOTHING_PAID_NOTE = "nothing paid this year";
+
+/** Formats integer cents as dollars and cents, matching the core's t5018FormatDollars. */
+function t5018FormatDollars(cents) {
+  const abs = Math.abs(cents);
+  const dollars = Math.trunc(abs / 100).toLocaleString("en-US");
+  const rem = String(abs % 100).padStart(2, "0");
+  return `${cents < 0 ? "-" : ""}$${dollars}.${rem}`;
+}
+
+/** The core's t5018UnderThresholdNote. */
+function t5018UnderThresholdNote(servicesSubtotalCents) {
+  return `Services before tax ${t5018FormatDollars(servicesSubtotalCents)}: ${T5018_UNDER_THRESHOLD_NOTE}`;
+}
+
+/** The core's t5018GoodsShareNote. */
+function t5018GoodsShareNote(goodsShareCents) {
+  return `${T5018_GOODS_SHARE_PREFIX} ${t5018FormatDollars(goodsShareCents)} ${T5018_GOODS_SHARE_SUFFIX}`;
+}
+
+/** The core's t5018ProRataCents (half to even in integer cents). */
+function t5018ProRataCents(amountCents, partCents, wholeCents) {
+  if (amountCents <= 0 || partCents <= 0 || wholeCents <= 0) return 0;
+  if (partCents === wholeCents) return amountCents;
+  const num = BigInt(amountCents) * BigInt(partCents);
+  const whole = BigInt(wholeCents);
+  let q = num / whole;
+  const rem = num % whole;
+  const twiceRem = rem * 2n;
+  if (twiceRem > whole || (twiceRem === whole && q % 2n === 1n)) {
+    q += 1n;
+  }
+  return Number(q);
+}
+
+/** The core's t5018PaymentShare (Box 22 services share with tax, and pre-tax services subtotal share). */
+function t5018PaymentShare(paidCents, billSubtotalCents, billTotalCents, billServicesSubtotalCents) {
+  if (paidCents <= 0 || billSubtotalCents <= 0 || billTotalCents <= 0 || billServicesSubtotalCents <= 0) {
+    return { box22Cents: 0, servicesSubtotalCents: 0 };
+  }
+  return {
+    box22Cents: t5018ProRataCents(paidCents, billServicesSubtotalCents, billSubtotalCents),
+    servicesSubtotalCents: t5018ProRataCents(paidCents, billServicesSubtotalCents, billTotalCents),
+  };
+}
+
+/** The core's t5018UnmarkedLinesNote. */
+function t5018UnmarkedLinesNote(n) {
+  if (n <= 0) return "";
+  if (n === 1) {
+    return "1 bill line is not marked goods or services; it is counted as services until marked";
+  }
+  return `${n} bill lines are not marked goods or services; they are counted as services until marked`;
+}
+
 
 // The USD bill the "usd" scenario adds: USD 1,000.00 entered at 1.35, so CAD 1,350.00 in the books.
 // It is its own scenario because the board's totals in the other legs are written against the
@@ -221,33 +324,99 @@ export function createPurchasingWorld({ dayOffset, houseDay }) {
     return { as_of: asOf, ...bands, total_cents: total, items, next_cursor: null };
   }
 
-  /** The year's T5018 report: the marked vendors, their business numbers and what the year paid them. */
+  /** The year's T5018 report: the marked vendors, their business numbers, paid totals and Box 22 shares. */
   function t5018Report(year) {
     const items = [];
     let total = 0;
+    let box22Total = 0;
     for (const sub of SUBCONTRACTORS) {
+      let paidCents = 0;
+      let box22Cents = 0;
+      let servicesSubtotalCents = 0;
+      let unmarkedLineCount = 0;
+      for (const bill of sub.bills) {
+        const subtotal = bill.lines.reduce((s, l) => s + l.line_total_cents, 0);
+        const totalCents = subtotal + bill.tax_cents;
+        const servicesSubtotal = bill.lines
+          .filter((l) => l.supply_kind === null || l.supply_kind === "SERVICES")
+          .reduce((s, l) => s + l.line_total_cents, 0);
+        const unmarked = bill.lines.filter((l) => l.supply_kind === null).length;
+        const share = t5018PaymentShare(bill.paid_cents, subtotal, totalCents, servicesSubtotal);
+        paidCents += bill.paid_cents;
+        box22Cents += share.box22Cents;
+        servicesSubtotalCents += share.servicesSubtotalCents;
+        unmarkedLineCount += unmarked;
+      }
+      const underThreshold = servicesSubtotalCents < T5018_THRESHOLD_CENTS;
+      let thresholdNote = "";
+      if (paidCents === 0 && box22Cents === 0) {
+        thresholdNote = T5018_NOTHING_PAID_NOTE;
+      } else if (underThreshold) {
+        thresholdNote = t5018UnderThresholdNote(servicesSubtotalCents);
+      } else if (paidCents > box22Cents) {
+        thresholdNote = t5018GoodsShareNote(paidCents - box22Cents);
+      }
       items.push({
         vendor_id: payeeId(sub.n),
         vendor_no: sub.no,
         name: sub.name,
         business_number: sub.number,
         business_number_missing: sub.number === "",
-        paid_cents: sub.paid,
+        paid_cents: paidCents,
+        box_22_cents: box22Cents,
+        services_subtotal_cents: servicesSubtotalCents,
+        under_threshold: underThreshold,
+        threshold_note: thresholdNote,
+        unmarked_line_count: unmarkedLineCount,
+        unmarked_lines_note: t5018UnmarkedLinesNote(unmarkedLineCount),
       });
-      total += sub.paid;
+      total += paidCents;
+      box22Total += box22Cents;
     }
-    return { year, items, total_cents: total };
+    return {
+      year,
+      rule_note: T5018_RULE_NOTE,
+      items,
+      total_cents: total,
+      box_22_total_cents: box22Total,
+    };
   }
 
   /** The same report as the file a bookkeeper hands the contractor's book: the core's own CSV shape. */
   function t5018Csv(year) {
     const report = t5018Report(year);
-    const rows = [["vendor_no", "vendor_name", "business_number", "paid_cents"]];
+    const ruleNote = report.rule_note || T5018_RULE_NOTE;
+    const rows = [
+      [ruleNote],
+      [
+        "vendor_no",
+        "vendor_name",
+        "business_number",
+        "paid_cents",
+        "box_22_cents",
+        "services_subtotal_cents",
+        "under_threshold",
+        "threshold_note",
+        "unmarked_line_count",
+        "unmarked_lines_note",
+      ],
+    ];
     for (const row of report.items) {
-      rows.push([row.vendor_no, row.name, row.business_number_missing ? "(missing)" : row.business_number, String(row.paid_cents)]);
+      rows.push([
+        row.vendor_no,
+        row.name,
+        row.business_number_missing ? "(missing)" : row.business_number,
+        String(row.paid_cents),
+        String(row.box_22_cents),
+        String(row.services_subtotal_cents),
+        row.under_threshold ? "true" : "false",
+        row.threshold_note ?? "",
+        String(row.unmarked_line_count),
+        row.unmarked_lines_note ?? "",
+      ]);
     }
     rows.push([]);
-    rows.push(["Total", "", "", String(report.total_cents)]);
+    rows.push(["Total", "", "", String(report.total_cents), String(report.box_22_total_cents), "", "", "", "", ""]);
     return `${rows.map((row) => row.map(csvCell).join(",")).join("\n")}\n`;
   }
 

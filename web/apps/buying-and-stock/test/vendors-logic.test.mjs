@@ -14,6 +14,16 @@ import {
   refWords,
 } from "../src/vendors/vendors-logic.ts";
 import { refusalWords } from "../src/po/po-logic.ts";
+import { renderVendors } from "../src/vendors/vendors-views.ts";
+
+function flat(v) {
+  if (v == null || v === false) return "";
+  if (Array.isArray(v)) return v.map(flat).join("");
+  if (typeof v === "object" && v.strings) {
+    return Array.from(v.strings).map((s, i) => s + (i < v.values.length ? flat(v.values[i]) : "")).join("");
+  }
+  return typeof v === "symbol" ? "" : String(v);
+}
 
 const CURRENT = { name: "Alcli (demo)", payment_terms_days: 30 };
 
@@ -110,4 +120,47 @@ test("the T5018 body always says the mark, and the number only when it changed",
   assert.deepEqual(cleared.body, { is_subcontractor: false, business_number: "" }, "an emptied number is said, and it clears");
   const spaces = t5018Body({ isSubcontractor: true, businessNumber: "123 456 789" }, { is_t5018_subcontractor: false, business_number: "" });
   assert.deepEqual(spaces.body, { is_subcontractor: true, business_number: "123456789" }, "the number is read as the form prints it");
+});
+
+test("an invalid CRA business number message sits directly under the CRA business number field and above its hint", () => {
+  const vendor = {
+    id: "v1",
+    vendor_no: "V-ALC",
+    name: "Alcli (demo)",
+    payment_terms_days: 30,
+    is_active: true,
+    is_t5018_subcontractor: false,
+  };
+  const markup = flat(
+    renderVendors({
+      phase: "ready",
+      vendors: [vendor],
+      query: "",
+      showInactive: false,
+      selected: vendor,
+      tab: "details",
+      savedEmail: null,
+      clearEmail: false,
+      canSetT5018: true,
+      t5018Mark: true,
+      contact: null,
+      codes: null,
+      products: [],
+      editingCode: null,
+      removal: null,
+      removalCode: null,
+      orderLookup: null,
+      lookupError: "",
+      busy: false,
+      error: "The business number must be nine digits, with RC0001 after them for a program account.",
+      notice: "",
+    }),
+  );
+  const bnPos = markup.indexOf("data-v-bn");
+  const errPos = markup.indexOf("data-error");
+  const hintPos = markup.indexOf("Nine digits, with RC0001 after them");
+  const savePos = markup.indexOf("Save the T5018 record");
+  assert.ok(bnPos > 0 && errPos > bnPos, "the invalid number message must sit under the CRA business number input");
+  assert.ok(errPos < hintPos && hintPos < savePos, "the invalid number message must sit above the hint and the T5018 save button");
+  assert.equal([...markup.matchAll(/data-error/g)].length, 1, "the invalid number message is rendered once");
 });

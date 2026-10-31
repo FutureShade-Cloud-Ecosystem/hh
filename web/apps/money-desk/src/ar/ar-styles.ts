@@ -180,6 +180,17 @@ const receivablesStyles = css`
   .credit-form .callout, .credit-form .note { margin: 0; }
   .credit-form .btn { min-height: var(--hh-h-input); }
   .credit-form .actions { margin-top: 0; }
+  /* The credit limit's ask (CC-2): the sentence that says what the core will do, the new limit, the
+     reason, and the press. The amount sits at the money column's own alignment, the way every
+     figure a person types on this desk does. */
+  .credit-limit-form { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr) auto; gap: var(--hh-s-12); align-items: end; }
+  .credit-limit-form [data-credit-limit-words] { grid-column: 1 / -1; margin: 0; }
+  .credit-limit-form .actions { margin-top: 0; }
+  .credit-limit-form .btn { min-height: var(--hh-h-input); }
+  .credit-figure { font-variant-numeric: tabular-nums; }
+  /* A waiting request's reject reason opens under its row, the shape of the credit form's row. */
+  .credit-reject-form { display: grid; gap: var(--hh-s-12); }
+  .credit-reject-form .actions { margin-top: 0; }
   /* The Pay form on a vendor bill: which bill it is paying, the amount, the day and the note, then
      the press. It opens in the row it belongs to, so it is a grid of its own: the sentence on top,
      then the three fields and the buttons. The buttons are as tall as the fields they sit beside,
@@ -272,11 +283,19 @@ const receivablesStyles = css`
     table.stack, table.stack tbody { display: block; }
     table.stack tr { display: grid; gap: var(--hh-s-4) var(--hh-s-12); padding: var(--hh-s-12) 0; border-bottom: 1px solid var(--hh-line); }
     table.stack tbody td { display: block; padding: 0; border: 0; }
-    table.t5018 tbody td[data-label]::before { content: attr(data-label); display: block; color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-    table.stack tr[aria-current="true"] { background: var(--hh-row-alt); }
-    table.stack tr[aria-current="true"] td { background: none; }
+    table.t5018 tbody td[data-label] { display: flex; justify-content: space-between; align-items: baseline; gap: var(--hh-s-12); }
+    table.t5018 tbody td[data-label]::before { content: attr(data-label); color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; text-align: start; }
+    table.t5018 td:first-child .who { white-space: normal; overflow-wrap: anywhere; }
+    table.t5018 tbody td.num { text-align: end; }
     table.stack tfoot { display: table; width: 100%; }
     table.stack tfoot td:empty { display: none; }
+    table.stack.t5018 tfoot { display: block; width: 100%; }
+    table.t5018 tfoot tr { display: grid; gap: var(--hh-s-4); padding-top: var(--hh-s-12); border-top: 1px solid var(--hh-text); border-bottom: 0; }
+    table.t5018 tfoot td { display: block; padding: 0; border: 0; text-align: start; }
+    table.t5018 tfoot td.num { display: flex; justify-content: space-between; align-items: baseline; gap: var(--hh-s-12); text-align: end; }
+    table.t5018 tfoot td[data-label]::before { content: attr(data-label); color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; text-align: start; }
+    table.stack tr[aria-current="true"] { background: var(--hh-row-alt); }
+    table.stack tr[aria-current="true"] td { background: none; }
     table.reg tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "inv bal" "acct acct" "due due" "marks marks" "act act"; }
     table.reg tbody td:nth-child(3) { display: none; }
     table.reg tbody td:nth-child(6) { text-align: start; }
@@ -306,6 +325,27 @@ const receivablesStyles = css`
     table.stmt tbody td:nth-child(4) { grid-area: act; text-align: start; }
     table.holdtbl tr { grid-template-columns: minmax(0, 1fr); }
     table.holdtbl td.act { text-align: start; }
+    /* The credit change tables (CC-2) on a phone: one card per ask, the money figures keeping
+       their own names and alignment, each decision a line of its own. */
+    table.credhist tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "who after" "why why" "before before" "decision decision"; }
+    table.credwait tr { grid-template-columns: minmax(0, 1fr); grid-template-areas: "who" "why" "from" "to" "decision" "act"; }
+    table.credwait tbody td, table.credhist tbody td { display: block; padding: 0; border: 0; min-width: 0; overflow-wrap: anywhere; }
+    table.credwait td:nth-child(1) { grid-area: who; }
+    table.credwait td:nth-child(2), table.credhist td:nth-child(2) { grid-area: why; }
+    table.credwait td:nth-child(3) { grid-area: from; }
+    table.credwait td:nth-child(4) { grid-area: to; }
+    table.credhist td:nth-child(3) { grid-area: before; }
+    table.credhist td:nth-child(4) { grid-area: after; text-align: end; }
+    table.credwait td:nth-child(5), table.credhist td:nth-child(5) { grid-area: decision; text-align: start; }
+    table.credwait td:nth-child(6) { grid-area: act; text-align: start; }
+    table.credhist td:nth-child(1) { grid-area: who; }
+    table.credhist td:nth-child(3), table.credhist td:nth-child(4), table.credwait td:nth-child(3), table.credwait td:nth-child(4) { display: flex; justify-content: space-between; align-items: baseline; gap: var(--hh-s-12); text-align: end; }
+    table.credhist td:nth-child(3)::before, table.credhist td:nth-child(4)::before, table.credwait td:nth-child(3)::before, table.credwait td:nth-child(4)::before, table.credhist td:nth-child(5)::before, table.credwait td:nth-child(5)::before { content: attr(data-card-label); color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; text-align: start; }
+    table.credhist td:nth-child(5)::before, table.credwait td:nth-child(5)::before { display: block; margin-bottom: var(--hh-s-4); }
+    table.credwait tr.credit-reject-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "form"; }
+    table.credwait tr.credit-reject-row > td { grid-area: form; padding: var(--hh-s-8) 0 var(--hh-s-16); }
+    .credit-limit-form { grid-template-columns: minmax(0, 1fr); }
+    .credit-limit-form .actions .btn { flex: 1; }
     /* The Payables aging list (W2-9b) on a phone: one card per payee, its name and open total on
        the first line the way the Receivables register puts its balance, then its five bands one
        under the other, each naming itself over its figure, both left aligned, so the eye reads

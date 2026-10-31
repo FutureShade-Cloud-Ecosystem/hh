@@ -16,6 +16,12 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { houseDayOffset } from "./house-day.mjs";
+import {
+  T5018_GOODS_SHARE_PREFIX,
+  T5018_GOODS_SHARE_SUFFIX,
+  T5018_NOTHING_PAID_NOTE,
+  T5018_UNDER_THRESHOLD_NOTE,
+} from "./stub/purchasing-world.mjs";
 import { SCHEMA_DESCRIPTORS } from "../../../packages/api-client/src/testing.ts";
 import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 
@@ -96,6 +102,10 @@ const CONTROLLER_TOKEN = tokenFor("de110000-0000-4000-9000-000000000008");
 // The Payables and Receivables clerk: at work on the money desk, so a manage level route there
 // turns the role away.
 const CLERK_TOKEN = tokenFor("de110000-0000-4000-9000-000000000007");
+// The credit change routes' deciders and a requester that may not decide (CC-2).
+const BRANCH_MANAGER_TOKEN = tokenFor("de5b2000-0000-4000-9000-000000000003");
+const SALES_MANAGER_TOKEN = tokenFor("de110000-0000-4000-9000-000000000002");
+const bearer = (token) => ({ Authorization: `Bearer ${token}` });
 
 const reset = () => fetch(`${base}/_stub/reset`, { method: "POST" });
 
@@ -567,6 +577,90 @@ test("a body that is not JSON is the core's 400 on every route that reads one", 
   assert.ok(coreSource.includes("the request body must be JSON"));
 });
 
+test("the T5018 report and its CSV answer in the contract's shape and match the core's CSV columns, header line and route answer", async () => {
+  await reset();
+  const t5018Go = readFileSync(join(coreInternal, "purchasing", "t5018_report.go"), "utf8");
+  const colBlock = t5018Go.match(/t5018CSVColumns\s*=\s*\[\]string\{([^}]+)\}/);
+  assert.ok(colBlock !== null, "the core's t5018_report.go must declare t5018CSVColumns");
+  const coreCols = [...colBlock[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(coreCols.includes("box_22_cents") && coreCols.includes("services_subtotal_cents") && coreCols.includes("under_threshold") && coreCols.includes("threshold_note") && coreCols.includes("unmarked_lines_note"));
+
+  assert.ok(t5018Go.includes("out[idx].PaidCents += paidCents"), "the core must accumulate every payment into PaidCents");
+  assert.ok(t5018Go.includes("report.TotalCents += row.PaidCents"), "the core must sum PaidCents into TotalCents");
+  assert.ok(!t5018Go.includes("row.PaidCents = row.Box22Cents"), "the core must not overwrite PaidCents with Box22Cents");
+
+  const coreConst = (name) => {
+    const m = t5018Go.match(new RegExp(`const\\s+${name}\\s*=\\s*"([^"]+)"`));
+    assert.ok(m !== null, `the core's t5018_report.go must declare ${name}`);
+    return m[1];
+  };
+  assert.equal(T5018_NOTHING_PAID_NOTE, coreConst("T5018NothingPaidNote"), "the stub's nothing-paid words must match the core's T5018NothingPaidNote");
+  assert.equal(T5018_UNDER_THRESHOLD_NOTE, coreConst("T5018UnderThresholdNote"), "the stub's under-threshold tail must match the core's T5018UnderThresholdNote");
+  assert.equal(T5018_GOODS_SHARE_PREFIX, coreConst("T5018GoodsSharePrefix"), "the stub's goods-share prefix must match the core's T5018GoodsSharePrefix");
+  assert.equal(T5018_GOODS_SHARE_SUFFIX, coreConst("T5018GoodsShareSuffix"), "the stub's goods-share suffix must match the core's T5018GoodsShareSuffix");
+  assert.ok(
+    t5018Go.includes('fmt.Sprintf("Services before tax %s: %s", t5018FormatDollars(servicesSubtotalCents), T5018UnderThresholdNote)'),
+    "the core must format the under-threshold note with Services before tax and the pre-tax figure",
+  );
+  assert.ok(
+    t5018Go.includes('fmt.Sprintf("%s %s %s", T5018GoodsSharePrefix, t5018FormatDollars(goodsShareCents), T5018GoodsShareSuffix)'),
+    "the core must format the mixed-bill goods share note with T5018GoodsSharePrefix, the goods figure and T5018GoodsShareSuffix",
+  );
+
+  const res = await call("GET", "/api/v1/purchasing/t5018?year=2026");
+  assert.equal(res.status, 200);
+  holds("PurchasingT5018Report", res.json);
+  assert.ok(t5018Go.includes(`"${res.json.rule_note}"`), "the report's rule_note must come from the core's source");
+  assert.equal(res.json.items.length, 3);
+  const mixed = res.json.items.find((r) => r.paid_cents !== r.box_22_cents);
+  assert.ok(mixed !== undefined, "the stub's mixed subcontractor row shows Paid in <year> and Box 22 apart");
+  assert.equal(mixed.paid_cents - mixed.box_22_cents, 20_950, "Paid and Box 22 on the mixed bill differ by the goods share");
+  assert.equal(
+    mixed.threshold_note,
+    "Box 22 counts services only; $209.50 of goods is not counted.",
+    "Meadowlark's threshold_note names the $209.50 goods share excluded from Box 22",
+  );
+  assert.equal(res.json.total_cents - res.json.box_22_total_cents, 20_950);
+  const under = res.json.items.find((r) => r.under_threshold);
+  assert.ok(under !== undefined, "the stub's report includes a vendor under the $500 pre-tax threshold");
+  assert.equal(
+    under.threshold_note,
+    "Services before tax $480.00: under the $500 slip threshold, no slip.",
+    "the under-threshold vendor's threshold_note names the $480.00 pre-tax services figure and the $500 slip threshold",
+  );
+
+  const csvRes = await fetch(`${base}/api/v1/purchasing/t5018.csv?year=2026`, { headers: { Authorization: "Bearer stub-token", "X-Org": "hh-demo" } });
+  assert.equal(csvRes.status, 200);
+  const text = await csvRes.text();
+  const lines = text.trimEnd().split("\n");
+  const csvQuote = (v) => {
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  assert.equal(lines[0], csvQuote(res.json.rule_note), "the CSV opens with the core's construction income sentence as a header line");
+  assert.equal(lines[1], coreCols.join(","), "the CSV column header matches the core's t5018CSVColumns");
+  res.json.items.forEach((row, i) => {
+    const expectedRow = [
+      row.vendor_no,
+      row.name,
+      row.business_number_missing ? "(missing)" : row.business_number,
+      String(row.paid_cents),
+      String(row.box_22_cents),
+      String(row.services_subtotal_cents),
+      row.under_threshold ? "true" : "false",
+      row.threshold_note ?? "",
+      String(row.unmarked_line_count),
+      row.unmarked_lines_note ?? "",
+    ].map(csvQuote).join(",");
+    assert.equal(lines[2 + i], expectedRow, `CSV row ${i} matches the route answer`);
+  });
+  assert.equal(lines[2 + res.json.items.length], "");
+  assert.equal(
+    lines[3 + res.json.items.length],
+    ["Total", "", "", String(res.json.total_cents), String(res.json.box_22_total_cents), "", "", "", "", ""].join(","),
+  );
+});
+
 // The open AP the Payables board reads, and the payment that lowers it: the core's purchasing
 // routes. The stub answers them in the contract's shapes, and every refusal is the core's own
 // sentence.
@@ -616,4 +710,64 @@ test("the open AP and the bill payment answer in the contract's shapes, and the 
   // Payables and Receivables role is at work on that surface.
   const clerk = await call("POST", PAY_BILL, body, { Authorization: `Bearer ${CLERK_TOKEN}`, "Idempotency-Key": "clerk-key" });
   assert.equal(clerk.status, 403);
+});
+
+test("the credit change routes answer in the contract's shapes and the refusals are the core's own sentences", async () => {
+  await reset();
+  const aging = await call("GET", "/api/v1/ar/aging");
+  const customer = aging.json.items[0].customer_id;
+
+  // The gate is the manager tiers; a caller the stub does not know is turned away with the shared body.
+  const unknown = await call("GET", "/api/v1/ar/credit-changes", undefined, bearer(tokenFor("00000000-0000-4000-9000-000000000000")));
+  refused(unknown, 403, "Forbidden");
+
+  const waiting = await call("GET", "/api/v1/ar/credit-changes?status=PENDING", undefined, bearer(CONTROLLER_TOKEN));
+  assert.equal(waiting.status, 200);
+  holds("BillingCreditChangePage", waiting.json);
+  assert.ok(waiting.json.items.length >= 2);
+  assert.ok(waiting.json.items.every((r) => r.status === "PENDING"));
+
+  // A decrease applies at once; an increase waits, and the answer says which tier it needs.
+  const down = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 0, reason: "Past due" }, bearer(SALES_MANAGER_TOKEN));
+  assert.equal(down.status, 201);
+  holds("BillingCreditChangeRequest", down.json);
+  assert.equal(down.json.status, "APPLIED");
+  const up = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 2_000_000, reason: "Winter work" }, bearer(SALES_MANAGER_TOKEN));
+  assert.equal(up.status, 201);
+  holds("BillingCreditChangeRequest", up.json);
+  assert.equal(up.json.status, "PENDING");
+  assert.equal(up.json.required_approvals, 1);
+  const noReason = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 10, reason: " " }, bearer(SALES_MANAGER_TOKEN));
+  refused(noReason, 400, "credit change: a reason is required");
+
+  // The refusals of a decision, in the core's order and words.
+  refused(await call("POST", `/api/v1/ar/credit-changes/${up.json.id}/approve`, {}, bearer(SALES_MANAGER_TOKEN)), 403, "credit change: requester cannot approve their own request");
+  const other = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 2_200_000, reason: "More room" }, bearer(BRANCH_MANAGER_TOKEN));
+  refused(await call("POST", `/api/v1/ar/credit-changes/${other.json.id}/approve`, {}, bearer(SALES_MANAGER_TOKEN)), 403, "credit change: caller role is not permitted to approve this request");
+  const approved = await call("POST", `/api/v1/ar/credit-changes/${up.json.id}/approve`, {}, bearer(CONTROLLER_TOKEN));
+  assert.equal(approved.status, 200);
+  holds("BillingCreditChangeRequest", approved.json);
+  assert.equal(approved.json.status, "APPLIED");
+  refused(await call("POST", `/api/v1/ar/credit-changes/${up.json.id}/approve`, {}, bearer(CONTROLLER_TOKEN)), 409, "credit change: request is not pending");
+
+  // The first of two approvals moves nothing; the same person never approves twice.
+  const big = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 9_000_000, reason: "Two large jobs" }, bearer(SALES_MANAGER_TOKEN));
+  assert.equal(big.json.required_approvals, 2);
+  const first = await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/approve`, {}, bearer(CONTROLLER_TOKEN));
+  holds("BillingCreditChangeRequest", first.json);
+  assert.equal(first.json.status, "PENDING");
+  refused(await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/approve`, {}, bearer(CONTROLLER_TOKEN)), 403, "credit change: the same person cannot approve twice");
+  refused(await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/approve`, {}, bearer(BRANCH_MANAGER_TOKEN)), 403, "credit change: caller role is not permitted to approve this request");
+
+  // A rejection needs its reason and settles the request.
+  refused(await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/reject`, { reason: "" }, bearer(BRANCH_MANAGER_TOKEN)), 400, "credit change: a reason is required");
+  const rejected = await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/reject`, { reason: "Balance is past due" }, bearer(BRANCH_MANAGER_TOKEN));
+  assert.equal(rejected.status, 200);
+  holds("BillingCreditChangeRequest", rejected.json);
+  assert.equal(rejected.json.status, "REJECTED");
+  assert.equal(rejected.json.rejection_reason, "Balance is past due");
+
+  const history = await call("GET", `/api/v1/ar/credit-changes?customer_id=${customer}`, undefined, bearer(CONTROLLER_TOKEN));
+  holds("BillingCreditChangePage", history.json);
+  assert.ok(history.json.items.every((r) => r.customer_id === customer));
 });

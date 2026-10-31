@@ -6,6 +6,7 @@ package purchasing
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -511,5 +512,133 @@ func assertBalanced(t *testing.T, legs map[string][2]int64) {
 	}
 	if dr == 0 {
 		t.Fatal("journal has no legs")
+	}
+}
+
+// TestIntegration_Bill_SupplyKindAndMigrationBackfill proves the 0468 supply_kind column on
+// purchasing_bill_lines: PO matched lines default to GOODS, lines with no PO take the clerk's
+// choice (GOODS or SERVICES) or stay NULL (unmarked) when omitted, and the migration backfill
+// marks existing po_line_id IS NOT NULL rows GOODS while leaving po_line_id IS NULL rows NULL.
+func TestIntegration_Bill_SupplyKindAndMigrationBackfill(t *testing.T) {
+	h := newHarness(t)
+	product := h.newProduct(t, "supplykind")
+	po := h.orderedPO(t, product, 10, 1000)
+	lineID := po.Lines[0].ID
+
+	if _, err := h.svc.Receive(h.ctx, po.ID, ReceiveRequest{
+		Lines: []ReceiveLineParams{{POLineID: lineID, QtyBase: 10}},
+	}); err != nil {
+		t.Fatalf("receive: %v", err)
+	}
+
+	// A word outside GOODS and SERVICES is refused before anything is written.
+	if _, err := h.svc.CreateBill(h.ctx, CreateBillRequest{
+		BillNo: billNo("badkind"), POID: po.ID,
+		Lines: []BillLineParams{
+			{Description: "grading", QtyBilledBase: 1, UnitCostCents: 5000, SupplyKind: "FREIGHT"},
+		},
+	}); err == nil {
+		t.Fatal("an unknown supply_kind must be refused")
+	} else if got := statusOf(err); got != 400 {
+		t.Fatalf("status = %d, want 400 (%v)", got, err)
+	}
+
+	bill, err := h.svc.CreateBill(h.ctx, CreateBillRequest{
+		BillNo: billNo("supplykind"), POID: po.ID,
+		Lines: []BillLineParams{
+			{POLineID: lineID, QtyBilledBase: 10, UnitCostCents: 1000},
+			{Description: "extra pallets", QtyBilledBase: 1, UnitCostCents: 2000, SupplyKind: "goods"},
+			{Description: "subcontractor grading", QtyBilledBase: 1, UnitCostCents: 15000, SupplyKind: SupplyKindServices},
+			{Description: "unmarked charge", QtyBilledBase: 1, UnitCostCents: 3000},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create bill: %v", err)
+	}
+	if len(bill.Lines) != 4 {
+		t.Fatalf("got %d lines, want 4", len(bill.Lines))
+	}
+	if bill.Lines[0].SupplyKind != SupplyKindGoods {
+		t.Fatalf("line 1 (PO matched) supply_kind = %q, want %q", bill.Lines[0].SupplyKind, SupplyKindGoods)
+	}
+	if bill.Lines[1].SupplyKind != SupplyKindGoods {
+		t.Fatalf("line 2 (no PO, GOODS chosen) supply_kind = %q, want %q", bill.Lines[1].SupplyKind, SupplyKindGoods)
+	}
+	if bill.Lines[2].SupplyKind != SupplyKindServices {
+		t.Fatalf("line 3 (no PO, SERVICES chosen) supply_kind = %q, want %q", bill.Lines[2].SupplyKind, SupplyKindServices)
+	}
+	if bill.Lines[3].SupplyKind != "" {
+		t.Fatalf("line 4 (no PO, nothing chosen) supply_kind = %q, want empty (unmarked)", bill.Lines[3].SupplyKind)
+	}
+
+	// Prove the 0468 migration backfill inside a rolled-back transaction over a temp table named
+	// purchasing_bill_lines (in pg_temp, shadowing public.purchasing_bill_lines), so the shared
+	// database table is never locked or rewritten.
+	tx, err := h.pool.Begin(h.ctx)
+	if err != nil {
+		t.Fatalf("begin backfill tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(h.ctx) }()
+
+	if _, err := tx.Exec(h.ctx, `
+		CREATE TEMP TABLE purchasing_bill_lines (
+			id UUID PRIMARY KEY,
+			po_line_id UUID NULL
+		) ON COMMIT DROP`); err != nil {
+		t.Fatalf("create temp purchasing_bill_lines: %v", err)
+	}
+	if _, err := tx.Exec(h.ctx, `
+		INSERT INTO purchasing_bill_lines (id, po_line_id) VALUES
+			($1::uuid, $2::uuid),
+			($3::uuid, NULL)`,
+		bill.Lines[0].ID, lineID, bill.Lines[3].ID,
+	); err != nil {
+		t.Fatalf("seed temp purchasing_bill_lines: %v", err)
+	}
+
+	migSQL, err := os.ReadFile("../../db/migrations/0468_bill_line_supply_kind.sql")
+	if err != nil {
+		t.Fatalf("read 0468 migration: %v", err)
+	}
+	if _, err := tx.Exec(h.ctx, string(migSQL)); err != nil {
+		t.Fatalf("apply 0468 migration on temp table: %v", err)
+	}
+
+	var poKind *string
+	if err := tx.QueryRow(h.ctx,
+		`SELECT supply_kind FROM purchasing_bill_lines WHERE id = $1`, bill.Lines[0].ID,
+	).Scan(&poKind); err != nil {
+		t.Fatalf("read backfilled PO line: %v", err)
+	}
+	if poKind == nil || *poKind != SupplyKindGoods {
+		t.Fatalf("after 0468 backfill, PO line supply_kind = %v, want %q", poKind, SupplyKindGoods)
+	}
+
+	var noPOKind *string
+	if err := tx.QueryRow(h.ctx,
+		`SELECT supply_kind FROM purchasing_bill_lines WHERE id = $1`, bill.Lines[3].ID,
+	).Scan(&noPOKind); err != nil {
+		t.Fatalf("read backfilled no-PO line: %v", err)
+	}
+	if noPOKind != nil {
+		t.Fatalf("after 0468 backfill, no-PO line supply_kind = %q, want NULL", *noPOKind)
+	}
+
+	// Verify the shared public.purchasing_bill_lines table took no DDL lock from the backfill check.
+	var sharedDDL int
+	if err := tx.QueryRow(h.ctx, `
+		SELECT count(*)
+		  FROM pg_locks l
+		  JOIN pg_class c ON c.oid = l.relation
+		  JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public'
+		   AND c.relname = 'purchasing_bill_lines'
+		   AND l.pid = pg_backend_pid()
+		   AND l.mode = 'AccessExclusiveLock'`,
+	).Scan(&sharedDDL); err != nil {
+		t.Fatalf("check locks on public.purchasing_bill_lines: %v", err)
+	}
+	if sharedDDL != 0 {
+		t.Fatalf("backfill leg took %d AccessExclusiveLock on public.purchasing_bill_lines, want 0", sharedDDL)
 	}
 }

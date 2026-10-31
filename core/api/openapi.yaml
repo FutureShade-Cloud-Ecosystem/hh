@@ -9311,8 +9311,8 @@ paths:
       operationId: glExport
       tags:
         - staff-gl
-      summary: Run the GP-parity export for a fiscal period
-      description: Produces the parity batch for the period. The shipped export is a parity draft (extract artifacts pending cutover confirmation), which is_draft carries on the result.
+      summary: Run the export for a period, the parity draft or one target package
+      description: "Produces the export batch for the period. With no target the export is the parity draft (extract artifacts pending cutover confirmation), which is_draft carries on the result. With a target it is the accounting package export for that package: every account with movement in the period must be mapped for the target, and one unmapped account refuses the export in words naming it."
       x-role: requireAdmin
       x-access:
         surfaces:
@@ -9333,6 +9333,74 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GlExportResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/gl/export-mapping:
+    get:
+      operationId: glListAccountMapping
+      tags:
+        - staff-gl
+      summary: List the export account mapping, one target or every target
+      description: "The rows that point HH GL accounts at a target package's account codes (QuickBooks Online first, Sage 50 next). With no target query parameter the answer is every target's rows, ordered by target then account code. A manager read: the desk must see what the books export under."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: target
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - QUICKBOOKS_ONLINE
+              - SAGE_50
+          description: Absent or empty means every target
+      responses:
+        "200":
+          description: The mapping rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlAccountMappingPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      operationId: glSetAccountMapping
+      tags:
+        - staff-gl
+      summary: Point one HH account at a target package's account code
+      description: "The Financial Controller's act: the service refuses any other role in words, and the set is audited. The row upserts on (target, account_code), so re-setting an account moves its mapping and never grows a second row."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GlAccountMappingSet"
+      responses:
+        "200":
+          description: The mapping row as set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlAccountMapping"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -26221,6 +26289,81 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/reporting/datasets:
+    get:
+      operationId: reportingListDatasets
+      tags:
+        - staff-reporting
+      summary: List the curated data sets with their column catalogs
+      description: "The five sets the report writer reads (accounts receivable aging, accounts payable aging, general ledger journal lines, invoice lines, stock on hand with value), each read through its owning module's own seam, with the columns a read may name and what each column can filter, group or sum. The catalog is the whole contract: a read is refused in words for any column or operator outside it, and there is no free query."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - manager-home
+        level: read
+      x-addition: W3-RW1 the report writer's curated data sets; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The data sets with their column catalogs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingDatasetCatalog"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/reporting/datasets/{set}/read:
+    post:
+      operationId: reportingReadDataset
+      tags:
+        - staff-reporting
+      summary: Run one curated data set read
+      description: The body names the columns (from the set's catalog), optional filters (a catalog column, an operator its kind carries, the values), an optional group by over requested groupable columns, and, for the sets that answer as of a day, as_of. The gl set reads one fiscal year at a time (filter fiscal_year eq, optionally fiscal_month); the sales set reads a window of issue dates (filters invoice_date ge and le). An unknown column or operator is refused with 400 in words; a branch outside the caller's reach with 403. Rows are positional and align with columns by index; totals sum every requested summable column. Nothing is persisted.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - manager-home
+        level: read
+        reason: runs a data set read and returns the grid
+      x-addition: W3-RW1 the report writer's curated data sets; no ERP source route
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: set
+          in: path
+          required: true
+          description: The data set code
+          schema:
+            type: string
+            enum:
+              - ar
+              - ap
+              - gl
+              - sales
+              - stock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportingDatasetQuery"
+      responses:
+        "200":
+          description: The executed read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportingDatasetResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/reporting/commission/rules:
     get:
       operationId: reportingListCommissionRules
@@ -40716,6 +40859,7 @@ components:
           type: string
     GlExportBody:
       type: object
+      description: "The period pick is counted on the dealer's house days (the fiscal periods the ledger files by): a month is itself, a quarter is its three consecutive months starting in January, and neither is the whole year. A month and a quarter together are refused."
       required:
         - year
         - month
@@ -40727,8 +40871,21 @@ components:
         month:
           type: integer
           format: int32
-          minimum: 1
+          minimum: 0
           maximum: 12
+          description: 0 with no quarter is the whole year, the desk's Whole year pick; 1 to 12 is one month
+        quarter:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 4
+          description: Narrows the pick to the quarter's three months
+        target:
+          type: string
+          enum:
+            - QUICKBOOKS_ONLINE
+            - SAGE_50
+          description: Absent is the GP-parity draft. A named target is the accounting package export, and demands a full mapping for the period
         branch_id:
           type: string
           format: uuid
@@ -40753,6 +40910,59 @@ components:
           type: boolean
           description: True while the export ships as a parity draft pending cutover confirmation
         content:
+          type: string
+    GlAccountMapping:
+      type: object
+      description: One HH GL account's row in a target package's books
+      required:
+        - target
+        - account_code
+        - account_name
+        - package_account
+      properties:
+        target:
+          type: string
+          enum:
+            - QUICKBOOKS_ONLINE
+            - SAGE_50
+        account_code:
+          type: string
+        account_name:
+          type: string
+        package_account:
+          type: string
+    GlAccountMappingPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/GlAccountMapping"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
+    GlAccountMappingSet:
+      type: object
+      description: The set body; only the Financial Controller's caller is accepted
+      required:
+        - target
+        - account_code
+        - package_account
+      properties:
+        target:
+          type: string
+          enum:
+            - QUICKBOOKS_ONLINE
+            - SAGE_50
+        account_code:
+          type: string
+        package_account:
           type: string
     FinStmtStatementRow:
       type: object
@@ -55479,6 +55689,12 @@ components:
         price_variance_cents:
           type: integer
           format: int64
+        supply_kind:
+          type: string
+          enum:
+            - GOODS
+            - SERVICES
+          description: Goods or services mark for CRA T5018 reporting. Omitted when the line is not marked.
     PurchasingInstalment:
       type: object
       description: One scheduled payment against a bill
@@ -56088,6 +56304,12 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+        supply_kind:
+          type: string
+          enum:
+            - GOODS
+            - SERVICES
+          description: Goods or services mark for CRA T5018 reporting. PO matched lines default to GOODS; lines with no PO take the clerk's choice or stay unmarked when omitted.
     PurchasingInstalmentRequest:
       type: object
       required:
@@ -56743,19 +56965,28 @@ components:
             $ref: "#/components/schemas/PurchasingPaymentRunLineAmount"
     PurchasingT5018Report:
       type: object
-      description: "One calendar year of the CRA Form T5018: the vendors the Financial Controller marked as subcontractors, what the year paid them, and the contractor's business number."
+      description: "One calendar year of the CRA Form T5018: the vendors the Financial Controller marked as subcontractors, their Box 22 services share of payments (tax included), their pre-tax services subtotal against the $500 threshold, and the contractor's business number."
       required:
         - year
+        - rule_note
         - items
         - total_cents
+        - box_22_total_cents
       properties:
         year:
           type: integer
           format: int32
+        rule_note:
+          type: string
+          description: States in words that T5018 applies only where construction is more than half the dealer's business income
         total_cents:
           type: integer
           format: int64
-          description: The year's total across every row, in cents
+          description: The year's Box 22 total across every row, in cents
+        box_22_total_cents:
+          type: integer
+          format: int64
+          description: The year's Box 22 total across every row, tax included, in cents
         items:
           type: array
           items:
@@ -56770,6 +57001,12 @@ components:
         - business_number
         - business_number_missing
         - paid_cents
+        - box_22_cents
+        - services_subtotal_cents
+        - under_threshold
+        - threshold_note
+        - unmarked_line_count
+        - unmarked_lines_note
       properties:
         vendor_id:
           type: string
@@ -56787,7 +57024,28 @@ components:
         paid_cents:
           type: integer
           format: int64
-          description: What the year paid the vendor through PayBill, in cents
+          description: What the year paid the vendor for services through PayBill, tax included, in cents
+        box_22_cents:
+          type: integer
+          format: int64
+          description: Box 22 services share of the amount paid in the year, tax included, in cents
+        services_subtotal_cents:
+          type: integer
+          format: int64
+          description: Services subtotal before tax summed over the year, in cents
+        under_threshold:
+          type: boolean
+          description: True when services_subtotal_cents is under $500.00 (50000 cents)
+        threshold_note:
+          type: string
+          description: Marks a vendor under the $500.00 pre-tax threshold ("under the $500 threshold, no slip")
+        unmarked_line_count:
+          type: integer
+          format: int32
+          description: Count of bill lines on paid bills in the year not marked goods or services
+        unmarked_lines_note:
+          type: string
+          description: Per-vendor note when unmarked bill lines are counted as services until marked
     LandedCost:
       type: object
       description: "The landed-cost header. All cad figures are CAD: the conversion of the document currency happens at capture, so the GL and the inventory valuation only ever see CAD."
@@ -59539,6 +59797,155 @@ components:
         limit:
           type: integer
           format: int32
+    ReportingDatasetColumn:
+      type: object
+      description: One entry of a set's column catalog. kind decides how a value is read, compared and rendered; filter, group and sum mark what a read may do with the column.
+      required:
+        - name
+        - label
+        - kind
+        - filter
+        - group
+        - sum
+      properties:
+        name:
+          type: string
+        label:
+          type: string
+        kind:
+          type: string
+          enum:
+            - text
+            - int
+            - cents
+            - qty
+            - date
+            - bool
+        filter:
+          type: boolean
+        group:
+          type: boolean
+        sum:
+          type: boolean
+    ReportingDataset:
+      type: object
+      description: "One curated set: what it holds and the columns a read may name. as_of marks a set that answers as of a house day (the two agings)."
+      required:
+        - set
+        - label
+        - description
+        - as_of
+        - columns
+      properties:
+        set:
+          type: string
+          enum:
+            - ar
+            - ap
+            - gl
+            - sales
+            - stock
+        label:
+          type: string
+        description:
+          type: string
+        as_of:
+          type: boolean
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportingDatasetColumn"
+    ReportingDatasetCatalog:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportingDataset"
+    ReportingDatasetFilter:
+      type: object
+      description: "One filter: a catalog column, an operator the column's kind carries (a text column carries eq, ne, in; an int, cents, qty or date column carries eq, ne, gt, ge, lt, le, in; a bool column carries eq), and the values to compare. Money and counts are whole numbers; dates are YYYY-MM-DD."
+      required:
+        - column
+        - op
+        - values
+      properties:
+        column:
+          type: string
+        op:
+          type: string
+          enum:
+            - eq
+            - ne
+            - gt
+            - ge
+            - lt
+            - le
+            - in
+        values:
+          type: array
+          description: "The values to compare: text and dates as strings, money and counts as whole numbers, bools as true or false. A value that is not the column's kind is refused in words."
+          items: true
+    ReportingDatasetQuery:
+      type: object
+      description: One read. columns must name the set's catalog columns; group_by must name requested columns the catalog marks groupable, and a grouped read cannot carry a column that is neither in the group by nor summable. as_of (the ar and ap sets) is a day, YYYY-MM-DD.
+      required:
+        - columns
+      properties:
+        columns:
+          type: array
+          items:
+            type: string
+        filters:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportingDatasetFilter"
+        group_by:
+          type: array
+          items:
+            type: string
+        as_of:
+          type: string
+          format: date
+    ReportingDatasetResult:
+      type: object
+      description: One executed read. rows are positional and align with columns by index; totals sum every requested summable column over the returned rows, so a grouped read's totals are the sums of its groups. query echoes what was applied. Nothing is persisted.
+      required:
+        - set
+        - label
+        - columns
+        - rows
+        - row_count
+        - totals
+        - query
+        - run_at
+      properties:
+        set:
+          type: string
+        label:
+          type: string
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportingDatasetColumn"
+        rows:
+          type: array
+          items:
+            type: array
+            items: true
+        row_count:
+          type: integer
+          format: int32
+        totals:
+          type: object
+          additionalProperties: true
+        query:
+          $ref: "#/components/schemas/ReportingDatasetQuery"
+        run_at:
+          type: string
+          format: date-time
     ReportingCommissionRule:
       type: object
       description: "One commission rule: this rep earns this rate, on either REVENUE or MARGIN, optionally only for this category and/or this branch. Rates are integer basis points; money is integer cents."

@@ -7,13 +7,16 @@
 // boards (trial-balance, controller-home) for the frame, the panels and the pills, and the original app's tax
 // administration screens (app/src/tax-admin.ts and tax-evidence.ts) for what each screen holds.
 import { html, nothing, type TemplateResult } from "lit";
-import type { TaxConfig, TaxEvidence, TaxRate, TaxReconReport, TaxRecomputeResult, TaxReliefEligibility, TaxStatusCardProfile } from "@hardscapehouse/api-client";
+import type { TaxConfig, TaxEvidence, TaxRate, TaxReconReport, TaxRecomputeResult, TaxReliefEligibility, TaxStatusCardProfile, TaxWorksheet, TaxWorksheetLine } from "@hardscapehouse/api-client";
 import {
   areaWord,
+  handEntryNote,
+  taxSubtitle,
   attestationWords,
   blockReasonWords,
   dayWords,
   forcedEvidence,
+  hostDay,
   periodWords,
   profileStatusWord,
   profileTone,
@@ -28,11 +31,13 @@ import {
   roundModeLine,
   roundModeWord,
   varianceWords,
+  worksheetPeriodWords,
+  worksheetTieWords,
   type Tone,
 } from "./tax-logic.js";
 import { formatMoney, formatRate, parseRateToBps } from "./tax-money.js";
 
-export type TxTab = "rates" | "profiles" | "certificates" | "settings" | "checks";
+export type TxTab = "rates" | "profiles" | "certificates" | "settings" | "checks" | "worksheet";
 
 export interface ConfirmView {
   readonly kind: "rate" | "profile" | "config" | "recompute";
@@ -56,6 +61,7 @@ export interface TaxModel {
   readonly downloaded: boolean;
   readonly recon: TaxReconReport | null;
   readonly recompute: TaxRecomputeResult | null;
+  readonly worksheet: TaxWorksheet | null;
   readonly confirm: ConfirmView | null;
   readonly form: Readonly<Record<string, string>>;
   readonly busy: boolean;
@@ -64,6 +70,12 @@ export interface TaxModel {
 }
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const QUARTER_OPTIONS = [
+  { id: 1, label: "Q1 (Jan to Mar)" },
+  { id: 2, label: "Q2 (Apr to Jun)" },
+  { id: 3, label: "Q3 (Jul to Sep)" },
+  { id: 4, label: "Q4 (Oct to Dec)" },
+] as const;
 
 function pill(tone: Tone, word: string): TemplateResult {
   return html`<span class="tx-status tx-status-${tone}">${word}</span>`;
@@ -119,7 +131,7 @@ function tabs(model: TaxModel): TemplateResult {
   `;
   return html`
     <nav class="tx-tabs" aria-label="Tax views">
-      ${tab("rates", "Rates")} ${tab("profiles", "Exemption profiles", model.queue.length)} ${tab("certificates", "Certificates")} ${tab("settings", "Settings")} ${tab("checks", "Recompute and reconcile")}
+      ${tab("rates", "Rates")} ${tab("profiles", "Exemption profiles", model.queue.length)} ${tab("certificates", "Certificates")} ${tab("settings", "Settings")} ${tab("checks", "Recompute and reconcile")} ${tab("worksheet", "GST/HST return")}
     </nav>
   `;
 }
@@ -606,13 +618,100 @@ function checksView(model: TaxModel): TemplateResult {
   `;
 }
 
+// ---- GST/HST return worksheet -------------------------------------------------------------------------
+
+function worksheetResult(worksheet: TaxWorksheet | null): TemplateResult {
+  if (worksheet === null) return html`${nothing}`;
+  const tie = worksheetTieWords(worksheet.variance_cents, worksheet.tied_out);
+  const period = worksheetPeriodWords(worksheet);
+  return html`
+    <div data-worksheet-result>
+      <div class="tx-stats">
+        <div class="tx-stat"><span class="tx-stat-label">Line 101 sales and other revenue</span><span class="tx-stat-figure" data-worksheet-sales>${formatMoney(worksheet.line_101_sales_cents)}</span></div>
+        <div class="tx-stat"><span class="tx-stat-label">Line 103 GST/HST collected</span><span class="tx-stat-figure" data-worksheet-collected>${formatMoney(worksheet.line_103_collected_cents)}</span></div>
+        <div class="tx-stat"><span class="tx-stat-label">Line 108 total ITCs</span><span class="tx-stat-figure" data-worksheet-itcs>${formatMoney(worksheet.line_108_total_itcs_cents)}</span></div>
+        <div class="tx-stat"><span class="tx-stat-label">Line 109 net tax</span><span class="tx-stat-figure" data-worksheet-net>${formatMoney(worksheet.line_109_net_tax_cents)}</span></div>
+        <div class="tx-stat"><span class="tx-stat-label">GST/HST payable account movement <span class="tx-hintline">GL 2200</span></span><span class="tx-stat-figure" data-worksheet-gl>${formatMoney(worksheet.gl_payable_cents)}</span></div>
+        <div class="tx-stat"><span class="tx-stat-label">Tie to the GST/HST payable account <span class="tx-hintline">GL 2200</span></span><span class="tx-stat-figure"><span class="tx-status tx-status-${tie.tone}" data-worksheet-tie-pill>${tie.word}</span></span></div>
+      </div>
+      <p class="tx-alert ${tie.tone === "good" ? "tx-alert-ok" : "tx-alert-error"}" role="status" data-worksheet-tie>${tie.detail}</p>
+      <p class="tx-dim" data-worksheet-period>Filing period: ${period}</p>
+      <p class="tx-note" data-manual-entry-note>${handEntryNote(worksheet.lines, worksheet.manual_entry_note) || worksheet.manual_entry_note}</p>
+      <div class="tx-scroll tx-hide-narrow">
+        <table aria-label="GST/HST return lines">
+          <thead><tr><th>Line</th><th>Description</th><th>Standing</th><th class="num">Amount</th></tr></thead>
+          <tbody>
+            ${worksheet.lines.map((wLine: TaxWorksheetLine) => {
+              const source = wLine.entered_by_hand ? "Entered by hand" : "From the books";
+              const tone: Tone = wLine.entered_by_hand ? "watch" : "good";
+              return html`<tr data-worksheet-line=${wLine.line_no} data-entered-by-hand="${wLine.entered_by_hand ? "true" : "false"}">
+                <td class="mono" data-line-no>${wLine.line_no}</td>
+                <td><span class="tx-strong" data-line-label>${wLine.label}</span>${wLine.note ? html`<span class="tx-sub">${wLine.note}</span>` : nothing}</td>
+                <td data-line-source>${pill(tone, source)}</td>
+                <td class="num" data-line-amount>${formatMoney(wLine.amount_cents)}</td>
+              </tr>`;
+            })}
+          </tbody>
+        </table>
+      </div>
+      <ul class="tx-cards tx-show-narrow" aria-label="GST/HST return lines, as cards">
+        ${worksheet.lines.map((wLine: TaxWorksheetLine) => {
+          const source = wLine.entered_by_hand ? "Entered by hand" : "From the books";
+          const tone: Tone = wLine.entered_by_hand ? "watch" : "good";
+          return html`<li class="tx-card" data-worksheet-card=${wLine.line_no}>
+            <div class="tx-card-top"><strong>Line ${wLine.line_no}: ${wLine.label}</strong><span class="tx-card-figure">${formatMoney(wLine.amount_cents)}</span></div>
+            <div>${pill(tone, source)}</div>
+            ${wLine.note ? html`<span class="tx-sub">${wLine.note}</span>` : nothing}
+          </li>`;
+        })}
+      </ul>
+    </div>
+  `;
+}
+
+function worksheetView(model: TaxModel): TemplateResult {
+  const freq = model.config?.filing_frequency ?? model.worksheet?.filing_frequency ?? "QUARTERLY";
+  const typedYear = (model.form["tx-w-year"] ?? "").trim();
+  return html`
+    <section class="tx-panel" aria-label="GST/HST return" data-tx-worksheet>
+      <div class="tx-panel-head"><h3>GST/HST return</h3></div>
+      <p class="tx-note">Read-only worksheet for the CRA GST/HST return (lines 101 through 115), tied against the GST/HST payable account (GL 2200) for the filing period.</p>
+      <div class="tx-form" role="group" aria-label="Filing period">
+        ${freq === "QUARTERLY"
+          ? html`<label class="tx-field">Quarter
+              <select data-field="tx-w-quarter" aria-label="Quarter">
+                ${QUARTER_OPTIONS.map((q) => html`<option data-id=${String(q.id)}>${q.label}</option>`)}
+              </select>
+            </label>`
+          : nothing}
+        ${freq === "MONTHLY"
+          ? html`<label class="tx-field">Month
+              <select data-field="tx-w-month" aria-label="Month">
+                ${MONTH_NAMES.map((name, i) => html`<option data-id=${String(i + 1)}>${name}</option>`)}
+              </select>
+            </label>`
+          : nothing}
+        <label class="tx-field">Year
+          <input type="text" inputmode="numeric" data-field="tx-w-year" autocomplete="off" aria-label="Year" />
+          ${typedYear !== "" && !/^\d{4}$/.test(typedYear) ? html`<span class="tx-hint tx-hint-bad" role="alert" data-year-hint>Enter a four digit year.</span>` : nothing}
+        </label>
+      </div>
+      <div class="tx-actions">
+        <button type="button" class="btn btn-primary" data-action="tx-worksheet-run" ?disabled=${model.busy}>Show worksheet</button>
+        <button type="button" class="btn btn-secondary" data-action="tx-worksheet-csv" ?disabled=${model.busy || model.worksheet === null}>Download CSV</button>
+      </div>
+      ${worksheetResult(model.worksheet)}
+    </section>
+  `;
+}
+
 // ---- the whole desk -----------------------------------------------------------------------------------
 
 export function renderTax(model: TaxModel): TemplateResult {
   const head = html`
     <header class="tx-head">
       <h1>Tax</h1>
-      <p class="tx-dim">The sales tax rates, the exemption profiles and the certificates behind them, the settings, and the checks against the ledger. California sales tax; US dollars.</p>
+      <p class="tx-dim" data-tax-subtitle>${taxSubtitle(model.tab, model.config, model.rates, hostDay())}</p>
     </header>
   `;
   if (model.phase === "loading") return html`${head}${loading()}`;
@@ -626,5 +725,6 @@ export function renderTax(model: TaxModel): TemplateResult {
     ${model.tab === "certificates" ? certificatesView(model) : nothing}
     ${model.tab === "settings" ? settingsView(model) : nothing}
     ${model.tab === "checks" ? checksView(model) : nothing}
+    ${model.tab === "worksheet" ? worksheetView(model) : nothing}
   `;
 }

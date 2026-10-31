@@ -2834,6 +2834,8 @@ export type GlPolicy = {
 export type GlExportBody = {
   year: number;
   month: number;
+  quarter?: number;
+  target?: "QUICKBOOKS_ONLINE" | "SAGE_50";
   branch_id: string;
 };
 export type GlExportResult = {
@@ -2842,6 +2844,22 @@ export type GlExportResult = {
   row_count: number;
   is_draft: boolean;
   content: string;
+};
+export type GlAccountMapping = {
+  target: "QUICKBOOKS_ONLINE" | "SAGE_50";
+  account_code: string;
+  account_name: string;
+  package_account: string;
+};
+export type GlAccountMappingPage = {
+  items: GlAccountMapping[];
+  next_cursor?: string | null;
+  limit?: number;
+};
+export type GlAccountMappingSet = {
+  target: "QUICKBOOKS_ONLINE" | "SAGE_50";
+  account_code: string;
+  package_account: string;
 };
 export type FinStmtStatementRow = {
   account_code: string;
@@ -6922,6 +6940,7 @@ export type PurchasingBillLine = {
   match_state: PurchasingMatchState;
   qty_variance_base: number;
   price_variance_cents: number;
+  supply_kind?: "GOODS" | "SERVICES";
 };
 export type PurchasingInstalment = {
   id: string;
@@ -7104,6 +7123,7 @@ export type PurchasingBillLineRequest = {
   description: string;
   qty_billed_base: number;
   unit_cost_cents: number;
+  supply_kind?: "GOODS" | "SERVICES";
 };
 export type PurchasingInstalmentRequest = {
   due_date: string;
@@ -7304,7 +7324,9 @@ export type PurchasingUpdatePaymentRunRequest = {
 };
 export type PurchasingT5018Report = {
   year: number;
+  rule_note: string;
   total_cents: number;
+  box_22_total_cents: number;
   items: PurchasingT5018Row[];
 };
 export type PurchasingT5018Row = {
@@ -7314,6 +7336,12 @@ export type PurchasingT5018Row = {
   business_number: string;
   business_number_missing: boolean;
   paid_cents: number;
+  box_22_cents: number;
+  services_subtotal_cents: number;
+  under_threshold: boolean;
+  threshold_note: string;
+  unmarked_line_count: number;
+  unmarked_lines_note: string;
 };
 export type LandedCost = {
   id: string;
@@ -8088,6 +8116,45 @@ export type ReportingSavedViewPage = {
   items: ReportingSavedView[];
   next_cursor?: string | null;
   limit?: number;
+};
+export type ReportingDatasetColumn = {
+  name: string;
+  label: string;
+  kind: "text" | "int" | "cents" | "qty" | "date" | "bool";
+  filter: boolean;
+  group: boolean;
+  sum: boolean;
+};
+export type ReportingDataset = {
+  set: "ar" | "ap" | "gl" | "sales" | "stock";
+  label: string;
+  description: string;
+  as_of: boolean;
+  columns: ReportingDatasetColumn[];
+};
+export type ReportingDatasetCatalog = {
+  items: ReportingDataset[];
+};
+export type ReportingDatasetFilter = {
+  column: string;
+  op: "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "in";
+  values: unknown[];
+};
+export type ReportingDatasetQuery = {
+  columns: string[];
+  filters?: ReportingDatasetFilter[];
+  group_by?: string[];
+  as_of?: string;
+};
+export type ReportingDatasetResult = {
+  set: string;
+  label: string;
+  columns: ReportingDatasetColumn[];
+  rows: unknown[][];
+  row_count: number;
+  totals: { [key: string]: unknown };
+  query: ReportingDatasetQuery;
+  run_at: string;
 };
 export type ReportingCommissionRule = {
   id: string;

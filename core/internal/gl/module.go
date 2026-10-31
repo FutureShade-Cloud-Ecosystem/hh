@@ -827,4 +827,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// Policy + export
 	r.Handle("GET /api/v1/gl/policy", g.RequireManager(h.staff(h.policy)))
 	r.Handle("POST /api/v1/gl/export", g.RequireAdmin(h.staff(h.export)))
+	// The accounting package export's account mapping (W3 AX-1): the list is a manager read (the
+	// desk must see what the books export under), the set is narrowed to the Financial Controller
+	// inside the service, the reopen's own pattern beside its route gate.
+	r.Handle("GET /api/v1/gl/export-mapping", g.RequireManager(h.staff(h.listAccountMapping)))
+	r.Handle("PUT /api/v1/gl/export-mapping", g.RequireManager(h.staff(h.setAccountMapping)))
 }

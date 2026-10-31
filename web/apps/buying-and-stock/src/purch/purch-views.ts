@@ -80,7 +80,7 @@ export function checkBox(label: string, action: string, on: boolean): TemplateRe
 }
 
 /** A segmented control: the lit way is pressed, the words beside; pressing the lit one again is the caller's call. */
-export function segs(label: string, action: string, choices: readonly { id: string; word: string }[], current: string): TemplateResult {
+export function segs(label: string, action: string, choices: readonly { id: string; word: string }[], current: string, hint = ""): TemplateResult {
   return html`
     <div class="field" role="group" aria-label=${label}>
       <span class="label">${label}</span>
@@ -89,6 +89,7 @@ export function segs(label: string, action: string, choices: readonly { id: stri
           (c) => html`<button type="button" class="seg" data-action=${action} data-choice=${c.id} aria-pressed="${current === c.id ? "true" : "false"}">${c.word}</button>`,
         )}
       </div>
+      ${hint === "" ? nothing : html`<span class="dim" data-extra-supply-hint>${hint}</span>`}
     </div>
   `;
 }

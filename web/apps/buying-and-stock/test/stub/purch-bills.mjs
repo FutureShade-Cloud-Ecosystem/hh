@@ -90,7 +90,21 @@ export function makeBills(kit) {
     const tol = tolFor(kit.BRANCH);
     const lines = input.lines.map((bl, i) => {
       const { unit, res } = evalLine(po, bl, billFx, tol);
-      return { id: uuid("b", ++counter * 100 + i + 1), line_no: i + 1, po_line_id: bl.po_line_id ?? "", desc: bl.description, qty: bl.qty_billed_base, unit, total: round(bl.qty_billed_base * unit), match: res.state, qtyVar: res.qtyVar, priceVar: res.priceVar };
+      const rawKind = String(bl.supply_kind ?? "").trim().toUpperCase();
+      const supplyKind = rawKind !== "" ? rawKind : bl.po_line_id ? "GOODS" : "";
+      return {
+        id: uuid("b", ++counter * 100 + i + 1),
+        line_no: i + 1,
+        po_line_id: bl.po_line_id ?? "",
+        supply_kind: supplyKind,
+        desc: bl.description,
+        qty: bl.qty_billed_base,
+        unit,
+        total: round(bl.qty_billed_base * unit),
+        match: res.state,
+        qtyVar: res.qtyVar,
+        priceVar: res.priceVar,
+      };
     });
     const subtotal = lines.reduce((a, l) => a + l.total, 0);
     const tax = toCad(input.tax_cents ?? 0, billFx);
@@ -210,6 +224,7 @@ export function makeBills(kit) {
       id: l.id,
       line_no: l.line_no,
       ...(l.po_line_id === "" ? {} : { po_line_id: l.po_line_id }),
+      ...(l.supply_kind === "" ? {} : { supply_kind: l.supply_kind }),
       ...(p === undefined ? {} : { product_id: uuid("f", p.n), sku: p.sku }),
       description: l.desc,
       qty_billed_base: l.qty,
@@ -284,6 +299,10 @@ export function makeBills(kit) {
         const bl = body.lines[i];
         if (!(bl.qty_billed_base > 0)) return say(res, 400, `bill line ${i + 1} quantity must be greater than zero`);
         if (bl.unit_cost_cents < 0) return say(res, 400, `bill line ${i + 1} unit cost cannot be negative`);
+        const rawKind = String(bl.supply_kind ?? "").trim().toUpperCase();
+        if (rawKind !== "" && rawKind !== "GOODS" && rawKind !== "SERVICES") {
+          return say(res, 400, `bill line ${i + 1} supply_kind must be GOODS or SERVICES, got "${bl.supply_kind}"`);
+        }
         if (bl.po_line_id && lineBrief(po, bl.po_line_id) === undefined) return say(res, 400, `bill line ${i + 1} references a line that is not on this purchase order`);
       }
       const bill = createBill(po, { ...body, currency }, fx);

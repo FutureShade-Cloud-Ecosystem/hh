@@ -200,11 +200,15 @@ export class QuoteConvert extends HHElement {
         background: var(--hh-disabled-fill);
         color: var(--hh-disabled-ink);
         border-color: var(--hh-disabled-line);
-        box-shadow: none;
+        box-shadow: inset 0 0 0 1px var(--hh-disabled-ink);
         cursor: not-allowed;
       }
       .tile .name {
         font-weight: 600;
+      }
+      .tile .picked {
+        margin-left: 6px;
+        font-weight: 700;
       }
       .tile .hint {
         color: var(--hh-text-dim);
@@ -933,7 +937,7 @@ export class QuoteConvert extends HHElement {
               aria-pressed=${this.#fulfilment === f.value ? "true" : "false"}
               ?disabled=${held}
             >
-              <span class="name">${f.label}</span>
+              <span class="name">${f.label}${this.#fulfilment === f.value ? html`<span class="picked" aria-hidden="true">&#10003;</span>` : nothing}</span>
               <span class="hint">${f.hint}</span>
             </button>`,
           )}

@@ -276,8 +276,13 @@ const SETTINGS_ADMIN_WRITE_WORDS =
 let surfaces;
 let mine;
 
+// UX-119c: one shape is curated on one surface from the start (the Sales manager
+// on the Quote Desk, one column), so the roles grid has a curated shape to open
+// beside twelve uncurated ones. The earlier cases curate other cells and reset.
 function buildSurfaces() {
-  return new Map();
+  const map = new Map();
+  map.set("quote-desk|manager.sales", [{ kind: "column", id: "cost", position: 0, visible: false }]);
+  return map;
 }
 
 function buildMine() {

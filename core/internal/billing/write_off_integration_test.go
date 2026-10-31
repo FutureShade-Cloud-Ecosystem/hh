@@ -363,6 +363,55 @@ func TestIntegration_W3_WriteOff_RefusalsAndReplay(t *testing.T) {
 	}
 }
 
+// W3 item 0.15 (S5 on 707's P3): a key spent on one invoice and fired at ANOTHER invoice is
+// refused in words, naming the invoice the key already wrote off, before the open gate. A fresh
+// key on the second invoice still lands: the door is closed to the spent key, not to the invoice.
+func TestIntegration_W3P0A_WriteOffKeySpentOnOneInvoiceIsRefusedOnAnother(t *testing.T) {
+	w := newWriteOffWorld(t)
+	inv1 := w.invoice("WO-KEY-1", 2000)
+	inv2 := w.invoice("WO-KEY-2", 1500)
+
+	first, err := w.svc.WriteOff(w.ctx, WriteOffInput{
+		InvoiceID: inv1, Reason: "small balance, uncollectible", ActorID: "w3-manager",
+		IdempotencyKey: w.tag + "-cross", OrgID: w.org,
+	}, true)
+	if err != nil {
+		t.Fatalf("the first write off under the key: %v", err)
+	}
+
+	_, err = w.svc.WriteOff(w.ctx, WriteOffInput{
+		InvoiceID: inv2, Reason: "the same key fired at another invoice", ActorID: "w3-manager",
+		IdempotencyKey: w.tag + "-cross", OrgID: w.org,
+	}, true)
+	var conflict WriteOffConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("W3-P0A red: a key spent on invoice %s must be refused when fired at another invoice, got %T %v",
+			inv1, err, err)
+	}
+	if !strings.Contains(err.Error(), first.InvoiceNo) {
+		t.Fatalf("W3-P0A red: the refusal must name the invoice the key already wrote off (%s), got %q",
+			first.InvoiceNo, err)
+	}
+	if b, _ := w3InvoiceState(t, w.pool, inv2); b != 1500 {
+		t.Fatalf("W3-P0A red: the refused press moved invoice two's balance to %d, want 1500", b)
+	}
+	if got := w.writeOffSum(inv2); got != 0 {
+		t.Fatalf("W3-P0A red: the refused press wrote the account's write off rows on invoice two (%d cents)", got)
+	}
+
+	// A fresh key on invoice two still lands.
+	second, err := w.svc.WriteOff(w.ctx, WriteOffInput{
+		InvoiceID: inv2, Reason: "small balance too", ActorID: "w3-manager",
+		IdempotencyKey: w.tag + "-fresh", OrgID: w.org,
+	}, true)
+	if err != nil {
+		t.Fatalf("a fresh key on invoice two: %v", err)
+	}
+	if second.AmountCents != 1500 {
+		t.Fatalf("the fresh key took invoice two's whole balance (1500), got %d", second.AmountCents)
+	}
+}
+
 // asWriteOffOverLimit, isWriteOffNotReversible, isWriteOffReasonRequired and isNoSuchInvoice are
 // the legs' error shorthands.
 func asWriteOffOverLimit(err error, dst **WriteOffOverLimitError) bool {

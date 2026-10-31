@@ -28,6 +28,7 @@ export interface BillsModel {
   readonly entryPo: PurchasingPODetail | null;
   readonly entryReading: boolean;
   readonly entryCurrency: string;
+  readonly entryExtraSupplyKind: string;
   readonly detail: PurchasingBillDetail | null;
   /** The unit of each order line the open bill is against, by order line id (a bill line carries none). */
   readonly lineUoms: ReadonlyMap<string, string>;
@@ -195,7 +196,7 @@ function entry(model: BillsModel): TemplateResult {
       </div>
       <p class="dim">The vendor's invoice, against one order. It is matched line by line when it is entered, and nothing is owed until it is posted.</p>
       <div class="forms">
-        <label>Purchase order
+        <label class="full-span">Purchase order
           <select data-field="bill-po" data-bill-po>
             <option>Pick an order</option>
             ${model.billable.map((o) => html`<option>${orderOptionText(o)}</option>`)}
@@ -232,6 +233,14 @@ function entry(model: BillsModel): TemplateResult {
               </table>
             </div>
           `}
+      <h3 class="sub">Line with no purchase order line</h3>
+      <p class="dim">A line not on the purchase order (such as subcontractor work or site labour). Mark whether it is goods or services for T5018.</p>
+      <div class="forms" data-extra-line>
+        <label>Line description<input type="text" autocomplete="off" data-field="extra-desc" data-extra-desc /></label>
+        <label>Quantity billed<input type="text" inputmode="decimal" autocomplete="off" data-field="extra-qty" data-extra-qty /></label>
+        <label>Unit price${usd ? " (USD)" : ""}<input type="text" inputmode="decimal" autocomplete="off" data-field="extra-cost" data-extra-cost /></label>
+        ${segs("Goods or services", "bill-extra-supply-kind", [{ id: "", word: "Not marked" }, { id: "GOODS", word: "Goods" }, { id: "SERVICES", word: "Services" }], model.entryExtraSupplyKind, "Not marked counts as services on the T5018 report until someone marks it.")}
+      </div>
       ${noteAt(model, "bill")}
       <div class="actions end">
         <button type="button" class="btn btn-secondary" data-action="back" ?disabled=${model.busy}>Cancel</button>

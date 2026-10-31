@@ -3335,9 +3335,11 @@ type GlPolicy struct {
 }
 
 type GlExportBody struct {
-	Year     int32  `json:"year"`
-	Month    int32  `json:"month"`
-	BranchId string `json:"branch_id"`
+	Year     int32   `json:"year"`
+	Month    int32   `json:"month"`
+	Quarter  *int32  `json:"quarter,omitempty"`
+	Target   *string `json:"target,omitempty"`
+	BranchId string  `json:"branch_id"`
 }
 
 type GlExportResult struct {
@@ -3346,6 +3348,25 @@ type GlExportResult struct {
 	RowCount int32  `json:"row_count"`
 	IsDraft  bool   `json:"is_draft"`
 	Content  string `json:"content"`
+}
+
+type GlAccountMapping struct {
+	Target         string `json:"target"`
+	AccountCode    string `json:"account_code"`
+	AccountName    string `json:"account_name"`
+	PackageAccount string `json:"package_account"`
+}
+
+type GlAccountMappingPage struct {
+	Items      []GlAccountMapping `json:"items"`
+	NextCursor *string            `json:"next_cursor,omitempty"`
+	Limit      *int32             `json:"limit,omitempty"`
+}
+
+type GlAccountMappingSet struct {
+	Target         string `json:"target"`
+	AccountCode    string `json:"account_code"`
+	PackageAccount string `json:"package_account"`
 }
 
 type FinStmtStatementRow struct {
@@ -7988,6 +8009,7 @@ type PurchasingBillLine struct {
 	MatchState         PurchasingMatchState `json:"match_state"`
 	QtyVarianceBase    float64              `json:"qty_variance_base"`
 	PriceVarianceCents int64                `json:"price_variance_cents"`
+	SupplyKind         *string              `json:"supply_kind,omitempty"`
 }
 
 type PurchasingInstalment struct {
@@ -8209,6 +8231,7 @@ type PurchasingBillLineRequest struct {
 	Description   string  `json:"description"`
 	QtyBilledBase float64 `json:"qty_billed_base"`
 	UnitCostCents int64   `json:"unit_cost_cents"`
+	SupplyKind    *string `json:"supply_kind,omitempty"`
 }
 
 type PurchasingInstalmentRequest struct {
@@ -8438,9 +8461,11 @@ type PurchasingUpdatePaymentRunRequest struct {
 }
 
 type PurchasingT5018Report struct {
-	Year       int32                `json:"year"`
-	TotalCents int64                `json:"total_cents"`
-	Items      []PurchasingT5018Row `json:"items"`
+	Year            int32                `json:"year"`
+	RuleNote        string               `json:"rule_note"`
+	TotalCents      int64                `json:"total_cents"`
+	Box22TotalCents int64                `json:"box_22_total_cents"`
+	Items           []PurchasingT5018Row `json:"items"`
 }
 
 type PurchasingT5018Row struct {
@@ -8450,6 +8475,12 @@ type PurchasingT5018Row struct {
 	BusinessNumber        string `json:"business_number"`
 	BusinessNumberMissing bool   `json:"business_number_missing"`
 	PaidCents             int64  `json:"paid_cents"`
+	Box22Cents            int64  `json:"box_22_cents"`
+	ServicesSubtotalCents int64  `json:"services_subtotal_cents"`
+	UnderThreshold        bool   `json:"under_threshold"`
+	ThresholdNote         string `json:"threshold_note"`
+	UnmarkedLineCount     int32  `json:"unmarked_line_count"`
+	UnmarkedLinesNote     string `json:"unmarked_lines_note"`
 }
 
 type LandedCost struct {
@@ -9329,6 +9360,51 @@ type ReportingSavedViewPage struct {
 	Items      []ReportingSavedView `json:"items"`
 	NextCursor *string              `json:"next_cursor,omitempty"`
 	Limit      *int32               `json:"limit,omitempty"`
+}
+
+type ReportingDatasetColumn struct {
+	Name   string `json:"name"`
+	Label  string `json:"label"`
+	Kind   string `json:"kind"`
+	Filter bool   `json:"filter"`
+	Group  bool   `json:"group"`
+	Sum    bool   `json:"sum"`
+}
+
+type ReportingDataset struct {
+	Set         string                   `json:"set"`
+	Label       string                   `json:"label"`
+	Description string                   `json:"description"`
+	AsOf        bool                     `json:"as_of"`
+	Columns     []ReportingDatasetColumn `json:"columns"`
+}
+
+type ReportingDatasetCatalog struct {
+	Items []ReportingDataset `json:"items"`
+}
+
+type ReportingDatasetFilter struct {
+	Column string `json:"column"`
+	Op     string `json:"op"`
+	Values []any  `json:"values"`
+}
+
+type ReportingDatasetQuery struct {
+	Columns []string                  `json:"columns"`
+	Filters *[]ReportingDatasetFilter `json:"filters,omitempty"`
+	GroupBy *[]string                 `json:"group_by,omitempty"`
+	AsOf    *string                   `json:"as_of,omitempty"`
+}
+
+type ReportingDatasetResult struct {
+	Set      string                   `json:"set"`
+	Label    string                   `json:"label"`
+	Columns  []ReportingDatasetColumn `json:"columns"`
+	Rows     [][]any                  `json:"rows"`
+	RowCount int32                    `json:"row_count"`
+	Totals   map[string]any           `json:"totals"`
+	Query    ReportingDatasetQuery    `json:"query"`
+	RunAt    time.Time                `json:"run_at"`
 }
 
 type ReportingCommissionRule struct {

@@ -50,6 +50,12 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// isCheckViolation answers a CHECK constraint refusal (23514), the database's own guard speaking.
+func isCheckViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23514"
+}
+
 func nullStr(s string) any {
 	if s == "" {
 		return nil
@@ -771,6 +777,7 @@ type insertBillLineParams struct {
 	MatchState string
 	QtyVar     float64
 	PriceVar   int64
+	SupplyKind string
 }
 
 func (r *Repository) InsertBillLine(ctx context.Context, tx pgx.Tx, in insertBillLineParams) error {
@@ -780,10 +787,10 @@ func (r *Repository) InsertBillLine(ctx context.Context, tx pgx.Tx, in insertBil
 	_, err := r.q(tx).Exec(ctx, `
 		INSERT INTO purchasing_bill_lines (bill_id, line_no, po_line_id, description, qty_billed_base,
 		                                   unit_cost_cents, line_total_cents, match_state,
-		                                   qty_variance_base, price_variance_cents)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		                                   qty_variance_base, price_variance_cents, supply_kind)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
 		in.BillID, in.LineNo, nullStr(in.POLineID), in.Desc, in.Qty, in.UnitCost, in.LineTotal,
-		in.MatchState, in.QtyVar, in.PriceVar)
+		in.MatchState, in.QtyVar, in.PriceVar, nullStr(in.SupplyKind))
 	if err != nil {
 		return fmt.Errorf("purchasing: insert bill line: %w", err)
 	}
@@ -888,7 +895,8 @@ func (r *Repository) BillLines(ctx context.Context, tx pgx.Tx, billID string) ([
 		       COALESCE(l.product_id::text,''), COALESCE(pr.sku::text,''), bl.description,
 		       bl.qty_billed_base, COALESCE(l.qty_ordered_base,0), COALESCE(l.qty_received_base,0),
 		       bl.unit_cost_cents, COALESCE(l.unit_cost_cents,0), bl.line_total_cents,
-		       bl.match_state, bl.qty_variance_base, bl.price_variance_cents
+		       bl.match_state, bl.qty_variance_base, bl.price_variance_cents,
+		       COALESCE(bl.supply_kind, '')
 		  FROM purchasing_bill_lines bl
 		  LEFT JOIN purchasing_po_lines l ON l.id = bl.po_line_id
 		  LEFT JOIN products pr ON pr.id = l.product_id
@@ -902,7 +910,7 @@ func (r *Repository) BillLines(ctx context.Context, tx pgx.Tx, billID string) ([
 		var l BillLine
 		if err := rows.Scan(&l.ID, &l.LineNo, &l.POLineID, &l.ProductID, &l.SKU, &l.Description,
 			&l.QtyBilledBase, &l.QtyOrderedBase, &l.QtyReceivedBase, &l.UnitCostCents, &l.POUnitCostCents,
-			&l.LineTotalCents, &l.MatchState, &l.QtyVarianceBase, &l.PriceVarianceCents); err != nil {
+			&l.LineTotalCents, &l.MatchState, &l.QtyVarianceBase, &l.PriceVarianceCents, &l.SupplyKind); err != nil {
 			return nil, fmt.Errorf("purchasing: scan bill line: %w", err)
 		}
 		out = append(out, l)

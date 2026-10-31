@@ -30,7 +30,7 @@ export const taxStyles = css`
   .tx-alert-error { border-color: var(--hh-state-stop); border-inline-start-width: 4px; background: color-mix(in srgb, var(--hh-state-stop) 12%, var(--hh-card)); }
   .tx-alert-ok { border-color: var(--hh-state-good); border-inline-start-width: 4px; }
   .tx-alert-watch { border-color: var(--hh-state-watch); border-inline-start-width: 4px; }
-  .tx-note { margin: var(--hh-s-8) 0 0; padding: var(--hh-s-12) var(--hh-s-16); border-radius: var(--hh-radius-control); background: color-mix(in srgb, var(--hh-accent) 18%, var(--hh-card)); color: var(--hh-text); font-size: 14px; }
+  .tx-note { margin: var(--hh-s-8) 0 0; padding: var(--hh-s-12) var(--hh-s-16); border-radius: var(--hh-radius-control); background: color-mix(in srgb, var(--hh-state-watch) 14%, var(--hh-card)); border: 1px solid var(--hh-state-watch); color: var(--hh-text); font-size: 14px; }
   .tx-later { display: inline-block; padding: 0 var(--hh-s-8); border: 1px dashed var(--hh-text-dim); border-radius: var(--hh-radius-pill); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--hh-text-dim); font-weight: 700; vertical-align: middle; }
   .tx-later-line { margin: var(--hh-s-12) 0 0; font-size: 14px; }
 
@@ -132,7 +132,10 @@ export const taxStyles = css`
   /* The figures of a reconciliation: a label above its amount. */
   .tx-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--hh-s-12); margin: var(--hh-s-12) 0; }
   .tx-stat { border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); background: var(--hh-card); padding: var(--hh-s-12) var(--hh-s-16); display: grid; gap: var(--hh-s-4); }
-  .tx-stat-label { font-size: 13px; color: var(--hh-text-dim); font-weight: 600; }
+  .tx-stat-label { font-size: 13px; color: var(--hh-text-dim); font-weight: 600; line-height: 1.3; }
+  .tx-hintline { font-weight: 400; font-size: 12px; white-space: nowrap; }
+  /* A fixed label height (three lines) so the figures of a row of tiles sit on one line. */
+  @media (min-width: 521px) { .tx-stat-label { min-height: 3.9em; } }
   .tx-stat-figure { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .tx-rowbtns { display: flex; flex-wrap: wrap; gap: var(--hh-s-4) var(--hh-s-12); }
 `;

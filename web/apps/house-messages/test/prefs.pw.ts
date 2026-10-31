@@ -142,3 +142,68 @@ test("a payment rules sheet whose read failed draws no rule, writes nothing, and
   await expect(rules.locator("[data-action='toggle-rule']")).toHaveCount(3);
   await expect(rules.locator("[data-rule='OWN_ORDER']")).toHaveAttribute("aria-pressed", "true");
 });
+
+test("while a notification choice is out, the chosen segment and chosen switch carry a tick and non-brand ring, and On clears 3:1 against its pill in charcoal", async ({ page, request }) => {
+  await openAs(page, request, "sales");
+  await channel(page, CH.yard).click();
+  await page.getByRole("button", { name: "Notifications" }).click();
+  const s = sheet(page);
+  await expect(s).toBeVisible();
+  await s.locator("[data-pref='escalation_override']").click();
+  await expect(s.locator("[data-pref='escalation_override']")).toHaveAttribute("aria-pressed", "false");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/messaging/channels/*/notify-prefs", async (route) => {
+    if (route.request().method() === "PUT") await gate;
+    await route.continue();
+  });
+  await mode(page, "Mentions only").click();
+  const chosenSeg = s.locator('.seg[aria-pressed="true"]');
+  const unchosenSeg = s.locator('.seg[aria-pressed="false"]').first();
+  await expect(chosenSeg).toBeDisabled();
+  await expect(unchosenSeg).toBeDisabled();
+  await expect(chosenSeg.locator(".picked")).toHaveText("\u2713");
+  await expect(unchosenSeg.locator(".picked")).toHaveCount(0);
+  const segRing = await chosenSeg.evaluate((el) => getComputedStyle(el).boxShadow);
+  expect(segRing).not.toBe("none");
+
+  const chosenSw = s.locator('.switch[aria-pressed="true"]').first();
+  const unchosenSw = s.locator('.switch[aria-pressed="false"]').first();
+  await expect(chosenSw).toBeDisabled();
+  await expect(unchosenSw).toBeDisabled();
+  await expect(chosenSw.locator(".picked")).toHaveText("\u2713");
+  await expect(unchosenSw.locator(".picked")).toHaveCount(0);
+  const swRing = await chosenSw.evaluate((el) => getComputedStyle(el).boxShadow);
+  expect(swRing).not.toBe("none");
+
+  // Compute WCAG contrast of "On" against its pill in charcoal (default) and light.
+  for (const theme of ["charcoal", "light"] as const) {
+    await page.evaluate((t) => {
+      if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+      else document.documentElement.removeAttribute("data-theme");
+    }, theme);
+    const { contrast, fg, bg } = await chosenSw.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const lin = (c: number) => {
+        const v = c / 255;
+        return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+      };
+      const lum = (rgb: string) => {
+        const [r = 0, g = 0, b = 0] = rgb.match(/\d+/g)?.map(Number) ?? [];
+        return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+      };
+      const l1 = lum(style.color);
+      const l2 = lum(style.backgroundColor);
+      return {
+        contrast: (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05),
+        fg: style.color,
+        bg: style.backgroundColor,
+      };
+    });
+    expect(contrast, `${theme}: ${fg} on ${bg}`).toBeGreaterThanOrEqual(3);
+  }
+  await page.evaluate(() => document.documentElement.removeAttribute("data-theme"));
+  release();
+});

@@ -79,6 +79,36 @@ export interface RoleConfigModel {
   readonly words: string;
   readonly roles: readonly RoleRow[];
   readonly editor: ConfigEditor | null;
+  /**
+   * UX-119c: a job shape the caller opened (true) or closed (false) by hand.
+   * A shape with no entry follows its curation: open when curated, closed
+   * when not. Not kept between visits.
+   */
+  readonly shapeOpen: ReadonlyMap<string, boolean>;
+}
+
+/** How many of a shape's surfaces carry a saved curation; null while any is still being read. */
+export function curatedSurfaceCount(model: Pick<RoleConfigModel, "cells">, profile: string): number | null {
+  let curated = 0;
+  for (const s of CONFIG_SURFACES) {
+    const cell = model.cells.get(cellKey(s.id, profile));
+    if (cell === undefined) return null;
+    if (cell.config.role_items.length > 0) curated += 1;
+  }
+  return curated;
+}
+
+/** Whether a shape's tiles show: the caller's own choice, else open exactly when curated. */
+export function shapeIsOpen(model: Pick<RoleConfigModel, "cells" | "shapeOpen">, profile: string): boolean {
+  const chosen = model.shapeOpen.get(profile);
+  if (chosen !== undefined) return chosen;
+  const curated = curatedSurfaceCount(model, profile);
+  return curated !== null && curated > 0;
+}
+
+/** True when every job shape's tiles show. */
+export function allShapesOpen(model: Pick<RoleConfigModel, "cells" | "shapeOpen">): boolean {
+  return JOB_SHAPES.every((shape) => shapeIsOpen(model, shape.profile));
 }
 
 /** A whole cell key: surface and job shape, joined for the model's map. */
@@ -192,6 +222,7 @@ function renderRoleMatrix(): TemplateResult {
 // -- the grid -----------------------------------------------------------------------------------------
 
 function renderGrid(model: RoleConfigModel): TemplateResult {
+  const every = allShapesOpen(model);
   return html`
     <p class="card-sub" data-test="config-caption">
       Curation hides buttons and columns; it never grants power and never moves data.
@@ -199,6 +230,10 @@ function renderGrid(model: RoleConfigModel): TemplateResult {
       so the whole grid is the administrator's to see.
     </p>
     <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Every surface, by job shape</h2>
+        <button type="button" class="btn btn-secondary btn-small grid-toggle-all" data-action="toggle-config-all" data-test="config-toggle-all">${every ? "Close all" : "Open all"}</button>
+      </div>
       <div class="tablewrap">
         <table class="cardrow-table config-grid-table" data-test="config-grid">
           <thead>
@@ -207,20 +242,47 @@ function renderGrid(model: RoleConfigModel): TemplateResult {
               ${CONFIG_SURFACES.map((s) => html`<th scope="col">${s.word}</th>`)}
             </tr>
           </thead>
-          <tbody>
-            ${JOB_SHAPES.map((shape) => html`
-              <tr data-profile=${shape.profile}>
-                <th scope="row">
-                  <div class="person">${shape.word}</div>
-                  <div class="dim">${shape.what}</div>
-                </th>
-                ${CONFIG_SURFACES.map((s) => renderCell(model, s.id, shape.profile, s.word))}
-              </tr>
-            `)}
-          </tbody>
+          ${JOB_SHAPES.map((shape) => renderShape(model, shape.profile, shape.word, shape.what))}
         </table>
       </div>
     </section>
+  `;
+}
+
+function renderShape(model: RoleConfigModel, profile: string, word: string, what: string): TemplateResult {
+  const total = CONFIG_SURFACES.length;
+  const curated = curatedSurfaceCount(model, profile);
+  const open = shapeIsOpen(model, profile);
+  const state =
+    curated === null
+      ? "Checking surfaces"
+      : curated === 0
+        ? `Standard view on all ${total} surfaces`
+        : `${curated} of ${total} surfaces curated`;
+  return html`
+    <tbody>
+      <tr data-profile=${profile} data-test="config-shape-row-${profile}" class="shape-row">
+        <th scope="row">
+          <div class="person">${word}</div>
+          <div class="dim">${what}</div>
+          <div class="shape-state">
+            <span class="chip chip-neutral">${state}</span>
+            <button
+              type="button"
+              class="btn btn-secondary btn-small shape-toggle"
+              data-action="toggle-config-shape"
+              data-profile=${profile}
+              data-test="config-shape-toggle-${profile}"
+              aria-expanded=${open ? "true" : "false"}
+              ?disabled=${curated === null}
+            >${open ? "Hide surfaces" : "Show surfaces"}</button>
+          </div>
+        </th>
+      </tr>
+      <tr data-profile=${profile} class="shape-tiles${open ? "" : " is-folded"}">
+        ${CONFIG_SURFACES.map((s) => renderCell(model, s.id, profile, s.word))}
+      </tr>
+    </tbody>
   `;
 }
 
