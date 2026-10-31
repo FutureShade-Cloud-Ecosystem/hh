@@ -216,6 +216,8 @@ func roundHalfEvenDiv(num, den int64) int64 {
 //     charge (an applied credit has already reduced the invoice balance it is counted against).
 //   - source_kind <> 'FINANCE_CHARGE': an earlier charge document is never itself charged, the
 //     compounding exclusion the plan rules out.
+//   - source_kind <> 'SUPPLIER_DEPOSIT': a deposit request is money for goods not yet delivered
+//     (a liability, not a trade receivable), so a past due deposit draws no charge.
 //   - due date more than 30 days before the month's last day, strictly: a balance exactly 30 days
 //     past due is current enough, one at 31 days is charged.
 //   - the customer carries no ACTIVE waiver (a waiver row whose cleared_at IS NULL).
@@ -237,7 +239,7 @@ const financeChargeCandidatesSQL = `
 		  FROM invoices i
 		 WHERE i.branch_id = $1::uuid
 		   AND i.doc_type = 'INVOICE'
-		   AND i.source_kind <> 'FINANCE_CHARGE'
+		   AND i.source_kind NOT IN ('FINANCE_CHARGE', 'SUPPLIER_DEPOSIT')
 		   AND i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
 		   AND COALESCE(i.finalized_at, i.created_at) <= $3::timestamptz
 		   AND i.due_date < $2::date - 30
