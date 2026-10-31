@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 )
 
 var rt3Zone = func() *time.Location {
@@ -379,4 +380,63 @@ func TestRT3_TheDueToReleaseReadListsAmountsByInvoice(t *testing.T) {
 			t.Errorf("10 days in: want waiting with a reason, got %+v", r)
 		}
 	}
+}
+
+// glBalance is an account's posted debits and credits, all branches.
+func (l *rt2Leg) glBalance(code string) [2]int64 {
+	l.t.Helper()
+	var d, c int64
+	if err := l.pool.QueryRow(context.Background(), `
+		SELECT COALESCE(SUM(ln.debit_cents),0), COALESCE(SUM(ln.credit_cents),0)
+		  FROM gl_journal_lines ln JOIN gl_journals j ON j.id = ln.journal_id JOIN gl_accounts a ON a.id = ln.account_id
+		 WHERE a.code = $1 AND j.status = 'POSTED'`, code).Scan(&d, &c); err != nil {
+		l.t.Fatalf("read account %s: %v", code, err)
+	}
+	return [2]int64{d, c}
+}
+
+// rt3LegacyRelease plants what the old job level route wrote on a box that already ran it: DR 2350 / CR 1150
+// and a RELEASE row with no invoice, on the lien job linked to the leg's customer job.
+func (l *rt2Leg) rt3LegacyRelease(amount int64) {
+	l.t.Helper()
+	ctx := context.Background()
+	jid, err := l.money.glSvc.PostExternal(ctx, gl.ExternalJournal{
+		Source: "ADJUSTMENT", SourceRefID: l.lien, IdempotencyKey: "holdback-release:" + l.lien, Memo: "legacy job level release",
+		BranchID: l.branch,
+		Lines: []gl.ExternalLine{
+			{AccountCode: "2350", DebitCents: amount, Memo: "release holdback payable"},
+			{AccountCode: "1150", CreditCents: amount, Memo: "release holdback receivable"},
+		},
+	})
+	if err != nil {
+		l.t.Fatalf("plant the legacy journal: %v", err)
+	}
+	mustExec(l.t, ctx, l.pool, `
+		INSERT INTO holdback_ledger (job_id, branch_id, entry_type, amount_cents, gl_journal_id, released_at, reason)
+		VALUES ($1::uuid, $2::uuid, 'RELEASE', $3, $4::uuid, CURRENT_DATE, 'legacy job level release')`, l.lien, l.branch, amount, jid)
+}
+
+// RT-3 fix, item 1: a job whose holdback the old job level route already released is refused in words,
+// and 1150, 2350 and the ledger stay as they were.
+func TestRT3_AJobTheOldRouteAlreadyReleasedIsRefused(t *testing.T) {
+	l := rt2Setup(t, "r3x")
+	l.newJob(true)
+	doc := l.invoice(100_000, 0)
+	l.rt3PerfOn(70)
+	l.rt3LegacyRelease(10_000)
+
+	before1150, before2350, rows := l.glBalance("1150"), l.glBalance("2350"), l.ledgerRows()
+	_, err := l.rt3Service(time.Now()).Release(context.Background(), l.rt3Input("r3x-key"))
+	if rt3Refusal(err) != billing.RefusedAlreadyReleased {
+		t.Fatalf("a job with a job level release row: want an already released refusal, got %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "job level") {
+		t.Errorf("the refusal must say the old job level release was used, got %v", err)
+	}
+	l.drain()
+	eq(t, "1150 unchanged", l.glBalance("1150"), before1150)
+	eq(t, "2350 unchanged", l.glBalance("2350"), before2350)
+	eq(t, "ledger rows unchanged", l.ledgerRows(), rows)
+	eq(t, "the column unchanged", l.holdbackOf(doc.InvoiceID), int64(10_000))
+	eq(t, "no invoice level release row", l.rt3Releases(doc.InvoiceID), 0)
 }
