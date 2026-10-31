@@ -128,6 +128,10 @@ type StaffService struct {
 	// position is the dealer's account position policy gate (UX-97); nil fails closed for staff conversion refusals.
 	position PositionGate
 
+	// jobFence is the customer module's job read a new document is opened against (JA-2,
+	// job_fence.go); nil refuses a named job in words, never waves one through.
+	jobFence JobFence
+
 	// callerFrom resolves the trusted, server-stamped acting staff member. Defaults to the identity
 	// guard-stamped caller; tests override it via withCaller. Mirrors order.Service.callerFrom.
 	callerFrom func(context.Context) (identity.StaffContext, bool)
@@ -388,6 +392,9 @@ type AcceptedLineRecord struct {
 type QuoteCreate struct {
 	CustomerID string
 	BranchID   string
+	// JobID is the job the quote is written for, "" when the quote belongs to the account as a
+	// whole. It is fenced through the job seam (job_fence.go) before the quote is written.
+	JobID      string
 	ValidUntil string // "" = never expires
 	CreatedBy  string
 }

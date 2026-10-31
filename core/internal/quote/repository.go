@@ -254,6 +254,9 @@ func (r *Repository) Convert(ctx context.Context, customerID, quoteID string, op
 	if err != nil {
 		return ConvertResult{}, err
 	}
+	// JA-2: the job the order is opened on, resolved and fenced by runConvert before this
+	// transaction began. No job named splices nothing, and the INSERT is the one that shipped.
+	jobCols, jobVals := jobColumns(opt.JobID != "")
 
 	// QD-5: when the payment door carries its transaction, the conversion runs on it and commits with
 	// it (or not at all); every other caller gets the transaction of its own, exactly as before.
@@ -333,10 +336,15 @@ func (r *Repository) Convert(ctx context.Context, customerID, quoteID string, op
 	// (migration 0087) is now the single mint for all three order writers.
 	//
 	// DIB-483: the fulfilment splice. With no choice made, fulCols/fulVals are empty and this is the
-	// statement that shipped, byte for byte (convert.go: convertInsertSQL).
+	// statement that shipped, byte for byte (convert.go: convertInsertSQL). JA-2's job splice rides
+	// the same rule: with no job named, jobCols/jobVals are empty too.
 	var res ConvertResult
-	err = tx.QueryRow(ctx, convertInsertSQL(fulCols, fulVals),
-		customerID, quoteID).Scan(&res.OrderID, &res.OrderNo)
+	convertArgs := []any{customerID, quoteID}
+	if opt.JobID != "" {
+		convertArgs = append(convertArgs, opt.JobID)
+	}
+	err = tx.QueryRow(ctx, convertInsertSQL(fulCols, fulVals, jobCols, jobVals),
+		convertArgs...).Scan(&res.OrderID, &res.OrderNo)
 	if err != nil {
 		return ConvertResult{}, fmt.Errorf("convert quote %q: insert order: %w", quoteID, err)
 	}

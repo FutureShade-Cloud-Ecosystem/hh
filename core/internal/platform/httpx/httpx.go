@@ -22,6 +22,13 @@ func BadRequestf(format string, a ...any) error {
 	return BadRequestError{Msg: fmt.Sprintf(format, a...)}
 }
 
+// NotFoundError marks a named thing that is not there, which every handler that recognises it maps
+// to HTTP 404 with the words. Like BadRequestError it is errors.As-able across modules (wave 3 JA-2:
+// a job id that is a uuid but no job).
+type NotFoundError struct{ Msg string }
+
+func (e NotFoundError) Error() string { return e.Msg }
+
 // WriteJSON writes v as JSON with the given status. HTML escaping is disabled so
 // payloads with <, >, & round-trip byte-for-byte.
 func WriteJSON(w http.ResponseWriter, status int, v any) {

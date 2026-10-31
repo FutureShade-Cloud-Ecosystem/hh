@@ -271,7 +271,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithCustomers(customerSvc).
 		WithBilling(billingSvc).
 		WithOrders(orderSvc).
-		WithQuotes(quote.NewService(quoteRepo).WithAudit(auditSvc)).
+		WithQuotes(quote.NewService(quoteRepo).WithAudit(auditSvc).
+			// Wave 3 JA-2: the portal conversion inherits the quote's own job, and the fence
+			// holds that job to the open rule when the order is opened.
+			WithJobFence(newQuoteJobFence(pool))).
 		WithPayments(portalPaySvc).
 		WithProcurement(procurementSvc).
 		WithProducts(productSvc).
@@ -313,6 +316,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	posRepo := pos.NewRepository(pool).WithPayBalanceSources(newPayBalanceSources(pool)).WithZone(newDealerZone(pool))
 	posSvc := wireTillRules(pos.NewService(posRepo).
 		WithZone(newDealerZone(pool)).
+		// Wave 3 JA-2: the counter's job fence, answering with the job's own terms so the ring
+		// dates its invoice by them.
+		WithJobFence(posJobFence{svc: customerSvc}).
 		WithLineResolver(pricingSvc).
 		WithTenderTaker(tillSvc).
 		WithCreditGate(till.NewHoldAwareCreditGate(ops.tillRepo)).

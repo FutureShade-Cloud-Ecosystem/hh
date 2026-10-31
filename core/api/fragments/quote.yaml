@@ -1898,6 +1898,14 @@ components:
           type: string
           format: date
           description: Empty or absent means the quote never expires
+        job_id:
+          type: string
+          format: uuid
+          description: >-
+            The job the quote is written for, one of the customer's own job
+            accounts. Another customer's job, a closed job and a job outside
+            the caller's reach are refused in words; absent means the quote
+            belongs to the account as a whole.
     QuoteValidUntilWrite:
       type: object
       description: >-
@@ -2156,6 +2164,13 @@ components:
         fulfillment:
           type: string
           enum: [PICKUP, WILL_CALL]
+        job_id:
+          type: string
+          format: uuid
+          description: >-
+            The job the conversion's order is opened on, one of the
+            customer's own job accounts and fenced in words like the quote
+            create's. Absent inherits the quote's own job.
     QuoteConvertResult:
       type: object
       description: >-
@@ -2198,6 +2213,13 @@ components:
             action converts the quote (a customer with no credit account),
             graded exactly as the plain convert grades it: DELIVERY is
             refused in words, and an absent value leaves the default, Pickup.
+        job_id:
+          type: string
+          format: uuid
+          description: >-
+            Optional. The job the action's conversion opens its order on,
+            one of the customer's own job accounts and fenced in words;
+            absent inherits the quote's own job.
             Ignored when the quote is already converted, because an order's
             fulfilment is chosen at its conversion.
     QuoteOrderPaymentResult:

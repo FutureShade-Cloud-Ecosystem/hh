@@ -175,6 +175,9 @@ type CreditMemoInput struct {
 	CustomerID string
 	BranchID   string
 	OrderID    string
+	// JobID is the job the credit is opened on (JA-2), "" when the credit belongs to the account
+	// as a whole. Fenced by the route before the memo is raised; carried onto the document.
+	JobID string
 	// ReversesInvoiceID selects REVERSAL mode: mirror this document, negated. Empty ⇒ ACCOMMODATION.
 	ReversesInvoiceID string
 	// AmountCents is a POSITIVE magnitude, the sign is this file's business, never the caller's, so
@@ -540,16 +543,16 @@ func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput
 		// is drawn by 0422's trg_sync_seq_draw on this INSERT; no explicit draw is added here.
 		// Sign flipped HERE, once, for the whole file.
 		err := tx.QueryRow(ctx, `
-INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
+INSERT INTO invoices (invoice_no, customer_id, order_id, job_id, branch_id, status, issue_date, due_date,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
                       doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id, org_id)
-VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $3, 'FINALIZED', $4, $4,
+VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $12, $3, 'FINALIZED', $4, $4,
         $5, $6, $7, $7, now(), 'CREDIT_MEMO', $8, $9, FALSE, $10,
         $11)
 RETURNING id::text, invoice_no`,
 			customerID, nullUUID(in.OrderID), branchID, issueDate,
 			-plan.subtotal, -plan.tax, -total,
-			sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID), orgID,
+			sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID), orgID, nullUUID(in.JobID),
 		).Scan(&id, &no)
 		if err != nil {
 			return fmt.Errorf("insert credit memo: %w", err)

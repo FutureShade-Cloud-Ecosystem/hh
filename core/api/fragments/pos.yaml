@@ -2450,6 +2450,15 @@ components:
         notes: { type: string }
         po_job_ref: { type: string, maxLength: 64, description: The customer's PO or job reference }
         salesperson_id: { type: string, description: The staff member credited with the sale }
+        job_id:
+          type: string
+          format: uuid
+          description: >-
+            The job account the sale is opened on, one of the customer's own
+            job accounts. Another customer's job, a closed job and a job
+            outside the caller's reach are refused in words; absent means the
+            sale belongs to the account as a whole. The free text job fields
+            stay what the customer calls the work.
         job_address: { type: string, maxLength: 200 }
         job_reference: { type: string, maxLength: 64 }
         cash_tendered_cents:
