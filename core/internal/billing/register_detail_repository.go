@@ -500,13 +500,14 @@ func (r *Repository) WorkspaceHeader(ctx context.Context, customerID string) (Cu
 		   LEFT JOIN ar_ap_contacts a ON a.customer_id = c.id
 		   LEFT JOIN LATERAL (
 		     SELECT SUM(u.balance_cents) AS open_cents,
-		            SUM(u.balance_cents) FILTER (WHERE u.due_date < $2::date) AS overdue_cents
+		            SUM(u.past_due_cents) AS overdue_cents
 		       FROM (
-		         SELECT i.balance_cents, i.due_date
+		         SELECT i.balance_cents, invoice_past_due_cents(i.id, $2::date, now()) AS past_due_cents
 		           FROM invoices i
 		          WHERE i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.balance_cents <> 0
 		         UNION ALL
-		         SELECT SUM(ct.amount_cents), MIN((ct.occurred_at AT TIME ZONE $3::text)::date)
+		         SELECT SUM(ct.amount_cents),
+		                CASE WHEN MIN((ct.occurred_at AT TIME ZONE $3::text)::date) < $2::date THEN SUM(ct.amount_cents) ELSE 0 END
 		           FROM customer_transactions ct
 		          WHERE ct.customer_id = c.id
 		            AND ct.txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF')

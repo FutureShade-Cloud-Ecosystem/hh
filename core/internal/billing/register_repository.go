@@ -134,7 +134,8 @@ const registerSelect = `
 	       EXISTS (SELECT 1 FROM credit_holds h WHERE h.customer_id = c.id AND h.status = 'ACTIVE'),
 	       EXISTS (SELECT 1 FROM ar_invoice_disputes d2 WHERE d2.customer_id = c.id AND d2.status = 'OPEN'),
 	       pr.promised_date, COALESCE(pr.promised_cents, 0),
-	       snd.sent_at, snd.opened_at, (snd.id IS NOT NULL)
+	       snd.sent_at, snd.opened_at, (snd.id IS NOT NULL),
+	       invoice_oldest_due_on(i.id, now())
 	  FROM invoices i
 	  JOIN customers c ON c.id = i.customer_id
 	  LEFT JOIN orders o ON o.id = i.order_id
@@ -228,8 +229,8 @@ func registerWhere(f RegisterFilter, args []any) (string, []any) {
 // previously: a chip that selects every open invoice on an account whose credit is currently blocked.
 var chipPredicates = map[string]string{
 	StatusOpen:          `i.status IN ('FINALIZED','PARTIALLY_PAID')`,
-	StatusDueSoon:       `i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.due_date >= $1::date AND i.due_date <= $1::date + $2::int`,
-	StatusOverdue:       `i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.due_date < $1::date`,
+	StatusDueSoon:       `i.status IN ('FINALIZED','PARTIALLY_PAID') AND invoice_oldest_due_on(i.id, now()) >= $1::date AND invoice_oldest_due_on(i.id, now()) <= $1::date + $2::int`,
+	StatusOverdue:       `i.status IN ('FINALIZED','PARTIALLY_PAID') AND invoice_oldest_due_on(i.id, now()) < $1::date`,
 	StatusDisputed:      `EXISTS (SELECT 1 FROM ar_invoice_disputes cd WHERE cd.invoice_id = i.id AND cd.status = 'OPEN')`,
 	StatusPaid:          `i.status = 'PAID'`,
 	StatusCredit:        `i.doc_type = 'CREDIT_MEMO'`,
@@ -240,10 +241,10 @@ var chipPredicates = map[string]string{
 	// pass the C8 constants.
 	ChipAll:     `i.status IN ('FINALIZED','PARTIALLY_PAID')`,
 	"ALL":       `i.status IN ('FINALIZED','PARTIALLY_PAID')`,
-	ChipPastDue: `i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.due_date < $1::date`,
-	"PAST_DUE":  `i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.due_date < $1::date`,
-	ChipCurrent: `i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.due_date >= $1::date`,
-	"CURRENT":   `i.status IN ('FINALIZED','PARTIALLY_PAID') AND i.due_date >= $1::date`,
+	ChipPastDue: `i.status IN ('FINALIZED','PARTIALLY_PAID') AND invoice_oldest_due_on(i.id, now()) < $1::date`,
+	"PAST_DUE":  `i.status IN ('FINALIZED','PARTIALLY_PAID') AND invoice_oldest_due_on(i.id, now()) < $1::date`,
+	ChipCurrent: `i.status IN ('FINALIZED','PARTIALLY_PAID') AND invoice_oldest_due_on(i.id, now()) >= $1::date`,
+	"CURRENT":   `i.status IN ('FINALIZED','PARTIALLY_PAID') AND invoice_oldest_due_on(i.id, now()) >= $1::date`,
 	ChipOnHold:  `i.status IN ('FINALIZED','PARTIALLY_PAID') AND EXISTS (SELECT 1 FROM credit_holds ch WHERE ch.customer_id = i.customer_id AND ch.status = 'ACTIVE')`,
 	"ON_HOLD":   `i.status IN ('FINALIZED','PARTIALLY_PAID') AND EXISTS (SELECT 1 FROM credit_holds ch WHERE ch.customer_id = i.customer_id AND ch.status = 'ACTIVE')`,
 }
@@ -300,7 +301,7 @@ func (r *Repository) RegisterRows(ctx context.Context, asOf time.Time, dueSoonDa
 			&v.TotalCents, &v.BalanceCents, &v.HoldbackCents, &v.StoredStatus,
 			&v.Disputed, &onHold, &accountDisputed,
 			&promisedDate, &v.PromisedCents,
-			&sentAt, &openedAt, &everSent); err != nil {
+			&sentAt, &openedAt, &everSent, &v.agedFrom); err != nil {
 			return nil, 0, fmt.Errorf("billing: scan register row: %w", err)
 		}
 		v.PromisedDate = promisedDate

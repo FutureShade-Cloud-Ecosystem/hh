@@ -93,3 +93,35 @@ LANGUAGE sql STABLE AS $$
    WHERE l.invoice_id = p_invoice_id AND l.entry_type = 'RELEASE' AND l.created_at <= p_as_of
      AND (l.reversed_at IS NULL OR l.reversed_at > p_as_of)
 $$;
+
+-- 6b. The two current state readers of the released split (RT-3 fix round 2). The display readers (the AR
+--     landing, the register chips and rows, the customer workspace header) read the invoice's stored balance
+--     and holdback, so they read the split from the same two lien-owned functions through these two, which
+--     are the one place the "older part keeps its due date, the released part falls due on its release day
+--     plus the invoice's own terms" rule is written for them. The aging, the finance charge and the
+--     statement keep their dated forms.
+--     invoice_oldest_due_on: the date the oldest part still owed falls due: the invoice's due date while any
+--     older part remains (or nothing was released), else the released part's due day.
+--     invoice_past_due_cents: the net past due on a house day, part by part.
+CREATE OR REPLACE FUNCTION invoice_oldest_due_on(p_invoice_id uuid, p_as_of timestamptz) RETURNS date
+LANGUAGE sql STABLE AS $$
+  SELECT CASE WHEN q.rel > 0 AND q.net - q.rel <= 0 THEN q.rel_due ELSE q.due_date END
+    FROM (SELECT i.due_date, n.net,
+                 LEAST(invoice_released_cents_as_of(i.id, p_as_of), GREATEST(n.net, 0)) AS rel,
+                 GREATEST(invoice_released_on(i.id, p_as_of) + GREATEST(i.due_date - i.issue_date, 0), i.due_date) AS rel_due
+            FROM invoices i
+           CROSS JOIN LATERAL (SELECT i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0)) AS net) n
+           WHERE i.id = p_invoice_id) q
+$$;
+
+CREATE OR REPLACE FUNCTION invoice_past_due_cents(p_invoice_id uuid, p_day date, p_as_of timestamptz) RETURNS bigint
+LANGUAGE sql STABLE AS $$
+  SELECT (CASE WHEN p_day > q.due_date THEN q.net - q.rel ELSE 0 END
+        + CASE WHEN q.rel > 0 AND p_day > q.rel_due THEN q.rel ELSE 0 END)::bigint
+    FROM (SELECT i.due_date, n.net,
+                 LEAST(invoice_released_cents_as_of(i.id, p_as_of), GREATEST(n.net, 0)) AS rel,
+                 GREATEST(invoice_released_on(i.id, p_as_of) + GREATEST(i.due_date - i.issue_date, 0), i.due_date) AS rel_due
+            FROM invoices i
+           CROSS JOIN LATERAL (SELECT i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0)) AS net) n
+           WHERE i.id = p_invoice_id) q
+$$;

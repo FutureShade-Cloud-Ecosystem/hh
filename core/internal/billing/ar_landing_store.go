@@ -126,7 +126,7 @@ func (r *ARLandingRepository) OpenInvoices(ctx context.Context, asOf time.Time, 
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT i.id::text, i.invoice_no::text, c.id::text, c.name, c.account_no::text,
-		       COALESCE(i.branch_id::text, ''), (i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))), i.due_date
+		       COALESCE(i.branch_id::text, ''), (i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))), invoice_oldest_due_on(i.id, now())
 		  FROM invoices i
 		  JOIN customers c ON c.id = i.customer_id
 		 WHERE i.status IN ('FINALIZED','PARTIALLY_PAID')
