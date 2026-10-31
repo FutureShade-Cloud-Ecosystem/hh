@@ -435,7 +435,7 @@ func (w *InvoiceWriter) RunFinanceCharges(ctx context.Context, in FinanceChargeR
 	if w.audit != nil {
 		_ = w.audit.Record(ctx, audit.SensitiveAccess{
 			Action: ActFinanceChargeRun, EntityType: "branch", EntityID: branchID,
-			ActorID: in.ActorID, Purpose: "FINANCE_CHARGE_RUN",
+			ActorID: in.ActorID, BranchID: branchID, Purpose: "FINANCE_CHARGE_RUN",
 			Extra: map[string]any{
 				"month": monthWords, "charged": res.Charged,
 				"charged_cents": res.ChargedCents, "already_charged": res.AlreadyCharged,
