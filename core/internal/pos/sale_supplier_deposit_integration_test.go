@@ -36,7 +36,6 @@ func TestIntegration_SupplierDeposit_BilledToTheCreditAccount(t *testing.T) {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1`, custID)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE customer_id = $1`, custID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, custID)
 	})
 	svc := realPosSvc(t, pool, stubCharger{})
 	out, err := svc.Sale(ctx, SaleInput{

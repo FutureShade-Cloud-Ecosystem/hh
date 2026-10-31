@@ -51,9 +51,6 @@ func TestIntegration_PickHold_OutboxDrainLeavesTheOwingOrderInProcess(t *testing
 		fmt.Sprintf("P2B-%s", fixtureTag())).Scan(&custID); err != nil {
 		t.Fatalf("plant the cash on demand customer: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, custID)
-	})
 
 	svc := realPosSvc(t, pool, stubCharger{})
 	billingRepo := testBillingRepo(pool)

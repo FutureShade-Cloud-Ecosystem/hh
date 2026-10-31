@@ -109,8 +109,9 @@ const w25TestHelperKey = "test_helpers|*|*"
 // filed bill test (w29a_finance_check_late_filed) cleans up the same two tables: 106. W3-RW1's two
 // reporting dataset tests each seed their product's product_branch_costs rows and clean them up: four
 // more sites, so the count is 110. Wave 3 item 0.12's late filed credit application test cleans up its
-// product's value rows too: 112.
-const w25TestHelperSiteCount = 112
+// product's value rows too: 112. Wave 3 item 0.39's pos return values leg puts back the seeded branch cost
+// row it moves: 113.
+const w25TestHelperSiteCount = 113
 
 // w25OnHandTestHelperKey is the allowance bucket for every on-hand writer found in *_test.go files.
 const w25OnHandTestHelperKey = "test_helpers_on_hand|*|*"
@@ -119,8 +120,8 @@ const w25OnHandTestHelperKey = "test_helpers_on_hand|*|*"
 // W2-9a's two composition tests each clean up their product's stock_balances rows: 76. The box check's
 // late filed bill test does too: 77. W3-RW1's two reporting dataset tests seed their product's
 // stock_balances rows (four inserts across two branches) and clean them up: 83. Wave 3 item 0.12's late filed credit application test does
-// too: 84.
-const w25OnHandTestHelperSiteCount = 84
+// too: 84. Wave 3 item 0.39's pos return values leg puts back the seeded stock balance row it moves: 85.
+const w25OnHandTestHelperSiteCount = 85
 
 // w25CensusResult is the census answer: every site found, grouped by key, and every allowance key that
 // no live site matches.

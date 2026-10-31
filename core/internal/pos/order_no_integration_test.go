@@ -38,7 +38,6 @@ func seedRingCustomer(t *testing.T, pool *pgxpool.Pool) string {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM order_lines WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)`, cust)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE customer_id = $1`, cust)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, cust)
 	})
 	return cust
 }

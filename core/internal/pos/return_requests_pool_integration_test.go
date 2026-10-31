@@ -95,6 +95,7 @@ func rreqScenarioPool(t *testing.T, name string) *pgxpool.Pool {
 		t.Fatalf("scenario pool not reachable: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	registerLegSweep(t, pool)
 	return pool
 }
 

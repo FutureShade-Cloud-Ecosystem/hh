@@ -10,9 +10,13 @@
 // So a contract test spawns its stub with TZ set to STUB_ZONE and computes its month in that same zone, read
 // through Intl with the zone named, which no process zone can move. A stub started by Playwright passes no zone
 // and keeps the host's local month, the one the desk in the browser opens.
+//
+// STUB_ZONE is the house zone, America/Toronto, because the bankrec world's sign off gate reads Toronto's day:
+// on any other zone the statement month and the gate disagree for hours around every month's turn (from UTC
+// midnight on the 1st until Toronto's, the UTC month before is the month Toronto has not finished).
 
-/** The zone a contract test pins its stub to, and computes its own months in. */
-export const STUB_ZONE = "UTC";
+/** The zone a contract test pins its stub to, and computes its own months in: the house zone the gate reads. */
+export const STUB_ZONE = "America/Toronto";
 
 /**
  * The month n months before now's month: from the host's local clock when no zone is named, else from the
