@@ -153,27 +153,27 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			          AND ct.txn_type IN ('INVOICE', 'CREDIT_MEMO')
 			   )
 			UNION ALL
-			-- The holdback an invoice still withholds is its own line: money the customer owes later,
-			-- not now, so the statement's running balance and closing figure are the net owed (the
-			-- aging's figure). As of the statement date the parts of credits taken after it are still
-			-- withheld (RT-2).
-			SELECT (i.issue_date::timestamp AT TIME ZONE $4::text) AS occurred_at,
-			       i.created_at + interval '1 microsecond',
-			       'HOLDBACK' AS txn_type,
-			       -(GREATEST(i.holdback_cents, 0)
-			         + COALESCE((SELECT -SUM(m.holdback_cents) FROM invoices m
-			                      WHERE m.reverses_invoice_id = i.id AND m.doc_type = 'CREDIT_MEMO'
-			                        AND m.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
-			                        AND (COALESCE(m.finalized_at, m.created_at) AT TIME ZONE $4::text)::date > $2::date), 0)) AS amount_cents,
-			       i.invoice_no::text AS invoice_no,
-			       'Holdback withheld on ' || i.invoice_no::text AS memo
-			  FROM invoices i
-			 WHERE i.customer_id = $1::uuid
-			   AND i.doc_type = 'INVOICE'
-			   AND i.status IN ('FINALIZED', 'PARTIALLY_PAID')
-			   AND i.holdback_cents > 0
-			   AND i.issue_date <= $2::date
-			   AND ($3::uuid[] IS NULL OR i.branch_id = ANY($3::uuid[]))
+			-- The holdback an invoice withheld on the statement date is its own line: money the customer
+			-- owes later, not now, so the statement's running balance and closing figure are the net owed
+			-- (the aging's figure). It is the retention ledger's sum to the end of the statement day
+			-- (invoice_holdback_as_of), for every invoice issued by then, whatever its status or holdback is
+			-- today: a credit, a write off or a release taken after the date never rewrites the statement.
+			SELECT h.occurred_at, h.created_at, 'HOLDBACK' AS txn_type, -h.held AS amount_cents,
+			       h.invoice_no, 'Holdback withheld on ' || h.invoice_no AS memo
+			  FROM (
+			    SELECT (i.issue_date::timestamp AT TIME ZONE $4::text) AS occurred_at,
+			           i.created_at + interval '1 microsecond' AS created_at,
+			           i.invoice_no::text AS invoice_no,
+			           invoice_holdback_as_of(i.id,
+			             (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond') AS held
+			      FROM invoices i
+			     WHERE i.customer_id = $1::uuid
+			       AND i.doc_type = 'INVOICE'
+			       AND i.status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
+			       AND i.issue_date <= $2::date
+			       AND ($3::uuid[] IS NULL OR i.branch_id = ANY($3::uuid[]))
+			  ) h
+			 WHERE h.held > 0
 		)
 		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo
 		  FROM activity
