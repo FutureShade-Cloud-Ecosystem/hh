@@ -84,6 +84,11 @@ const (
 	SourceOrder          = "ORDER"
 	SourceMultiShip      = "MULTISHIP"
 	SourceWarrantyCredit = "WARRANTY_CREDIT"
+	// SourceFinanceCharge marks the invoice the monthly finance charge run raises (FC-1): a real
+	// invoice, FINALIZED at its charge amount, whose journal posts finance charge income rather
+	// than revenue. The marker is also the run's own exclusion: an earlier charge document is never
+	// itself charged.
+	SourceFinanceCharge = "FINANCE_CHARGE"
 )
 
 // SourceSupplierDeposit marks the deposit document a POS special order ring
@@ -241,6 +246,10 @@ type OrderInvoiceFacts struct {
 	// RaisedAtCounter marks the counter's agreed invoice: the header and the finalized event carry
 	// EventSourceCounter. False for every other caller.
 	RaisedAtCounter bool
+	// Memo is words the AR subledger row carries beside the invoice number (the finance charge names
+	// the month its document covers, so a clerk reading the ledger sees why the balance moved
+	// without opening the document). Empty for every producer but the finance charge run.
+	Memo string
 }
 
 // OrderInvoiceLine is one billable line, in the shape invoice_lines stores. Quantities are DECIMAL
@@ -1085,6 +1094,9 @@ func (w *InvoiceWriter) invoiceOrderAtAgreed(ctx context.Context, ctxTx pgx.Tx, 
 // invoiceMemo names the document on the subledger row so an AR clerk reading the ledger sees WHY the
 // balance moved without opening the invoice.
 func invoiceMemo(f OrderInvoiceFacts, invoiceNo string) string {
+	if f.Memo != "" {
+		return invoiceNo + ", " + f.Memo
+	}
 	if f.OrderNo != "" {
 		if len(f.GroupIDs) > 0 && !f.ClosesOrder {
 			return fmt.Sprintf("%s, progress invoice for order %s (%d shipment group(s))", invoiceNo, f.OrderNo, len(f.GroupIDs))
