@@ -6940,6 +6940,7 @@ export type PurchasingBillLine = {
   match_state: PurchasingMatchState;
   qty_variance_base: number;
   price_variance_cents: number;
+  supply_kind?: "GOODS" | "SERVICES";
 };
 export type PurchasingInstalment = {
   id: string;
@@ -7122,6 +7123,7 @@ export type PurchasingBillLineRequest = {
   description: string;
   qty_billed_base: number;
   unit_cost_cents: number;
+  supply_kind?: "GOODS" | "SERVICES";
 };
 export type PurchasingInstalmentRequest = {
   due_date: string;
@@ -7322,7 +7324,9 @@ export type PurchasingUpdatePaymentRunRequest = {
 };
 export type PurchasingT5018Report = {
   year: number;
+  rule_note: string;
   total_cents: number;
+  box_22_total_cents: number;
   items: PurchasingT5018Row[];
 };
 export type PurchasingT5018Row = {
@@ -7332,6 +7336,12 @@ export type PurchasingT5018Row = {
   business_number: string;
   business_number_missing: boolean;
   paid_cents: number;
+  box_22_cents: number;
+  services_subtotal_cents: number;
+  under_threshold: boolean;
+  threshold_note: string;
+  unmarked_line_count: number;
+  unmarked_lines_note: string;
 };
 export type LandedCost = {
   id: string;

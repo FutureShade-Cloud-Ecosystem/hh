@@ -36,6 +36,7 @@ export class BillsDesk implements AreaDesk {
   #entryPo: PurchasingPODetail | null = null;
   #entryReading = false;
   #entryCurrency = "CAD";
+  #entryExtraSupplyKind: "" | "GOODS" | "SERVICES" = "";
   #detail: PurchasingBillDetail | null = null;
   #lineUoms: ReadonlyMap<string, string> = new Map();
   #confirm: { kind: BillConfirm; words: string } | null = null;
@@ -147,6 +148,7 @@ export class BillsDesk implements AreaDesk {
         this.#clearMessages();
         this.#entryPo = null;
         this.#entryCurrency = "CAD";
+        this.#entryExtraSupplyKind = "";
         this.#seedEntry = "";
         this.#view = "enter";
         this.#host.repaint();
@@ -160,6 +162,10 @@ export class BillsDesk implements AreaDesk {
         return true;
       case "bill-currency":
         this.#entryCurrency = choice === "USD" ? "USD" : "CAD";
+        this.#host.repaint();
+        return true;
+      case "bill-extra-supply-kind":
+        this.#entryExtraSupplyKind = choice === "GOODS" ? "GOODS" : choice === "SERVICES" ? "SERVICES" : "";
         this.#host.repaint();
         return true;
       case "save-bill":
@@ -279,6 +285,12 @@ export class BillsDesk implements AreaDesk {
         currency: this.#entryCurrency,
         fx: this.#host.field("bill-fx"),
         lines,
+        extraLine: {
+          description: this.#host.field("extra-desc"),
+          qty: this.#host.field("extra-qty"),
+          cost: this.#host.field("extra-cost"),
+          supplyKind: this.#entryExtraSupplyKind,
+        },
       },
       picked === undefined ? null : po,
     );
@@ -501,6 +513,7 @@ export class BillsDesk implements AreaDesk {
       entryPo: this.#entryPo,
       entryReading: this.#entryReading,
       entryCurrency: this.#entryCurrency,
+      entryExtraSupplyKind: this.#entryExtraSupplyKind,
       detail: this.#detail,
       lineUoms: this.#lineUoms,
       confirm: this.#confirm,
