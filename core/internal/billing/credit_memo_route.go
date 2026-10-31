@@ -913,12 +913,16 @@ func (h *CreditMemoRouteHandler) quote(w http.ResponseWriter, r *http.Request, c
 // writeErr maps a refusal to its status, the same taxonomy the register's door uses.
 func (h *CreditMemoRouteHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var bad httpx.BadRequestError
+	var notFoundWords httpx.NotFoundError
 	var sd *SupplierDepositNotCreditable
 	var kc *creditMemoKeyConflict
 	var cnf *creditMemoCustomerNotFound
 	switch {
 	case errors.As(err, &bad):
 		httpx.Error(w, http.StatusBadRequest, bad.Error())
+	case errors.As(err, &notFoundWords):
+		// A named job that is no job (JA-2): the customer module's words behind a 404.
+		httpx.Error(w, http.StatusNotFound, notFoundWords.Error())
 	case errors.As(err, &cnf):
 		// THE CUSTOMER ANSWER: 404 "customer not found", the house's body, byte for byte the one the
 		// pos and AR doors write for an account the caller cannot reach.

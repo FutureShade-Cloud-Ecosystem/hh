@@ -11,14 +11,20 @@ package billing
 // Run: DATABASE_URL=… go test -tags integration ./internal/billing -run TestIntegration_CreditMemoJob -count=1
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
@@ -137,6 +143,57 @@ func TestIntegration_CreditMemoJob_TheMemoTakesAJobAndTheFenceRefusesInWords(t *
 		}, cmTrentonOnlyCaller())
 		if err == nil || !strings.Contains(err.Error(), tc.words) {
 			t.Fatalf("%s refused with %v, want words naming %q", tc.name, err, tc.words)
+		}
+	}
+}
+
+// TestIntegration_CreditMemoJob_TheDoorAnswersAJobRefusalInWords: the refusals through the REAL
+// route handler (the review of PR 747, P3-1): 400 and the customer module's words for the three
+// mistakes, and 404 in words for a job id that is a uuid but no job, never a 500.
+func TestIntegration_CreditMemoJob_TheDoorAnswersAJobRefusalInWords(t *testing.T) {
+	pool := intPool(t)
+	e := memoJobPlant(t, pool)
+	plantCreditMemoOrgs(t, pool)
+	repo := customer.NewRepository(pool)
+	svc := NewCreditMemoService(NewInvoiceWriter(pool), slog.Default()).
+		WithPostingRules(creditMemoFixedRules{accounts: creditMemoRules}).
+		WithBranchOrg(cmFixedBranchOrgs{trentonBranch: cmNorthOrgID, kingstonBranch: cmNorthOrgID}).
+		WithCustomerHome(cmFixedHomes{e.customer: trentonBranch}).
+		WithJobFence(memoJobFence{svc: customer.NewService(repo).WithJobs(repo)})
+	h := NewCreditMemoRouteHandler(svc)
+	ctx := identity.ContextWithStaff(context.Background(), identity.StaffContext{
+		UserID: "00000000-0000-4000-9000-000000000001", RoleCode: "FINANCIAL_CONTROLLER",
+		Tier: identity.TierLeadership, Scope: identity.ScopeBranch, Status: identity.StatusActive,
+		Branches: map[string]bool{trentonBranch: true},
+	})
+	for _, tc := range []struct {
+		name   string
+		jobID  string
+		status int
+		words  string
+	}{
+		{"another customer's job", e.other, http.StatusBadRequest, "that job is another customer's job"},
+		{"a closed job", e.closed, http.StatusBadRequest, "the job is closed, so it takes no new document"},
+		{"a job outside the reach", e.far, http.StatusBadRequest, "that job sits at a branch outside your reach"},
+		{"a uuid that is no job", uuid.NewString(), http.StatusNotFound, "that job was not found"},
+	} {
+		raw, _ := json.Marshal(CreditMemoRouteRequest{
+			CustomerID: e.customer, BranchID: trentonBranch, AmountCents: 5_000,
+			Reason: "Pallet came back", JobID: tc.jobID, IdempotencyKey: "mjw-" + ns(t),
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/ar/credit-memos", bytes.NewReader(raw)).WithContext(ctx)
+		rec := httptest.NewRecorder()
+		caller := guards.StaffCaller{}
+		caller.OrgID = cmNorthOrgID
+		caller.Scope = "branch"
+		caller.Branches = []string{trentonBranch}
+		h.issue(rec, req, caller)
+		var body struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		if rec.Code != tc.status || body.Error != tc.words {
+			t.Fatalf("%s answered %d %q, want %d %q", tc.name, rec.Code, body.Error, tc.status, tc.words)
 		}
 	}
 }

@@ -520,6 +520,7 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 	var notEditable *NotEditableError
 	var expired *QuoteExpiredError
 	var badRequest httpx.BadRequestError
+	var notFoundWords httpx.NotFoundError
 	var creditBlocked ErrCreditBlocked
 	var notSelling *NotSellingRoleError
 	var alreadyAccepted *AlreadyAcceptedError
@@ -578,6 +579,9 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusConflict, expired.Error())
 	case errors.As(err, &badRequest):
 		httpx.Error(w, http.StatusBadRequest, badRequest.Error())
+	case errors.As(err, &notFoundWords):
+		// A named job that is no job (JA-2): the customer module's words behind a 404.
+		httpx.Error(w, http.StatusNotFound, notFoundWords.Error())
 	case errors.Is(err, ErrInvalidTransition):
 		httpx.Error(w, http.StatusConflict, "quote: invalid state transition")
 	case errors.Is(err, ErrLineNotFound):

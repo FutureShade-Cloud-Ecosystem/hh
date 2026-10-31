@@ -12,15 +12,23 @@ package pos
 // Run: DATABASE_URL=… go test -tags integration ./internal/pos -run TestIntegration_JobSale -count=1
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 )
 
 // pgxPoolAlias names the pool the world planner takes.
@@ -153,6 +161,51 @@ func TestIntegration_JobSale_TheRingTakesAJobAndTheFenceRefusesInWords(t *testin
 		})
 		if err == nil || !strings.Contains(err.Error(), tc.words) {
 			t.Fatalf("%s refused with %v, want words naming %q", tc.name, err, tc.words)
+		}
+	}
+}
+
+// TestIntegration_JobSale_TheTillAnswersAJobRefusalInWords: the same refusals through the REAL
+// handler (the review of PR 747, P2-1). The service error is not the answer the cashier sees; the
+// status and the sentence are, so each refusal is read off the handler's own response: 400 and the
+// customer module's words, and a job id that is a uuid but no job is a 404 in words.
+func TestIntegration_JobSale_TheTillAnswersAJobRefusalInWords(t *testing.T) {
+	pool := intPool(t)
+	w := plantJobSaleWorld(t, pool, "")
+	repo := customer.NewRepository(pool)
+	svc := realPosSvc(t, pool, stubCharger{}).
+		WithJobFence(posJobFenceForTest{svc: customer.NewService(repo).WithJobs(repo)})
+	h := NewHandler(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx := staffCtx(t, pool, "BRANCH", w.branchID)
+
+	for _, tc := range []struct {
+		name   string
+		jobID  string
+		status int
+		words  string
+	}{
+		{"another customer's job", w.otherJob, http.StatusBadRequest, "that job is another customer's job"},
+		{"a closed job", w.closed, http.StatusBadRequest, "the job is closed, so it takes no new document"},
+		{"a job outside the reach", w.far, http.StatusBadRequest, "that job sits at a branch outside your reach"},
+		{"a uuid that is no job", uuid.NewString(), http.StatusNotFound, "that job was not found"},
+	} {
+		raw, err := json.Marshal(SaleInput{
+			IdempotencyKey: key(), BranchID: w.branchID, CustomerID: w.customer,
+			SaleType: SaleCollectLater, Tender: TenderAccount, JobID: tc.jobID,
+			Lines: []LineInput{{ProductID: w.productID, QtyEntered: 2, UOMEntered: "SF"}},
+		})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/pos/sales", bytes.NewReader(raw)).WithContext(ctx)
+		rec := httptest.NewRecorder()
+		h.createSale(rec, req, guards.StaffCaller{})
+		var body struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		if rec.Code != tc.status || body.Error != tc.words {
+			t.Fatalf("%s answered %d %q, want %d %q", tc.name, rec.Code, body.Error, tc.status, tc.words)
 		}
 	}
 }

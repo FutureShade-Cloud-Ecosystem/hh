@@ -16,7 +16,7 @@ package customer
 //	a CLOSED job               ->  "the job is closed, so it takes no new document"
 //	a job out of the reach     ->  "that job sits at a branch outside your reach"
 //
-// A job id that is no job at all stays NOT FOUND: that is not a mistake the caller can act on
+// A job id that is no job at all stays NOT FOUND (a 404 in words at every staff door): that is not a mistake the caller can act on
 // differently, and the id space is uuid, so guessing one learns nothing.
 //
 // The reach leg needs a STAFF caller. The document doors are staff doors (the quote desk, the
@@ -27,6 +27,7 @@ package customer
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
@@ -67,6 +68,9 @@ func (s *Service) JobForNewDocument(ctx context.Context, customerID, jobID strin
 	// door that reaches it.
 	job, err := s.jobs.GetJobByID(ctx, jobID)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Job{}, jobNotFoundError{}
+		}
 		return Job{}, err
 	}
 	if job.CustomerID != customerID {
@@ -84,3 +88,13 @@ func (s *Service) JobForNewDocument(ctx context.Context, customerID, jobID strin
 	}
 	return job, nil
 }
+
+// jobNotFoundError is the fence's answer to a job id that is a uuid but no job. It is
+// customer.ErrNotFound to a caller that asks errors.Is (the portal does), and an
+// httpx.NotFoundError to a door that asks errors.As, so the staff doors answer 404 in words
+// instead of falling to a bare 500.
+type jobNotFoundError struct{}
+
+func (jobNotFoundError) Error() string        { return "that job was not found" }
+func (jobNotFoundError) Is(target error) bool { return target == ErrNotFound }
+func (jobNotFoundError) Unwrap() error        { return httpx.NotFoundError{Msg: "that job was not found"} }
