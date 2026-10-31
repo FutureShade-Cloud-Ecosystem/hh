@@ -173,11 +173,13 @@ type apBillCandidate struct {
 	PaidAmounts []int64
 	PaidCents   int64
 	// Currency and DocTotalCents are the bill's document currency and total in it; PaidDocAmounts
-	// aligns with PaidAmounts and PaidDocCents is its as-of sum.
+	// aligns with PaidAmounts and PaidDocCents is its as-of sum. FXRate is the bill's own
+	// rate, the band a revaluation run's month end rate is bounded against.
 	Currency       string
 	DocTotalCents  int64
 	PaidDocAmounts []int64
 	PaidDocCents   int64
+	FXRate         float64
 }
 
 // PayBill records a supplier payment against a posted vendor bill and posts
@@ -816,7 +818,7 @@ func (r *Repository) OpenBillsAsOf(ctx context.Context, reach BranchReach) ([]ap
 		       to_char(COALESCE(b.due_date, b.bill_date), 'YYYY-MM-DD'),
 		       b.total_cents,
 		       COALESCE(b.gl_journal_id::text, ''),
-		       b.currency::text, b.doc_total_cents,
+		       b.currency::text, b.doc_total_cents, b.fx_rate,
 		       COALESCE((SELECT array_agg(i.paid_at ORDER BY i.paid_at, i.id)
 		           FROM purchasing_bill_instalments i
 		          WHERE i.bill_id = b.id AND i.status = 'PAID'), '{}'),
@@ -847,7 +849,7 @@ func (r *Repository) OpenBillsAsOf(ctx context.Context, reach BranchReach) ([]ap
 			&c.VendorNo, &c.VendorName, &c.PaymentTermsDays,
 			&c.BranchID, &c.POID, &c.PONo,
 			&c.BillDate, &c.DueDate,
-			&c.TotalCents, &c.GLJournalID, &c.Currency, &c.DocTotalCents, &c.PaidAts, &c.PaidAmounts, &c.PaidDocAmounts,
+			&c.TotalCents, &c.GLJournalID, &c.Currency, &c.DocTotalCents, &c.FXRate, &c.PaidAts, &c.PaidAmounts, &c.PaidDocAmounts,
 		); err != nil {
 			return nil, fmt.Errorf("purchasing: scan open bill as of: %w", err)
 		}

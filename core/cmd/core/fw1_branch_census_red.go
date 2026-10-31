@@ -362,6 +362,18 @@ var fw1NonGLJournalWriterCallSites = []fw1NonGLWriterSite{
 		BranchSource: "bill.BranchID from purchasing_bills.branch_id (NOT NULL)",
 	},
 	{
+		File:         "core/internal/purchasing/ap_revaluation.go",
+		Func:         "(*Service).postRevaluationJournalTx",
+		Kind:         "PostJournalTx",
+		BranchSource: "branchID from the run's branch fence (branchFence validates the caller's reach), the branch whose open USD bills the run revalues",
+	},
+	{
+		File:         "core/internal/purchasing/ap_revaluation.go",
+		Func:         "(*Service).ReverseAPRevaluation",
+		Kind:         "PostJournalTx",
+		BranchSource: "branch from the reversal's branch fence (branchFence validates the caller's reach), the branch whose month the reversal undoes",
+	},
+	{
 		File:         "core/internal/purchasing/service.go",
 		Func:         "(*Service).postBillJournal",
 		Kind:         "PostJournalTx",
