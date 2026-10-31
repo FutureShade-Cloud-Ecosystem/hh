@@ -5,6 +5,7 @@ package purchasing
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -537,6 +538,121 @@ func TestIntegration_W3FX2_ReversalOnTheNextHouseDay(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "cannot be read") {
 			t.Fatalf("W3-FX2 red: refusal %q does not say the legs cannot be read", err.Error())
+		}
+	})
+}
+
+func TestIntegration_W3FX2_Ties(t *testing.T) {
+	rig := fx2Rig(t)
+	billA, _, _ := fx2World(t, rig)
+	monthEnd := time.Date(2026, 9, 30, 23, 59, 59, 999999999, fx2Loc())
+	runRateMicros := int64(math.Round(fx2RunRate * 1_000_000))
+
+	// agingAt reads the aging as of an instant; atRate values it in CAD at the month end
+	// rate (a USD item's doc open taken at the rate, a CAD item's own open cents), the
+	// figure 2100 must carry once the run has posted, and carried values it in the bills'
+	// own rates (every item's own open cents), the figure 2100 carries before and after.
+	agingAt := func(asOf time.Time, atRate bool) int64 {
+		t.Helper()
+		page, err := rig.svc.APAging(rig.ctx, asOf, BranchReach{BranchIDs: []string{branchTRT}})
+		if err != nil {
+			t.Fatalf("APAging: %v", err)
+		}
+		var total int64
+		for _, row := range page.Items {
+			for _, item := range row.OpenItems {
+				if item.Kind != APItemKindBill {
+					t.Fatalf("unexpected aging item kind %q in the tie world", item.Kind)
+				}
+				if atRate && strings.EqualFold(item.Currency, "USD") {
+					total += proRataHalfToEven(item.DocOpenCents, runRateMicros, 1_000_000)
+				} else {
+					total += item.OpenCents
+				}
+			}
+		}
+		return total
+	}
+
+	t.Run("1_at_month_end_the_aging_in_cad_at_the_rate_ties_to_2100", func(t *testing.T) {
+		// Before the run, 2100 carries the bills' own CAD (the W29A tie).
+		if got, want := agingAt(monthEnd, false), int64(250_000); got != want {
+			t.Fatalf("W3-FX2 red: the aging in the bills' own CAD before the run = %d, want %d (200,000 USD carried + 50,000 CAD bill)", got, want)
+		}
+		if got := fx2BranchNetAcct(t, rig, branchTRT, "2100"); got != 250_000 {
+			t.Fatalf("W3-FX2 red: 2100 before the run = %d, want 250,000", got)
+		}
+
+		run, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: branchTRT, Month: fx2Month, FXRate: fx2RunRate})
+		if err != nil {
+			t.Fatalf("RevalueAP: %v", err)
+		}
+		if run.DifferenceCents != fx2RunDiff {
+			t.Fatalf("run difference = %d, want %d", run.DifferenceCents, fx2RunDiff)
+		}
+		gl2100 := fx2BranchNetAcct(t, rig, branchTRT, "2100")
+		if got := agingAt(monthEnd, true); got != gl2100 {
+			t.Fatalf("W3-FX2 red: at month end the aging in CAD at the month end rate = %d, but 2100 carries %d; they must tie", got, gl2100)
+		}
+		if gl2100 != 260_000 {
+			t.Fatalf("W3-FX2 red: 2100 at month end = %d, want 260,000 (250,000 carried + the 10,000 revaluation)", gl2100)
+		}
+	})
+
+	t.Run("2_after_the_reversal_2100_is_back_to_the_bills_carried_cad", func(t *testing.T) {
+		if _, err := rig.svc.ReverseAPRevaluation(rig.ctx, branchTRT, fx2Month); err != nil {
+			t.Fatalf("ReverseAPRevaluation: %v", err)
+		}
+		gl2100 := fx2BranchNetAcct(t, rig, branchTRT, "2100")
+		if gl2100 != 250_000 {
+			t.Fatalf("W3-FX2 red: 2100 after the reversal = %d, want the bills' carried 250,000", gl2100)
+		}
+		// The aging's own read (in the bills' own rates) ties again, as of the month end
+		// and as of a later instant alike: nothing moved but the temporary entry.
+		if got, want := agingAt(monthEnd, false), int64(250_000); got != want {
+			t.Fatalf("W3-FX2 red: the aging after the reversal = %d, want %d", got, want)
+		}
+		after := time.Date(2026, 10, 20, 23, 59, 59, 999999999, fx2Loc())
+		if got, want := agingAt(after, false), int64(250_000); got != want {
+			t.Fatalf("W3-FX2 red: the aging as of a later instant after the reversal = %d, want %d", got, want)
+		}
+	})
+
+	t.Run("3_a_payment_after_the_reversal_posts_its_realised_fx_against_the_bill_own_rate", func(t *testing.T) {
+		// Pay bill A in full at 1.33, after the reversal: 2100 clears the bill's own CAD
+		// 135,000, the bank pays 133,000, and the 2,000 difference is a realised gain
+		// against the bill's own 1.35, none of the revaluation's 10,000 in it.
+		key := "w3fx2-a-pay-" + billA.ID
+		if _, err := rig.svc.PayBill(rig.ctx, billA.ID, PayBillRequest{
+			AmountCents: 100_000, FXRate: 1.33, PaidAt: time.Date(2026, 10, 15, 10, 0, 0, 0, fx2Loc()),
+			Note: "after the reversal", IdempotencyKey: key,
+		}); err != nil {
+			t.Fatalf("pay bill A after the reversal: %v", err)
+		}
+		legs := rig.paymentJournalLegs(t, key)
+		if legs["2100"] != ([2]int64{135_000, 0}) {
+			t.Fatalf("W3-FX2 red: payment 2100 = %v, want DR 135,000 (the bill's own CAD at its own 1.35)", legs["2100"])
+		}
+		if legs["1000"] != ([2]int64{0, 133_000}) {
+			t.Fatalf("W3-FX2 red: payment 1000 = %v, want CR 133,000 (USD 1,000.00 at 1.33)", legs["1000"])
+		}
+		if legs["6310"] != ([2]int64{0, 2_000}) {
+			t.Fatalf("W3-FX2 red: payment 6310 = %v, want CR 2,000 realised against the bill's own rate (all legs: %v)", legs["6310"], legs)
+		}
+
+		// And the books still tie: 2100 and the aging are both at the remaining bills'
+		// carried CAD, the revaluation pair having left no residue.
+		gl2100 := fx2BranchNetAcct(t, rig, branchTRT, "2100")
+		if gl2100 != 115_000 {
+			t.Fatalf("W3-FX2 red: 2100 after the payment = %d, want 115,000 (65,000 + 50,000)", gl2100)
+		}
+		after := time.Date(2026, 10, 20, 23, 59, 59, 999999999, fx2Loc())
+		page, err := rig.svc.APAging(rig.ctx, after, BranchReach{BranchIDs: []string{branchTRT}})
+		if err != nil {
+			t.Fatalf("APAging after the payment: %v", err)
+		}
+		if page.TotalCents != 115_000 {
+			t.Fatalf("W3-FX2 red: the aging after the payment = %d, want 115,000 tied to 2100", page.TotalCents)
 		}
 	})
 }
