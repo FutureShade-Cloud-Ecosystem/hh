@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -408,10 +409,154 @@ func sameJournalLegs(want, posted []GLJournalLeg) bool {
 
 // postedLegsDifference answers the run journal's 2100 move from its legs: the first leg's
 // credit less its debit (a two line journal, so the FX leg carries the same figure the
-// other way). It is only used for the conflict words.
+// other way).
 func postedLegsDifference(legs []GLJournalLeg) int64 {
 	if len(legs) == 0 {
 		return 0
 	}
 	return legs[0].CreditCents - legs[0].DebitCents
+}
+
+// APRevaluationReversal is the reversal's answer: the run's journal it undid, the
+// reversal's own journal, and the difference the pair posted and unposted. Every figure
+// comes from the journals themselves, never recomputed, because the reversal's one job is
+// to retrace the run exactly whatever the books have done since.
+type APRevaluationReversal struct {
+	BranchID          string `json:"branch_id"`
+	Month             string `json:"month"`
+	NextHouseDay      string `json:"next_house_day"`
+	DifferenceCents   int64  `json:"difference_cents"`
+	JournalID         string `json:"journal_id"`
+	ReversalJournalID string `json:"reversal_journal_id"`
+}
+
+// ErrGLJournalReaderUnwired is the reversal's honest refusal: without the read seam the
+// run's own legs cannot be read, and reversing a guess instead of the posted lines would
+// move money the books never carried.
+var ErrGLJournalReaderUnwired = clientError{
+	status: http.StatusServiceUnavailable,
+	msg:    "purchasing: posted journal reader not wired, refusing to reverse a revaluation whose legs cannot be read",
+}
+
+// ReverseAPRevaluation posts the reversal of a month's revaluation on the next house day:
+// the run journal's own legs, every debit and credit swapped, under the run's key with the
+// reverse suffix, dated the first instant of the month after the one revalued. The pair
+// nets to zero on every account by construction, and the reversal may be pressed only
+// once that next house day has begun on the dealer's clock, so the temporary entry never
+// spans less than the month end itself.
+func (s *Service) ReverseAPRevaluation(ctx context.Context, branchID, month string) (APRevaluationReversal, error) {
+	_, branch, err := s.branchFence(ctx, branchID)
+	if err != nil {
+		return APRevaluationReversal{}, err
+	}
+	if branch == "" {
+		return APRevaluationReversal{}, badReq("purchasing: branch_id is required, a revaluation reversal is one branch's books")
+	}
+	year, monthNo, err := parseAPMonth(month)
+	if err != nil {
+		return APRevaluationReversal{}, err
+	}
+	monthWords := fmt.Sprintf("%04d-%02d", year, monthNo)
+	// The dealer's day, decided BEFORE the transaction opens (a zone read must not hold a
+	// connection beside an open transaction).
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return APRevaluationReversal{}, err
+	}
+	loc := zone.Location()
+	monthStart, monthEnd := apMonthBounds(year, monthNo, loc)
+	nextHouseDay := monthStart.AddDate(0, 1, 0)
+	if s.clock().In(loc).Before(nextHouseDay) {
+		return APRevaluationReversal{}, unprocessable("purchasing: month %s ends on %s; its reversal belongs to the next house day %s, which has not begun (the dealer's day is %s)",
+			monthWords, monthEnd.In(loc).Format("2006-01-02"), nextHouseDay.In(loc).Format("2006-01-02"), zone.Today(s.now))
+	}
+	if s.journalReader == nil {
+		return APRevaluationReversal{}, ErrGLJournalReaderUnwired
+	}
+
+	runKey := apRevalKey(branch, monthWords)
+	revKey := runKey + apRevalReverseSuffix
+
+	tx, err := s.repo.Begin(ctx)
+	if err != nil {
+		return APRevaluationReversal{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// One key is one reversal: two presses under the same key serialize here, and the
+	// second reads the first's journal and answers it.
+	if err := s.repo.LockPaymentKeyTx(ctx, tx, revKey); err != nil {
+		return APRevaluationReversal{}, err
+	}
+
+	// The replay judgement: a reversal that already posted answers itself, and its answer
+	// reads both journals back, the figures never recomputed.
+	if rev, found, rerr := s.journalReader.JournalByKey(ctx, revKey); rerr != nil {
+		return APRevaluationReversal{}, rerr
+	} else if found {
+		run, found, rerr := s.journalReader.JournalByKey(ctx, runKey)
+		if rerr != nil {
+			return APRevaluationReversal{}, rerr
+		}
+		if !found {
+			return APRevaluationReversal{}, conflict("purchasing: the reversal of month %s in branch %s is posted but its run's journal is gone", monthWords, branch)
+		}
+		return APRevaluationReversal{
+			BranchID: branch, Month: monthWords,
+			NextHouseDay:      nextHouseDay.In(loc).Format("2006-01-02"),
+			DifferenceCents:   postedLegsDifference(run.Lines),
+			JournalID:         run.ID,
+			ReversalJournalID: rev.ID,
+		}, nil
+	}
+
+	run, found, err := s.journalReader.JournalByKey(ctx, runKey)
+	if err != nil {
+		return APRevaluationReversal{}, err
+	}
+	if !found {
+		return APRevaluationReversal{}, unprocessable("purchasing: month %s in branch %s has no revaluation journal, there is nothing to reverse (a run whose difference was zero posts none)",
+			monthWords, branch)
+	}
+	if run.SourceRefID != branch {
+		return APRevaluationReversal{}, conflict("purchasing: idempotency key %s already names another run's journal", runKey)
+	}
+
+	// The same lines reversed: every leg's debit and credit swapped on its own account,
+	// the legs read from the journal the run posted, never recomputed from books that may
+	// have moved since.
+	lines := make([]GLLine, len(run.Lines))
+	for i, l := range run.Lines {
+		lines[i] = GLLine{AccountCode: l.AccountCode, DebitCents: l.CreditCents, CreditCents: l.DebitCents, Memo: l.Memo}
+	}
+	if s.gl == nil {
+		return APRevaluationReversal{}, ErrGLSeamUnwired
+	}
+	reversalID, err := s.gl.PostJournalTx(ctx, tx, GLJournal{
+		Source:         glSourceAdjustment,
+		SourceRefID:    branch,
+		IdempotencyKey: revKey,
+		Memo:           "AP revaluation reversal " + monthWords,
+		BranchID:       branch,
+		DocumentDate:   nextHouseDay,
+		Lines:          lines,
+	})
+	if err != nil {
+		return APRevaluationReversal{}, fmt.Errorf("purchasing: post AP revaluation reversal journal: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return APRevaluationReversal{}, fmt.Errorf("purchasing: commit AP revaluation reversal: %w", err)
+	}
+	s.log.Info("purchasing: AP revaluation reversed", "branch_id", branch, "month", monthWords,
+		"difference_cents", postedLegsDifference(run.Lines), "reversal_journal_id", reversalID)
+	s.record(ctx, "purchasing.ap_revaluation.reversed", branch, map[string]any{
+		"month": monthWords, "difference_cents": postedLegsDifference(run.Lines),
+	})
+	return APRevaluationReversal{
+		BranchID: branch, Month: monthWords,
+		NextHouseDay:      nextHouseDay.In(loc).Format("2006-01-02"),
+		DifferenceCents:   postedLegsDifference(run.Lines),
+		JournalID:         run.ID,
+		ReversalJournalID: reversalID,
+	}, nil
 }

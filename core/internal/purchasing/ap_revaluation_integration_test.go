@@ -377,3 +377,166 @@ func TestIntegration_W3FX2_RevaluationRun(t *testing.T) {
 		}
 	})
 }
+
+func TestIntegration_W3FX2_ReversalOnTheNextHouseDay(t *testing.T) {
+	rig := fx2Rig(t)
+	fx2World(t, rig)
+	if _, err := rig.svc.RevalueAP(rig.ctx, RevalueAPRequest{BranchID: branchTRT, Month: fx2Month, FXRate: fx2RunRate}); err != nil {
+		t.Fatalf("RevalueAP: %v", err)
+	}
+	runKey := "purchasing.ap.revaluation:" + branchTRT + ":" + fx2Month
+	revKey := runKey + ":reverse"
+
+	// fx2NetAcrossKeys sums a set of journals' legs per account, the net the pair reads.
+	fx2NetAcrossKeys := func(keys ...string) map[string][2]int64 {
+		t.Helper()
+		rows, err := rig.pool.Query(rig.ctx, `
+			SELECT a.code::text, COALESCE(SUM(COALESCE(l.debit_cents, 0)), 0), COALESCE(SUM(COALESCE(l.credit_cents, 0)), 0)
+			  FROM gl_journals j
+			  JOIN gl_journal_lines l ON l.journal_id = j.id
+			  JOIN gl_accounts a ON a.id = l.account_id
+			 WHERE j.idempotency_key = ANY($1)
+			 GROUP BY a.code`,
+			keys)
+		if err != nil {
+			t.Fatalf("query net across keys: %v", err)
+		}
+		defer rows.Close()
+		out := make(map[string][2]int64)
+		for rows.Next() {
+			var code string
+			var legs [2]int64
+			if err := rows.Scan(&code, &legs[0], &legs[1]); err != nil {
+				t.Fatalf("scan net: %v", err)
+			}
+			out[code] = legs
+		}
+		return out
+	}
+
+	t.Run("1_the_reversal_swaps_the_run_legs_on_the_next_house_day", func(t *testing.T) {
+		rev, err := rig.svc.ReverseAPRevaluation(rig.ctx, branchTRT, fx2Month)
+		if err != nil {
+			t.Fatalf("ReverseAPRevaluation: %v", err)
+		}
+		if rev.NextHouseDay != fx2NextDay {
+			t.Fatalf("W3-FX2 red: next house day = %q, want %q", rev.NextHouseDay, fx2NextDay)
+		}
+		if rev.DifferenceCents != fx2RunDiff {
+			t.Fatalf("W3-FX2 red: reversal difference = %d, want the run's %d", rev.DifferenceCents, fx2RunDiff)
+		}
+		if rev.ReversalJournalID == "" || rev.JournalID == "" {
+			t.Fatalf("W3-FX2 red: the answer names no journals (%+v)", rev)
+		}
+
+		legs := fx2JournalLegs(t, rig, revKey)
+		if legs["2100"] != ([2]int64{fx2RunDiff, 0}) {
+			t.Fatalf("W3-FX2 red: reversal 2100 = %v, want DR %d (the run's credit swapped)", legs["2100"], fx2RunDiff)
+		}
+		if legs["6310"] != ([2]int64{0, fx2RunDiff}) {
+			t.Fatalf("W3-FX2 red: reversal FX = %v, want CR %d", legs["6310"], fx2RunDiff)
+		}
+
+		var memo, postedAtUTC, periodMonth string
+		if err := rig.pool.QueryRow(rig.ctx, `
+			SELECT j.memo, to_char(j.posted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US'), to_char(fp.month, '00')
+			  FROM gl_journals j
+			  JOIN fiscal_periods fp ON fp.id = j.period_id
+			 WHERE j.id = $1`, rev.ReversalJournalID).Scan(&memo, &postedAtUTC, &periodMonth); err != nil {
+			t.Fatalf("read the reversal journal: %v", err)
+		}
+		if memo != "AP revaluation reversal "+fx2Month {
+			t.Fatalf("W3-FX2 red: reversal memo = %q", memo)
+		}
+		// The next house day's first instant in the dealer's zone: October's midnight in
+		// Toronto is four hours into the UTC day.
+		if postedAtUTC != "2026-10-01 04:00:00.000000" {
+			t.Fatalf("W3-FX2 red: reversal posted_at (UTC) = %q, want the next house day's first instant 2026-10-01 04:00:00 UTC", postedAtUTC)
+		}
+		if strings.TrimSpace(periodMonth) != "10" {
+			t.Fatalf("W3-FX2 red: reversal filed in month %s of the period, want 10 (the next house day's month)", periodMonth)
+		}
+
+		// The revaluation and its reversal net to zero in every account.
+		net := fx2NetAcrossKeys(runKey, revKey)
+		if len(net) == 0 {
+			t.Fatal("W3-FX2 red: no journals carry the run and reversal keys")
+		}
+		for code, legs := range net {
+			if legs[0] != legs[1] {
+				t.Fatalf("W3-FX2 red: the run and its reversal leave %s at DR %d CR %d, want them equal (net zero in every account)", code, legs[0], legs[1])
+			}
+		}
+	})
+
+	t.Run("2_the_reversal_replays_under_its_key", func(t *testing.T) {
+		first, err := rig.svc.ReverseAPRevaluation(rig.ctx, branchTRT, fx2Month)
+		if err != nil {
+			t.Fatalf("re-press the reversal: %v", err)
+		}
+		again, err := rig.svc.ReverseAPRevaluation(rig.ctx, branchTRT, fx2Month)
+		if err != nil {
+			t.Fatalf("re-press the reversal again: %v", err)
+		}
+		if again.ReversalJournalID != first.ReversalJournalID {
+			t.Fatalf("W3-FX2 red: a re-press answered reversal journal %q (first %q)", again.ReversalJournalID, first.ReversalJournalID)
+		}
+		if n := fx2JournalCount(t, rig, revKey); n != 1 {
+			t.Fatalf("W3-FX2 red: %d journals carry the reversal key, want 1", n)
+		}
+	})
+
+	t.Run("3_the_reversal_waits_for_the_next_house_day", func(t *testing.T) {
+		rig.svc.WithClock(func() time.Time { return fx2Instant(29, 12, 0) })
+		t.Cleanup(func() { rig.svc.WithClock(time.Now) })
+		_, err := rig.svc.ReverseAPRevaluation(rig.ctx, branchTRT, fx2Month)
+		if err == nil {
+			t.Fatal("W3-FX2 red: a reversal pressed before the next house day must be refused")
+		}
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != http.StatusUnprocessableEntity {
+			t.Fatalf("W3-FX2 red: early reversal error = %v, want 422", err)
+		}
+		for _, want := range []string{"has not begun", "next house day"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("W3-FX2 red: refusal %q does not say %q", err.Error(), want)
+			}
+		}
+		// Restore the real clock and the reversal lands.
+		rig.svc.WithClock(time.Now)
+		if _, err := rig.svc.ReverseAPRevaluation(rig.ctx, branchTRT, fx2Month); err != nil {
+			t.Fatalf("the reversal on the real clock: %v", err)
+		}
+	})
+
+	t.Run("4_no_run_journal_is_refused_in_words", func(t *testing.T) {
+		_, err := rig.svc.ReverseAPRevaluation(rig.ctx, branchKGN, fx2Month)
+		if err == nil {
+			t.Fatal("W3-FX2 red: reversing a month that was never revalued must be refused")
+		}
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != http.StatusUnprocessableEntity {
+			t.Fatalf("W3-FX2 red: nothing to reverse error = %v, want 422", err)
+		}
+		if !strings.Contains(err.Error(), "nothing to reverse") {
+			t.Fatalf("W3-FX2 red: refusal %q does not say there is nothing to reverse", err.Error())
+		}
+	})
+
+	t.Run("5_the_unwired_reader_refuses_the_reversal", func(t *testing.T) {
+		reader := rig.svc.journalReader
+		rig.svc.journalReader = nil
+		t.Cleanup(func() { rig.svc.journalReader = reader })
+		_, err := rig.svc.ReverseAPRevaluation(rig.ctx, branchTRT, fx2Month)
+		if err == nil {
+			t.Fatal("W3-FX2 red: an unwired journal reader must refuse the reversal")
+		}
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != http.StatusServiceUnavailable {
+			t.Fatalf("W3-FX2 red: unwired reader error = %v, want 503", err)
+		}
+		if !strings.Contains(err.Error(), "cannot be read") {
+			t.Fatalf("W3-FX2 red: refusal %q does not say the legs cannot be read", err.Error())
+		}
+	})
+}
