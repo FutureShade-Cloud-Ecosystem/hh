@@ -551,7 +551,7 @@ func TestIntegration_Receipt_DepositAndChangeDueFromTheCommittedRows(t *testing.
 	productID, branchID := aPaver(t, pool)
 	var custID string
 	if err := pool.QueryRow(ctx,
-		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents > 1000000 LIMIT 1`).Scan(&custID); err != nil {
+		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND payment_terms_days > 0 AND credit_limit_cents > 1000000 ORDER BY account_no LIMIT 1`).Scan(&custID); err != nil {
 		t.Skipf("no CONTRACTOR with credit seeded: %v", err)
 	}
 	svc := realPosSvc(t, pool)
@@ -671,7 +671,7 @@ func TestIntegration_Receipt_NoDepositOnASplitWithAnAccountLeg(t *testing.T) {
 	productID, branchID := aPaver(t, pool)
 	var custID string
 	if err := pool.QueryRow(ctx,
-		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents > 1000000 LIMIT 1`).Scan(&custID); err != nil {
+		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND payment_terms_days > 0 AND credit_limit_cents > 1000000 ORDER BY account_no LIMIT 1`).Scan(&custID); err != nil {
 		t.Skipf("no CONTRACTOR with credit seeded: %v", err)
 	}
 	svc := realPosSvc(t, pool)
