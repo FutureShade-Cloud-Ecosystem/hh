@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { SCHEMA_DESCRIPTORS } from "../../../packages/api-client/src/testing.ts";
 import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 import { IDS } from "./stub/gl-world.mjs";
+import { STUB_ZONE, monthsBefore } from "./stub/clock-zone.mjs";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
@@ -45,7 +46,7 @@ before(async () => {
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [join(appDir, "test", "stub", "money-desk-stub.mjs")], {
-    env: { ROLE_STUB_PORT: String(port) },
+    env: { ROLE_STUB_PORT: String(port), TZ: STUB_ZONE },
     stdio: "ignore",
   });
   for (let i = 0; i < 100; i += 1) {
@@ -549,7 +550,8 @@ test("the trial balance takes a month and a year, and a month shows that period'
   // The month probed for emptiness must be one no journal lands in: the till's lodgement journal is planted in
   // the bank rec month (the host's prior month), so the probe reads December, or November when the bank rec
   // month is December itself.
-  const bankRecMonth = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).getMonth() + 1;
+  // The stub runs on STUB_ZONE; its bank month is read in the same zone (clock-zone.mjs).
+  const bankRecMonth = monthsBefore(1, STUB_ZONE).month;
   const probeMonth = bankRecMonth === 12 ? 11 : 12;
   const empty = (await call(IDS.controller, "GET", `/api/v1/gl/trial-balance?year=2026&month=${probeMonth}`)).json;
   assert.equal(empty.rows.length, 0);

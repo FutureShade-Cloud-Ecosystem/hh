@@ -17,6 +17,7 @@
 // The world is invented and small: Gable Landscape Supply's California sales tax at the San Diego County
 // combined rate, three exemption profiles, four evidence records, and the sales of the month before today (dates
 // are cut from the host's own day, so no calendar literal is written).
+import { monthsBefore } from "./clock-zone.mjs";
 
 export const IDS = {
   controller: "de110000-0000-4000-9000-000000000008",
@@ -66,23 +67,21 @@ const today = () => new Date().toISOString().slice(0, 10);
 const addDays = (days) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
 /** The month before today, from the host's own clock: the month the sales and the ledger tie out for. */
-export function taxMonth() {
-  const before = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1);
-  return { year: before.getFullYear(), month: before.getMonth() + 1 };
+export function taxMonth(timeZone) {
+  return monthsBefore(1, timeZone);
 }
 /** The month before that one: the month whose ledger is a little off. */
-export function olderMonth() {
-  const before = new Date(new Date().getFullYear(), new Date().getMonth() - 2, 1);
-  return { year: before.getFullYear(), month: before.getMonth() + 1 };
+export function olderMonth(timeZone) {
+  return monthsBefore(2, timeZone);
 }
 /** The quarter holding the month before today: the quarter the GST/HST worksheet ties out for. */
-export function taxQuarter() {
-  const m = taxMonth();
+export function taxQuarter(timeZone) {
+  const m = taxMonth(timeZone);
   return { year: m.year, quarter: Math.trunc((m.month - 1) / 3) + 1 };
 }
 /** The quarter before that one: the quarter whose GST/HST worksheet has a GL 2200 variance. */
-export function olderQuarter() {
-  const tq = taxQuarter();
+export function olderQuarter(timeZone) {
+  const tq = taxQuarter(timeZone);
   return tq.quarter === 1 ? { year: tq.year - 1, quarter: 4 } : { year: tq.year, quarter: tq.quarter - 1 };
 }
 
