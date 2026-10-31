@@ -1544,6 +1544,49 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/lien/jobs/{id}/preservation-dates:
+    put:
+      operationId: lienSetPreservationDates
+      tags: [staff-lien]
+      x-addition: "Wave 3 RT-3 fix round 2: set or correct the dates a lien job's preservation period counts from; no ERP source route"
+      summary: Set or correct a lien job's preservation dates
+      description: >-
+        Sets, corrects or clears the publication date of the certificate of substantial performance, the date of
+        substantial performance and the last supply. A field left out is unchanged; null clears it. The holdback
+        release counts its preservation period from the latest of the three. A manager inside the job's branch
+        reach; the change and its audit record are one transaction.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LienPreservationDatesInput"
+      responses:
+        "200":
+          description: The lien job with its dates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienJob"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: No date was named, or a date is not a date
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/v1/lien/jobs/{id}/customer-job:
     put:
       operationId: lienLinkCustomerJob
@@ -2742,6 +2785,12 @@ components:
       properties:
         discharged_on: { type: string, format: date }
         note: { type: string }
+    LienPreservationDatesInput:
+      type: object
+      properties:
+        csp_published_on: { type: [string, "null"], format: date }
+        substantial_perf_date: { type: [string, "null"], format: date }
+        last_supply_date: { type: [string, "null"], format: date }
     LienJobPage:
       type: object
       required: [items]

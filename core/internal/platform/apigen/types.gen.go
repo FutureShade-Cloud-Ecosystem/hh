@@ -10915,6 +10915,12 @@ type LienDischargeInput struct {
 	Note         *string `json:"note,omitempty"`
 }
 
+type LienPreservationDatesInput struct {
+	CspPublishedOn      *string `json:"csp_published_on,omitempty"`
+	SubstantialPerfDate *string `json:"substantial_perf_date,omitempty"`
+	LastSupplyDate      *string `json:"last_supply_date,omitempty"`
+}
+
 type LienJobPage struct {
 	Items      []LienJob `json:"items"`
 	NextCursor *string   `json:"next_cursor,omitempty"`

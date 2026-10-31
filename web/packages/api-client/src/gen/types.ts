@@ -9442,6 +9442,11 @@ export type LienDischargeInput = {
   discharged_on: string;
   note?: string;
 };
+export type LienPreservationDatesInput = {
+  csp_published_on?: string | null;
+  substantial_perf_date?: string | null;
+  last_supply_date?: string | null;
+};
 export type LienJobPage = {
   items: LienJob[];
   next_cursor?: string | null;
