@@ -44,7 +44,7 @@ for (const theme of ["light", "charcoal"] as const) {
       await open("pricing");
       await tab("audit", "Pricing audit", '[data-test="pr-audit-count"]');
       await shot("pricing-audit");
-      await tab("changelog", "Change log", '[data-test="pr-changelog-count"], [data-test="pr-changelog-empty"]');
+      await tab("changelog", "Change log", '[data-test="pr-log-count"], [data-test="pr-log-empty"]');
       await shot("change-log");
       await open("role-config");
       await expect(page.locator('[data-test="config-roles-count"]')).toBeVisible({ timeout: 30_000 });
