@@ -123,6 +123,7 @@ func (h *StaffHandler) createQuote(w http.ResponseWriter, r *http.Request, _ gua
 		CustomerID string `json:"customer_id"`
 		BranchID   string `json:"branch_id"`
 		ValidUntil string `json:"valid_until"`
+		JobID      string `json:"job_id"`
 	}
 	if err := decodeBody(w, r, &body); err != nil {
 		h.writeErr(w, err)
@@ -132,7 +133,7 @@ func (h *StaffHandler) createQuote(w http.ResponseWriter, r *http.Request, _ gua
 		return
 	}
 	view, err := h.svc.CreateQuote(r.Context(), QuoteCreate{
-		CustomerID: body.CustomerID, BranchID: body.BranchID, ValidUntil: body.ValidUntil,
+		CustomerID: body.CustomerID, BranchID: body.BranchID, ValidUntil: body.ValidUntil, JobID: body.JobID,
 	})
 	if err != nil {
 		h.writeErr(w, err)
@@ -342,6 +343,7 @@ func (h *StaffHandler) editHistory(w http.ResponseWriter, r *http.Request, _ gua
 func (h *StaffHandler) convertQuote(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
 	var body struct {
 		Fulfillment string `json:"fulfillment"`
+		JobID       string `json:"job_id"`
 	}
 	if r.ContentLength > 0 {
 		if err := decodeBody(w, r, &body); err != nil {
@@ -349,7 +351,7 @@ func (h *StaffHandler) convertQuote(w http.ResponseWriter, r *http.Request, _ gu
 			return
 		}
 	}
-	res, err := h.svc.ConvertQuote(r.Context(), r.PathValue("id"), ConvertOptions{Fulfillment: body.Fulfillment, IdempotencyKey: r.Header.Get("Idempotency-Key")})
+	res, err := h.svc.ConvertQuote(r.Context(), r.PathValue("id"), ConvertOptions{Fulfillment: body.Fulfillment, JobID: body.JobID, IdempotencyKey: r.Header.Get("Idempotency-Key")})
 	if err != nil {
 		h.writeErr(w, err)
 		return
@@ -416,6 +418,7 @@ func (h *StaffHandler) takeOrderPayment(w http.ResponseWriter, r *http.Request, 
 		Reference      string `json:"reference"`
 		IdempotencyKey string `json:"idempotency_key"`
 		Fulfillment    string `json:"fulfillment"`
+		JobID          string `json:"job_id"`
 	}
 	if err := decodeBody(w, r, &body); err != nil {
 		h.writeErr(w, err)
@@ -423,7 +426,7 @@ func (h *StaffHandler) takeOrderPayment(w http.ResponseWriter, r *http.Request, 
 	}
 	res, err := h.svc.TakeOrderPayment(r.Context(), r.PathValue("id"), OrderPaymentInput{
 		Method: body.Method, AmountCents: body.AmountCents, Reference: body.Reference,
-		IdempotencyKey: body.IdempotencyKey, Fulfillment: body.Fulfillment,
+		IdempotencyKey: body.IdempotencyKey, Fulfillment: body.Fulfillment, JobID: body.JobID,
 	})
 	if err != nil {
 		h.writeErr(w, err)
@@ -517,6 +520,7 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 	var notEditable *NotEditableError
 	var expired *QuoteExpiredError
 	var badRequest httpx.BadRequestError
+	var notFoundWords httpx.NotFoundError
 	var creditBlocked ErrCreditBlocked
 	var notSelling *NotSellingRoleError
 	var alreadyAccepted *AlreadyAcceptedError
@@ -575,6 +579,9 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusConflict, expired.Error())
 	case errors.As(err, &badRequest):
 		httpx.Error(w, http.StatusBadRequest, badRequest.Error())
+	case errors.As(err, &notFoundWords):
+		// A named job that is no job (JA-2): the customer module's words behind a 404.
+		httpx.Error(w, http.StatusNotFound, notFoundWords.Error())
 	case errors.Is(err, ErrInvalidTransition):
 		httpx.Error(w, http.StatusConflict, "quote: invalid state transition")
 	case errors.Is(err, ErrLineNotFound):

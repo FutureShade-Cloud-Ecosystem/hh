@@ -161,6 +161,9 @@ type CreditMemoRouteRequest struct {
 	// IdempotencyKey makes a retry safe. Empty means the route derives one from the request, so a
 	// double click raises one credit and not two.
 	IdempotencyKey string `json:"idempotency_key"`
+	// JobID is the job account the credit is opened on (JA-2), optional. Another customer's job, a
+	// CLOSED job and a job outside the caller's reach are refused in words before anything moves.
+	JobID string `json:"job_id"`
 }
 
 // The states a credit can be in when the route answers.
@@ -202,6 +205,14 @@ type CreditMemoRouteResult struct {
 // trail.
 const ActCreditMemoIssue = "CREDIT_MEMO_ISSUE"
 
+// CreditMemoJobFence is the customer module's job read a direct document is opened against (JA-2):
+// the money desk's credit names a job of the customer it credits, and the customer module refuses
+// another customer's job, a CLOSED job and a job outside the caller's reach, in words. The same
+// narrow-seam shape as CreditMemoCustomerHome above it.
+type CreditMemoJobFence interface {
+	JobForNewDocument(ctx context.Context, customerID, jobID string) error
+}
+
 // CreditMemoService issues credit memos for finance.
 type CreditMemoService struct {
 	w            *InvoiceWriter
@@ -210,6 +221,7 @@ type CreditMemoService struct {
 	parker       CreditMemoParker
 	branchOrgs   CreditMemoBranchOrg
 	customerHoms CreditMemoCustomerHome
+	jobFence     CreditMemoJobFence
 	audit        audit.Recorder
 	log          *slog.Logger
 	now          func() time.Time
@@ -247,6 +259,13 @@ func (s *CreditMemoService) WithParker(p CreditMemoParker) *CreditMemoService {
 // closed, it never guesses an org.
 func (s *CreditMemoService) WithBranchOrg(r CreditMemoBranchOrg) *CreditMemoService {
 	s.branchOrgs = r
+	return s
+}
+
+// WithJobFence binds the customer module's job fence. Nil is refused at the door when a job is
+// named, the same fail-closed rule the wire's other optional seams carry.
+func (s *CreditMemoService) WithJobFence(f CreditMemoJobFence) *CreditMemoService {
+	s.jobFence = f
 	return s
 }
 
@@ -293,6 +312,8 @@ func (c CreditMemoCaller) reaches(branchID string) bool {
 type creditFence struct {
 	customerID string
 	branchID   string
+	// jobID is the fenced job the credit is opened on (JA-2), "" when none was named.
+	jobID string
 }
 
 // fence holds a credit to the caller's org, to the caller's reach, and to the account the caller may
@@ -333,11 +354,12 @@ func (s *CreditMemoService) fence(ctx context.Context, req CreditMemoRouteReques
 	// of another org, answers exactly as a missing invoice answers, so a caller cannot read a ledger's
 	// shape out of the refusals. A missing row falls through to the plan, which refuses in the same
 	// words.
+	reversedJob := ""
 	if invoiceID := strings.TrimSpace(req.InvoiceID); invoiceID != "" {
 		var invBranch, invOrg *string
 		if err := s.w.pool.QueryRow(ctx,
-			`SELECT branch_id::text, org_id::text FROM invoices WHERE id = $1::uuid AND doc_type = 'INVOICE'`,
-			invoiceID).Scan(&invBranch, &invOrg); err == nil {
+			`SELECT branch_id::text, org_id::text, COALESCE(job_id::text, '') FROM invoices WHERE id = $1::uuid AND doc_type = 'INVOICE'`,
+			invoiceID).Scan(&invBranch, &invOrg, &reversedJob); err == nil {
 			if invOrg == nil || *invOrg != caller.OrgID || !caller.reaches(*invBranch) {
 				return creditFence{}, httpx.BadRequestf("no such invoice to reverse")
 			}
@@ -393,7 +415,37 @@ func (s *CreditMemoService) fence(ctx context.Context, req CreditMemoRouteReques
 	if !custInOrg {
 		return creditFence{}, errCreditMemoCustomerNotFound
 	}
-	return creditFence{customerID: customerID, branchID: branchID}, nil
+	// JA-2: the job the credit is opened on, fenced last so the three job refusals answer with
+	// the caller already held to the account. The id is parsed before the seam reads it, the same
+	// rule the customer wall states above it.
+	//
+	// A REVERSAL is a mirror, not a fresh document (the review of PR 747, P2-2): the memo that
+	// reverses an invoice on a job is on THAT job, so by job the account nets to zero. The request
+	// naming no job inherits the invoice's job; one naming the same job is the same thing; one naming a
+	// different job is refused in words. Neither of those two goes through the open rule, because
+	// crediting a closed job's invoice is ordinary. Only a job newly named on an invoice that has none
+	// is a fresh choice, and that one is fenced as any new document's job is.
+	jobID := strings.ToLower(strings.TrimSpace(req.JobID))
+	if jobID != "" {
+		if _, perr := uuid.Parse(jobID); perr != nil {
+			return creditFence{}, httpx.BadRequestf("job_id must be a job id, pick a job from the customer's jobs")
+		}
+	}
+	if reversedJob != "" {
+		if jobID != "" && jobID != reversedJob {
+			return creditFence{}, httpx.BadRequestf("that credit reverses an invoice on another job, so it takes that job; leave the job out or name the invoice's own job")
+		}
+		return creditFence{customerID: customerID, branchID: branchID, jobID: reversedJob}, nil
+	}
+	if jobID != "" {
+		if s.jobFence == nil {
+			return creditFence{}, httpx.BadRequestf("the job fence is not wired, so no credit can name a job here")
+		}
+		if err := s.jobFence.JobForNewDocument(ctx, customerID, jobID); err != nil {
+			return creditFence{}, err
+		}
+	}
+	return creditFence{customerID: customerID, branchID: branchID, jobID: jobID}, nil
 }
 
 // CreditMemoQuoteResult is what a credit against an invoice would come to, and how much room that
@@ -507,8 +559,9 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 		ReversesInvoiceID: strings.TrimSpace(req.InvoiceID),
 		AmountCents:       req.AmountCents,
 		Memo:              reason,
-		IdempotencyKey:    s.creditMemoKey(ctx, req, reason),
+		IdempotencyKey:    s.creditMemoKey(ctx, req, reason, f.jobID),
 		SourceKind:        SourceOrder,
+		JobID:             f.jobID,
 	}
 
 	// THE IDEMPOTENCY KEY, CHECKED FIRST AND BOUND TO ITS REQUEST. A retry is answered with the credit
@@ -527,6 +580,7 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 		if existing.CustomerID != customerID ||
 			existing.BranchID != branchID ||
 			existing.ReversesInvoiceID != in.ReversesInvoiceID ||
+			existing.jobID != in.JobID ||
 			(req.AmountCents != 0 && -existing.SubtotalCents != req.AmountCents) {
 			return CreditMemoRouteResult{}, &creditMemoKeyConflict{msg: "this idempotency key already named a different credit; a key belongs to the credit that first used it"}
 		}
@@ -681,10 +735,10 @@ func (w *InvoiceWriter) creditMemoByKey(ctx context.Context, key, orgID string) 
 	err := w.pool.QueryRow(ctx, `
 		SELECT id::text, invoice_no::text, customer_id::text, branch_id::text, status,
 		       subtotal_cents, tax_cents, total_cents, balance_cents,
-		       COALESCE(reverses_invoice_id::text,'')
+		       COALESCE(reverses_invoice_id::text,''), COALESCE(job_id::text,'')
 		  FROM invoices WHERE idempotency_key = $1 AND doc_type = 'CREDIT_MEMO' AND org_id = $2::uuid`, key, orgID).
 		Scan(&doc.InvoiceID, &doc.InvoiceNo, &doc.CustomerID, &doc.BranchID, &doc.Status,
-			&doc.SubtotalCents, &doc.TaxCents, &doc.TotalCents, &doc.BalanceCents, &reverses)
+			&doc.SubtotalCents, &doc.TaxCents, &doc.TotalCents, &doc.BalanceCents, &reverses, &doc.jobID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return InvoiceDoc{}, false, nil
@@ -727,14 +781,14 @@ func CreditMemoJournalLines(j CreditMemoJournal, accounts map[string]string) ([]
 // for twice in one day, is one credit. A different amount, a different invoice or a different reason
 // is a different credit, and gets its own key. The caller may always supply its own key, which is
 // what a form that holds one across a retry does.
-func (s *CreditMemoService) creditMemoKey(ctx context.Context, req CreditMemoRouteRequest, reason string) string {
+func (s *CreditMemoService) creditMemoKey(ctx context.Context, req CreditMemoRouteRequest, reason, jobID string) string {
 	if k := strings.TrimSpace(req.IdempotencyKey); k != "" {
 		return k
 	}
 	day := s.houseDay(ctx)
 	seed := strings.Join([]string{
 		day, req.BranchID, req.CustomerID, strings.TrimSpace(req.InvoiceID),
-		fmt.Sprintf("%d", req.AmountCents), reason,
+		fmt.Sprintf("%d", req.AmountCents), reason, jobID,
 	}, "|")
 	sum := sha256.Sum256([]byte(seed))
 	return "credit-memo:" + hex.EncodeToString(sum[:])
@@ -876,12 +930,16 @@ func (h *CreditMemoRouteHandler) quote(w http.ResponseWriter, r *http.Request, c
 // writeErr maps a refusal to its status, the same taxonomy the register's door uses.
 func (h *CreditMemoRouteHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var bad httpx.BadRequestError
+	var notFoundWords httpx.NotFoundError
 	var sd *SupplierDepositNotCreditable
 	var kc *creditMemoKeyConflict
 	var cnf *creditMemoCustomerNotFound
 	switch {
 	case errors.As(err, &bad):
 		httpx.Error(w, http.StatusBadRequest, bad.Error())
+	case errors.As(err, &notFoundWords):
+		// A named job that is no job (JA-2): the customer module's words behind a 404.
+		httpx.Error(w, http.StatusNotFound, notFoundWords.Error())
 	case errors.As(err, &cnf):
 		// THE CUSTOMER ANSWER: 404 "customer not found", the house's body, byte for byte the one the
 		// pos and AR doors write for an account the caller cannot reach.
@@ -953,17 +1011,17 @@ func (w *InvoiceWriter) ParkCreditMemoTx(ctx context.Context, tx pgx.Tx, in Cred
 	}
 	var id, no string
 	err = tx.QueryRow(ctx, `
-	INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
+	INSERT INTO invoices (invoice_no, customer_id, order_id, job_id, branch_id, status, issue_date, due_date,
 	                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
 	                      doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id, org_id)
-	VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $3, 'DRAFT', $4, $4,
+	VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $12, $3, 'DRAFT', $4, $4,
 	        $5, $6, $7, 0, NULL,
 	        'CREDIT_MEMO', $8, $9, FALSE, $10,
 	        $11)
 	RETURNING id::text, invoice_no`,
 		customerID, nullUUID(in.OrderID), branchID, issueDate,
 		-plan.subtotal, -plan.tax, -total,
-		sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID), orgID,
+		sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID), orgID, nullUUID(in.JobID),
 	).Scan(&id, &no)
 	if err != nil {
 		return InvoiceDoc{}, CreditMemoJournal{}, fmt.Errorf("insert parked credit memo: %w", err)

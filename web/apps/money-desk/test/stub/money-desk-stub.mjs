@@ -589,6 +589,32 @@ function reset(kind = "full") {
 
 const acct = (n) => ACCOUNTS.find((a) => a.n === n);
 const custId = (n) => uuid("e", n);
+
+// Wave 3 JA-2: the office world's job accounts, one site of work under each AR
+// customer, derived from the customer id. The credit memo door fences a named
+// job exactly as the core's own fence does (the contract test holds these
+// sentences to the core's source).
+// A job id is a uuid, as the core's is: the open job and the closed job are the customer's uuid with its
+// first two hex digits changed, so the test derives the same ids without a second channel.
+const jobForCustomer = (customerId) => `a0${customerId.slice(2)}`;
+const closedJobForCustomer = (customerId) => `b0${customerId.slice(2)}`;
+const CUSTOMER_IDS = [1, 2, 3, 4, 5, 6].map(custId);
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function fenceJob(customerId, jobId) {
+  if (!UUID_SHAPE.test(jobId)) {
+    return { status: 400, words: "job_id must be a job id, pick a job from the customer's jobs" };
+  }
+  const known = CUSTOMER_IDS.some(
+    (id) => jobId === jobForCustomer(id) || jobId === closedJobForCustomer(id),
+  );
+  if (!known) return { status: 404, words: "that job was not found" };
+  if (jobId === jobForCustomer(customerId)) return null;
+  if (jobId === closedJobForCustomer(customerId)) {
+    return { status: 400, words: "the job is closed, so it takes no new document" };
+  }
+  return { status: 400, words: "that job is another customer's job" };
+}
 const acctOfCust = (id) => ACCOUNTS.find((a) => custId(a.n) === id);
 
 // A credit change row on the wire: Go's omitempty drops the empty strings, so the stub does too.
@@ -2118,6 +2144,13 @@ async function handle(req, res) {
     if (key === "") return refuse(res, 400, "a credit needs an idempotency key");
     const named = typeof body.gl_account === "string" ? body.gl_account.trim() : "";
     if (named !== "" && named !== "4000") return refuse(res, 400, `the posting rules for this branch credit account 4000, not ${named}`);
+    // Wave 3 JA-2: the job the credit is opened on, fenced with the customer
+    // module's own sentences before anything moves.
+    const jobId = typeof body.job_id === "string" ? body.job_id.trim() : "";
+    if (jobId !== "") {
+      const refused = fenceJob(customerId, jobId);
+      if (refused !== null) return refuse(res, refused.status, refused.words);
+    }
     const invoiceId = typeof body.invoice_id === "string" ? body.invoice_id.trim() : "";
     const invoice = invoiceId === "" ? undefined : invById(invoiceId);
     if (invoiceId !== "") {

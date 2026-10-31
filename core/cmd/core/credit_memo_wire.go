@@ -143,6 +143,9 @@ func newCreditMemoHandler(pool *pgxpool.Pool, w *billing.InvoiceWriter, glSvc *g
 		// The fence's org reads are the owning modules' own: the branches module answers whether a
 		// branch is the caller org's, and the customer module answers the account's home branch.
 		WithBranchOrg(branches.NewRepository(pool)).
-		WithCustomerHome(customer.NewRepository(pool))
+		WithCustomerHome(customer.NewRepository(pool)).
+		// Wave 3 JA-2: the money desk's direct document takes a job, fenced by the customer
+		// module's own read.
+		WithJobFence(newCustomerJobFence(pool))
 	return billing.NewCreditMemoRouteHandler(svc)
 }

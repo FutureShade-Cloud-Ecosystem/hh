@@ -45,6 +45,10 @@ type jobStore interface {
 	CloseJob(ctx context.Context, customerID, jobID string, reach AccountReach) (Job, error)
 	ListJobs(ctx context.Context, customerID string, reach AccountReach) ([]Job, error)
 	GetJob(ctx context.Context, customerID, jobID string, reach AccountReach) (Job, bool, error)
+	// GetJobByID is the unfenced read the document fence runs (job_document.go): the job by its own
+	// id, whose customer, status and branch the service then holds the document's customer, the
+	// open rule and the caller's reach against. No route reaches it except through that fence.
+	GetJobByID(ctx context.Context, jobID string) (Job, error)
 	JobEffectiveTerms(ctx context.Context, customerID, jobID string) (JobTerms, error)
 	JobStatusForCustomer(ctx context.Context, customerID, jobID string) (string, error)
 }

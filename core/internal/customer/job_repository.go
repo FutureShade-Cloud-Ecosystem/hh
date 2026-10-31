@@ -149,8 +149,17 @@ func (r *Repository) GetJobByID(ctx context.Context, jobID string) (Job, error) 
 	if r.pool == nil {
 		return Job{}, errNoDB
 	}
-	q := fmt.Sprintf("SELECT %s %s WHERE j.id = $1", jobColumns, jobFrom)
-	j, err := scanJob(r.pool.QueryRow(ctx, q, jobID))
+	// The document fence (job_document.go) may run inside a caller's transaction (the counter's
+	// payment door carries its one transaction, QD5); the read rides it rather than asking the
+	// pool for a second connection, the same discipline TermsFor carries.
+	q := interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	}(r.pool)
+	if tx := callerTxFrom(ctx); tx != nil {
+		q = tx
+	}
+	stmt := fmt.Sprintf("SELECT %s %s WHERE j.id = $1", jobColumns, jobFrom)
+	j, err := scanJob(q.QueryRow(ctx, stmt, jobID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Job{}, ErrNotFound
