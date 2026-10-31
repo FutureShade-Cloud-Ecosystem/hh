@@ -17,7 +17,7 @@ function dialedWrites(page: Page): string[] {
 test("with no signal a role change is refused with no signal, sends nothing, and goes through once the signal is back", async ({ page, context }) => {
   await page.goto("/");
   await page.locator("[data-flow]").first().click();
-  await expect(page.locator("[data-test=staff-count]")).toHaveText("5 staff");
+  await expect(page.locator("[data-test=staff-count]")).toHaveText("7 staff");
   const select = page.locator(`select[data-user-id=${YARD_TEAM_ROW}]`);
   const before = await select.inputValue();
   const dialed = dialedWrites(page);

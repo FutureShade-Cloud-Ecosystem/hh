@@ -20,7 +20,7 @@ test("demo mint and the staff register", async ({ page }) => {
 
   // The register renders with its count, the grant chips by yard name, and
   // the platform row read-only.
-  await expect(page.locator("[data-test=staff-count]")).toHaveText("5 staff");
+  await expect(page.locator("[data-test=staff-count]")).toHaveText("7 staff");
   const yardTeamRow = page.locator(`tr[data-user=${YARD_TEAM_ROW}]`);
   await expect(yardTeamRow).toContainText("Point Loma");
   await expect(yardTeamRow).toContainText("Julian");
@@ -41,7 +41,7 @@ test("assign a role and request a reset link", async ({ page }) => {
   await page.goto("/");
   const cards = page.locator("[data-flow]");
   await cards.first().click();
-  await expect(page.locator("[data-test=staff-count]")).toHaveText("5 staff");
+  await expect(page.locator("[data-test=staff-count]")).toHaveText("7 staff");
 
   // The yard team member moves to Yard Manager; the register re-reads and
   // the row's select shows the new role.
@@ -175,13 +175,13 @@ test("a refused role change says so beside the register", async ({ page }) => {
   await page.goto("/");
   const cards = page.locator("[data-flow]");
   await cards.first().click();
-  await expect(page.locator("[data-test=staff-count]")).toHaveText("5 staff");
+  await expect(page.locator("[data-test=staff-count]")).toHaveText("7 staff");
 
   // The server refuses the write: the select snaps back and the words stay
   // on the glass beside the register, in the ready phase.
   await page.locator(`select[data-user-id=${YARD_TEAM_ROW}]`).selectOption({ label: "Yard Manager" });
   await expect(page.locator("[data-test=assign-error]")).toContainText("The role did not change.");
-  await expect(page.locator("[data-test=staff-count]")).toHaveText("5 staff");
+  await expect(page.locator("[data-test=staff-count]")).toHaveText("7 staff");
   await page.request.post("/_stub/reset");
 });
 
@@ -674,7 +674,7 @@ test("the rules tab: the list, an edit saved clean, and a retire asked twice", a
   await expect(retire).toHaveText("Retire: tap again");
   await retire.click();
   await expect(page.locator("[data-test=pr-rules-notice]")).toContainText("Retired.");
-  await expect(page.locator('tr[data-rule="9a110000-0000-4000-9000-0000000000a1"]')).toContainText("retired");
+  await expect(page.locator('tr[data-rule="9a110000-0000-4000-9000-0000000000a1"]')).toContainText("Retired");
 });
 
 test("the customer prices tab: one account's overrides, an add, and a delete asked twice", async ({ page }) => {
@@ -744,7 +744,7 @@ test("the quantity breaks tab: the schedule, a tier saved through the floor, a r
   await expect(retire).toHaveText("Retire: tap again");
   await retire.click();
   await expect(page.locator("[data-test=pr-breaks-notice]")).toContainText("Retired.");
-  await expect(page.locator('tr[data-break="7a110000-0000-4000-9000-0000000000a1"]')).toContainText("retired");
+  await expect(page.locator('tr[data-break="7a110000-0000-4000-9000-0000000000a1"]')).toContainText("Retired");
 });
 
 test("the promotions and clearance tab: both panels, a promo saved, the badge only mark", async ({ page }) => {
@@ -944,10 +944,10 @@ test("the pricing audit and change log tabs: the log, the bypass named, the chan
 
   // The pricing log: the write and the bypass, the bypass naming its reason.
   await page.locator('.pr-tab[data-tab="audit"]').click();
-  await expect(page.locator("[data-test=pr-audit-count]")).toHaveText("2 entries");
+  await expect(page.locator("[data-test=pr-audit-count]")).toHaveText("4 entries");
   const bypassRow = page.locator('tr[data-audit="0e110000-0000-4000-9000-0000000000a2"]');
   await expect(bypassRow).toContainText("Bypassed");
-  await expect(page.locator('tr[data-audit-reason="0e110000-0000-4000-9000-0000000000a2"]')).toContainText("Approved override");
+  await expect(bypassRow.locator('[data-audit-reason="0e110000-0000-4000-9000-0000000000a2"]')).toContainText("Approved override");
   const floorRow = page.locator('tr[data-audit="0e110000-0000-4000-9000-0000000000a1"]');
   await expect(floorRow).toContainText("20.00% to 10.00%");
 

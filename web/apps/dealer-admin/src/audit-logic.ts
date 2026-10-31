@@ -84,15 +84,31 @@ export function actorWords(entry: AuditEntryLike): string {
   return "No actor recorded";
 }
 
+const DATE_ONLY_ISO = /^\d{4}-\d{2}-\d{2}(?:T(?:00:00:00|23:59:59)(?:\.\d+)?(?:Z|\+00:00)?)?$/;
+
 /**
  * A row's moment as a person reads it, in the dealer's own zone (served on the surface config
  * read, the Ontario default until one is) with the zone's short name, so a row made this
- * evening reads this evening's day, never tomorrow's. An unparsable value shows as it came: the
- * trail is evidence, and evidence is never blanked by a formatter.
+ * evening reads this evening's day, never tomorrow's. A date-only or midnight/end-of-day UTC
+ * boundary renders as the calendar day alone ("Jan 1") without an invented clock time. An
+ * unparsable value shows as it came: the trail is evidence, and evidence is never blanked by a
+ * formatter.
  */
 export function whenWords(iso: string, now: number | null = null): string {
-  const d = new Date(iso);
+  void now;
+  const trimmed = iso.trim();
+  if (trimmed === "") return "";
+  const d = new Date(trimmed);
   if (Number.isNaN(d.getTime())) return iso;
+  if (DATE_ONLY_ISO.test(trimmed)) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "UTC",
+      month: "short",
+      day: "numeric",
+    }).formatToParts(d);
+    const part = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
+    return `${part("month")} ${part("day")}`;
+  }
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: houseZone(),
     month: "short",
