@@ -10072,6 +10072,7 @@ type TenantPayRequest struct {
 	PaymentMethodId *string  `json:"payment_method_id,omitempty"`
 	Nonce           *string  `json:"nonce,omitempty"`
 	IdempotencyKey  *string  `json:"idempotency_key,omitempty"`
+	ExpectedCents   *int64   `json:"expected_cents,omitempty"`
 }
 
 // TenantProjectStatus is the document's enum: "PLANNING", "QUOTING", "ORDERED", "FULFILLED", "CANCELLED".

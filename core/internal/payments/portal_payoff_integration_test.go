@@ -22,6 +22,7 @@ package payments
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -297,5 +298,104 @@ func TestPortalPayoff_ASettleRefusesAQuotePastTheInvoiceTerms(t *testing.T) {
 	}
 	if bal, _ := pw.invoiceState(t, terms); bal != 100000 {
 		t.Errorf("nothing written on a refused quote; the invoice balance is %d", bal)
+	}
+}
+
+// intentCount reads how many intents the customer holds: a refused tap must leave none.
+func (pw *payoffWorld) intentCount(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := pw.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM payment_intents WHERE customer_id = $1::uuid`, pw.customerID).Scan(&n); err != nil {
+		t.Fatalf("count intents: %v", err)
+	}
+	return n
+}
+
+// TestPortalPayoff_ThePayBodyCarriesTheShownAmountAndALapsedQuoteIsRefused is the reader's case: the
+// list loads at 23:50 on the discount day (the sheet shows 98000) and the tap comes at 00:02. The core
+// re-quotes 100000, differs from the shown amount and refuses before claiming the intent: nothing is
+// charged. The sheet re-quotes 100000 and a second tap with that amount settles.
+func TestPortalPayoff_ThePayBodyCarriesTheShownAmountAndALapsedQuoteIsRefused(t *testing.T) {
+	ctx := context.Background()
+	pw := newPayoffWorld(t)
+	day := houseToday()
+	inv := pw.discountInvoice(t, pw.customerID, "SHOWN", 100000, day)
+
+	pw.setNow(houseInstant(t, day, 23, 50))
+	shown, err := pw.repo.PayableInvoices(ctx, pw.customerID, []string{inv})
+	if err != nil || len(shown) != 1 || shown[0].AmountCents != 98000 {
+		t.Fatalf("the list at 23:50 shows 98000; got %+v err %v", shown, err)
+	}
+
+	pw.setNow(houseInstant(t, dayOf(day, 1), 0, 2))
+	req := PayRequest{InvoiceIDs: []string{inv}, Nonce: "nonce-" + pw.tag, ExpectedCents: 98000}
+	_, err = pw.svc.Pay(ctx, pw.customerID, req)
+	if !errors.Is(err, ErrAmountChanged) {
+		t.Fatalf("a tap at 00:02 on a sheet that showed 98000 must be refused as a changed amount; got %v", err)
+	}
+	if n := len(pw.gw.charged()); n != 0 {
+		t.Errorf("nothing is charged on a refused tap; the gateway saw %d charges", n)
+	}
+	if n := pw.intentCount(t); n != 0 {
+		t.Errorf("no intent is claimed on a refused tap; found %d", n)
+	}
+	if bal, st := pw.invoiceState(t, inv); bal != 100000 || st != "FINALIZED" {
+		t.Errorf("the invoice is untouched: want 100000 FINALIZED; got %d %s", bal, st)
+	}
+
+	again, err := pw.repo.PayableInvoices(ctx, pw.customerID, []string{inv})
+	if err != nil || len(again) != 1 || again[0].AmountCents != 100000 || again[0].DiscountCents != 0 {
+		t.Fatalf("the sheet re-quotes 100000 with no discount; got %+v err %v", again, err)
+	}
+
+	req.ExpectedCents = 100000
+	if _, err := pw.svc.Pay(ctx, pw.customerID, req); err != nil {
+		t.Fatalf("the second tap, with the new amount confirmed: %v", err)
+	}
+	if got := pw.lastCharge(t); got != 100000 {
+		t.Errorf("the second tap charges 100000; got %d", got)
+	}
+}
+
+// TestPortalPayoff_ADeskPaymentBetweenTheListAndTheTapRefuses: the list showed 98000, a desk cheque of
+// 40000 lands, and the tap re-quotes 58016. Different from what was shown, so nothing is charged.
+func TestPortalPayoff_ADeskPaymentBetweenTheListAndTheTapRefuses(t *testing.T) {
+	ctx := context.Background()
+	pw := newPayoffWorld(t)
+	inv := pw.discountInvoice(t, pw.customerID, "DESK", 100000, houseToday())
+
+	if _, err := pw.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: pw.customerID, Method: "CHEQUE", Reference: "CHQ D1",
+		IdempotencyKey: pw.tag + "-desk", InvoiceIDs: []string{inv}, AmountCents: 40000,
+	}); err != nil {
+		t.Fatalf("the desk payment: %v", err)
+	}
+	_, err := pw.svc.Pay(ctx, pw.customerID, PayRequest{InvoiceIDs: []string{inv}, Nonce: "nonce-" + pw.tag, ExpectedCents: 98000})
+	if !errors.Is(err, ErrAmountChanged) {
+		t.Fatalf("a desk payment since the list must refuse the tap; got %v", err)
+	}
+	if n := len(pw.gw.charged()); n != 0 {
+		t.Errorf("nothing is charged; the gateway saw %d charges", n)
+	}
+	if n := pw.intentCount(t); n != 0 {
+		t.Errorf("no intent is claimed; found %d", n)
+	}
+	if bal, st := pw.invoiceState(t, inv); bal != 59200 || st != "PARTIALLY_PAID" {
+		t.Errorf("only the desk's payment is on the invoice: want 59200 PARTIALLY_PAID; got %d %s", bal, st)
+	}
+}
+
+// TestPortalPayoff_ATapThatMatchesWhatWasShownCharges: the shown amount equals the quote, so the pay
+// goes through as before.
+func TestPortalPayoff_ATapThatMatchesWhatWasShownCharges(t *testing.T) {
+	pw := newPayoffWorld(t)
+	inv := pw.discountInvoice(t, pw.customerID, "MATCH", 100000, houseToday())
+	if _, err := pw.svc.Pay(context.Background(), pw.customerID,
+		PayRequest{InvoiceIDs: []string{inv}, Nonce: "nonce-" + pw.tag, ExpectedCents: 98000}); err != nil {
+		t.Fatalf("pay: %v", err)
+	}
+	if got := pw.lastCharge(t); got != 98000 {
+		t.Errorf("charged 98000; got %d", got)
 	}
 }

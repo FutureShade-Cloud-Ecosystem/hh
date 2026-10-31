@@ -8710,6 +8710,7 @@ export type TenantPayRequest = {
   payment_method_id?: string;
   nonce?: string;
   idempotency_key?: string;
+  expected_cents?: number;
 };
 export type TenantProjectStatus = "PLANNING" | "QUOTING" | "ORDERED" | "FULFILLED" | "CANCELLED";
 export type TenantProject = {

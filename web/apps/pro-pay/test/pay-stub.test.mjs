@@ -94,12 +94,13 @@ test("a role that holds the capability pays once, and the payment is the core's 
 test("a second sender holding the same key gets the original payment back and no second payment is made", async () => {
   const { client } = await signedIn("ap");
   const ids = await openInvoiceIds(client);
+  const shown = await shownSum(client, ids);
   const first = new PaySender(client, { canPay: () => true, newKey: () => "fixed-key-for-this-attempt-0001" });
-  const paid = await first.pay({ invoiceIds: ids, nonce: "stub-nonce-ok-7" }, 100);
+  const paid = await first.pay({ invoiceIds: ids, nonce: "stub-nonce-ok-7" }, shown);
   assert.equal(paid.kind, "paid");
   // A reload: a new sender, the same key and body (as a retried unknown outcome carries).
   const second = new PaySender(client, { canPay: () => true, newKey: () => "fixed-key-for-this-attempt-0001" });
-  const again = await second.pay({ invoiceIds: ids, nonce: "stub-nonce-ok-7" }, 100);
+  const again = await second.pay({ invoiceIds: ids, nonce: "stub-nonce-ok-7" }, shown);
   assert.equal(again.kind, "paid");
   assert.equal(again.payment.payment_no, paid.payment.payment_no);
   const held = await tenantPayments.tenantListPayments(client);
@@ -137,6 +138,12 @@ async function termsOn(invoiceNo, days) {
   assert.equal(r.status, 200);
 }
 
+// The amount the Pay button would show for these invoices: the sum of the listed payoffs.
+async function shownSum(client, ids) {
+  const page = await tenantBilling.tenantListInvoices(client, { limit: 200 });
+  return page.value.items.filter((i) => ids.includes(i.id)).reduce((sum, i) => sum + i.payoff_cents, 0);
+}
+
 async function listed(client, invoiceNo) {
   const page = await tenantBilling.tenantListInvoices(client, { limit: 200 });
   return page.value.items.find((i) => i.invoice_no === invoiceNo);
@@ -172,4 +179,22 @@ test("outside the window, or without terms, the payoff is the open amount and no
   assert.equal(plain.payoff_cents, plain.balance_cents);
   const paid = await listed(client, "INV-20401");
   assert.equal("payoff_cents" in paid, false, "a paid invoice is not quoted");
+});
+
+test("the pay body carries the shown amount: a stale figure is refused as changed, nothing moves, and the new amount pays", async () => {
+  const { client } = await signedIn("ap");
+  await termsOn("INV-20402", 3);
+  const row = await listed(client, "INV-20402");
+  const before = (await tenantPayments.tenantListPayments(client)).value.length;
+  const sender = new PaySender(client, { canPay: () => true });
+  const stale = await sender.pay({ invoiceIds: [row.id], nonce: "stub-nonce-ok-3" }, row.payoff_cents + row.discount_cents);
+  assert.equal(stale.kind, "changed");
+  assert.match(stale.words, /amount to pay has changed/i);
+  assert.match(stale.words, /No money moved/);
+  assert.equal(sender.waiting, null, "a refused-before-claim answer holds nothing");
+  assert.equal((await tenantPayments.tenantListPayments(client)).value.length, before, "no payment was made");
+  assert.equal((await listed(client, "INV-20402")).balance_cents, row.balance_cents, "the invoice is untouched");
+  const paid = await sender.pay({ invoiceIds: [row.id], nonce: "stub-nonce-ok-3" }, row.payoff_cents);
+  assert.equal(paid.kind, "paid");
+  assert.equal(paid.differs, false);
 });

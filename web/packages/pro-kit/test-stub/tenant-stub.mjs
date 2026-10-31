@@ -352,6 +352,10 @@ H.tenantCreatePayment = async (ctx) => {
   if (nonce === "stub-nonce-pending") return refuse(ctx.res, 409, "payment is pending, please retry");
   const quotes = targets.map((i) => ({ inv: i, ...quoteOf(i) }));
   const total = quotes.reduce((s, q) => s + q.payoff, 0);
+  // The amount the Pay button showed: the core quotes again at the tap and refuses before anything moves if it differs.
+  if (Number.isInteger(body.expected_cents) && body.expected_cents > 0 && body.expected_cents !== total) {
+    return refuse(ctx.res, 409, "The amount to pay has changed since you opened this. Please check the new amount and confirm again.");
+  }
   const nowIso = new Date().toISOString();
   const method = methodId !== "" ? world.methods.find((m) => m.id === methodId) : null;
   const payment = {

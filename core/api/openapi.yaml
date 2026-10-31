@@ -62496,6 +62496,10 @@ components:
           description: A one-time hosted-field nonce, or use payment_method_id
         idempotency_key:
           type: string
+        expected_cents:
+          type: integer
+          format: int64
+          description: The amount the Pay button showed, in cents. When set, the core quotes again at the tap and answers 409 before claiming anything if its quote differs, so a customer is never charged more than they were shown.
     TenantProjectStatus:
       type: string
       description: A planning project's lane on the board (the procurement_projects CHECK set)

@@ -558,6 +558,11 @@ export class ProPayApp extends HHElement {
       case "unknown":
         this.#sheet = { ...sheet, phase: "unknown", words: outcome.words };
         break;
+      case "changed":
+        // The core refused before claiming anything: no money moved. Read the books again and show the new amount for a second tap.
+        this.#sheet = { ...sheet, phase: "choose", words: outcome.words };
+        void this.#requote(sheet.ids);
+        break;
       case "declined":
         // No money moved. A card token is spent by a decline, so the person adds a card again.
         this.#sheet = { ...sheet, phase: "choose", words: outcome.words, nonce: null };
@@ -570,6 +575,21 @@ export class ProPayApp extends HHElement {
     }
     // A 400 or a 404 says the request was not accepted, and a selection may no longer be payable: read the books again.
     if (outcome.kind === "refused" && (outcome.status === 400 || outcome.status === 404)) void this.#loadSurface();
+    this.requestUpdate();
+  }
+
+  /** After a changed amount: re-read the list and put the new payoff on the sheet, or close it when nothing is payable now. */
+  async #requote(ids: readonly string[]): Promise<void> {
+    await this.#loadSurface();
+    const sheet = this.#sheet;
+    if (sheet === null || sheet.phase !== "choose") return;
+    const still = ids.filter((id) => this.#invoices.some((i) => i.id === id && isPayable(i)));
+    if (still.length === 0) {
+      this.#sheet = null;
+      this.#selected = new Set();
+    } else {
+      this.#sheet = { ...sheet, ids: still, expectedCents: this.#sumOf(still) };
+    }
     this.requestUpdate();
   }
 

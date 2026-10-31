@@ -41,6 +41,10 @@ const (
 	IntentAbandoned = "ABANDONED"
 )
 
+// ErrAmountChanged: the amount the customer was shown is not the amount the core quotes now. Nothing
+// was claimed and no money moved; the caller re-reads the quote and asks again.
+var ErrAmountChanged = errors.New("payments: the amount changed since it was shown")
+
 // ErrPaymentInFlight, a charge for this exact request is already at the processor and we do not
 // know its outcome. Maps to HTTP 409.
 //

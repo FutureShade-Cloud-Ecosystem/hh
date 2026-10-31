@@ -118,10 +118,13 @@ export type PayOutcome =
   | { kind: "declined"; words: string }
   | { kind: "refused"; words: string; status: number }
   | { kind: "unknown"; words: string }
+  | { kind: "changed"; words: string }
   | { kind: "blocked"; words: string };
 
 const UNKNOWN_WORDS = "We could not confirm this payment. It may have gone through. Check it before paying again.";
 const WAITING_WORDS = "A payment is still waiting for an answer. Check it first.";
+
+const CHANGED_WORDS = "The amount to pay has changed since you opened this. No money moved. Check the new amount and confirm again.";
 
 const CHECK_WORDS = "This payment could not be confirmed as stopped. Check Statements, then refresh before paying again.";
 
@@ -136,6 +139,8 @@ export function classifyPayment(result: Result<TenantPayment>, expectedCents = N
   if (status === 402) return { kind: "declined", words: "The payment was declined. No money moved." };
   if (status === 401) return { kind: "refused", status, words: "You are signed out. Sign in again. No money moved." };
   if (status === 403) return { kind: "refused", status, words: "Your role does not allow paying invoices. No money moved." };
+  // The core quoted a different amount than the sheet showed and refused before claiming anything: no money moved.
+  if (status === 409 && /amount to pay has changed/i.test(result.error)) return { kind: "changed", words: CHANGED_WORDS };
   if (status === 400 && /balance changed/i.test(result.error)) return { kind: "unknown", words: UNKNOWN_WORDS };
   if (status !== undefined && status >= 400 && status < 500 && status !== 409) return { kind: "refused", status, words: CHECK_WORDS };
   return { kind: "unknown", words: UNKNOWN_WORDS };
@@ -154,7 +159,7 @@ interface Attempt {
   key: string;
   canon: string;
   expectedCents: number;
-  wire: { invoice_ids: string[]; payment_method_id?: string; nonce?: string; idempotency_key: string };
+  wire: { invoice_ids: string[]; payment_method_id?: string; nonce?: string; idempotency_key: string; expected_cents: number };
 }
 
 export interface PaySenderOptions {
@@ -237,7 +242,7 @@ export class PaySender {
 
   #start(ids: string[], body: PayBody, canon: string, expectedCents: number): Attempt {
     const key = this.#newKey();
-    const wire: Attempt["wire"] = { invoice_ids: ids, idempotency_key: key };
+    const wire: Attempt["wire"] = { invoice_ids: ids, idempotency_key: key, expected_cents: expectedCents };
     if (body.methodId !== undefined && body.methodId !== "") wire.payment_method_id = body.methodId;
     else wire.nonce = body.nonce as string;
     return { key, canon, expectedCents, wire };

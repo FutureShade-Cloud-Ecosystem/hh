@@ -389,6 +389,14 @@ func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, st
 		}
 		sum += a.AmountCents
 	}
+	// - The amount the customer was shown is the most they are ever charged -
+	// A door that carries the shown amount (the portal's Pay button) is held to it: the quote just made
+	// must equal it, or the request is refused here, before an intent is claimed and before the gateway
+	// is touched. Without this the clock (a discount day ending under an open sheet) or a desk payment
+	// could move the amount between the list and the tap and charge more than the button said.
+	if req.ExpectedCents > 0 && req.ExpectedCents != sum {
+		return Payment{}, ErrAmountChanged
+	}
 
 	// The dealer's currency, read before the intent is claimed: a failed read holds no intent and moves
 	// no money. A replay never reaches here (it answered above, from the stored intent).

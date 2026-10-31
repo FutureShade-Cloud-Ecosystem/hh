@@ -106,6 +106,19 @@ test("a pay answer is read as paid, declined, refused or unknown, and a timeout 
   assert.equal(classifyPayment({ ok: false, error: "the request timed out" }).kind, "unknown");
 });
 
+test("a 409 that says the amount changed is its own outcome with words for a customer; any other 409 stays unknown", () => {
+  const out = classifyPayment({ ok: false, error: "The amount to pay has changed since you opened this. Please check the new amount and confirm again.", status: 409 });
+  assert.equal(out.kind, "changed");
+  assert.match(out.words, /No money moved/);
+  assert.equal(classifyPayment({ ok: false, error: "payment is pending, please retry", status: 409 }).kind, "unknown");
+});
+
+test("the wire body carries the amount the button showed", async () => {
+  const t = transport([reply(500, { error: "x" })]);
+  await new PaySender(t.client, { canPay: () => true }).pay(body(), 98000);
+  assert.equal(t.calls[0].body.expected_cents, 98000);
+});
+
 test("a 400 or 404 on a pay never says no money moved: the core can answer 400 after an approved charge", () => {
   for (const status of [400, 404]) {
     const out = classifyPayment({ ok: false, error: "no", status });
@@ -280,10 +293,10 @@ test("the body on the wire carries ids and one funding source and nothing else a
   const t = transport([reply(201, PAYMENT), reply(201, PAYMENT)]);
   const sender = new PaySender(t.client, { canPay: () => true });
   await sender.pay({ invoiceIds: [B, A], nonce: "tok-1" }, 100);
-  assert.deepEqual(Object.keys(t.calls[0].body).sort(), ["idempotency_key", "invoice_ids", "nonce"]);
+  assert.deepEqual(Object.keys(t.calls[0].body).sort(), ["expected_cents", "idempotency_key", "invoice_ids", "nonce"]);
   assert.deepEqual(t.calls[0].body.invoice_ids, [A, B], "the selection is sent sorted, as the core hashes it");
   await sender.pay(body({ invoiceIds: [A] }), 100);
-  assert.deepEqual(Object.keys(t.calls[1].body).sort(), ["idempotency_key", "invoice_ids", "payment_method_id"]);
+  assert.deepEqual(Object.keys(t.calls[1].body).sort(), ["expected_cents", "idempotency_key", "invoice_ids", "payment_method_id"]);
 });
 
 test("a hosted frame's token is accepted by shape, and anything that looks like card digits is refused", () => {
