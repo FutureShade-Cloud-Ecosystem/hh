@@ -84,15 +84,15 @@ export function staffInitials(name: string): string {
 }
 
 function accessWord(tier: number, scope: string): string {
-  if (tier === 1 || scope === "GLOBAL") return "EVERYTHING";
-  if (tier === 2) return "BRANCH";
-  return "FRONTLINE";
+  if (tier === 1 || scope === "GLOBAL") return "Everything";
+  if (tier === 2) return "Branch";
+  return "Frontline";
 }
 
 function staffStatus(m: StaffMemberRow): string {
-  if (m.email.includes("jordan")) return "INVITED";
-  if (m.email.includes("casey")) return "DISABLED";
-  return "ACTIVE";
+  if (m.email.includes("jordan")) return "Invited";
+  if (m.email.includes("casey")) return "Disabled";
+  return "Active";
 }
 
 /**
@@ -168,7 +168,7 @@ function renderStaffRow(m: StaffMemberRow, model: StaffModel): TemplateResult {
   const link = model.links.get(m.user_id);
   const resetError = model.resetErrors.get(m.user_id) ?? "";
   const status = staffStatus(m);
-  const statusCls = status === "ACTIVE" ? "badge-active" : status === "INVITED" ? "badge-invited" : "badge-disabled";
+  const statusCls = status === "Active" ? "badge-active" : status === "Invited" ? "badge-invited" : "badge-disabled";
   return html`
     <tr data-user=${m.user_id}>
       <td class="staff-person">

@@ -28,6 +28,7 @@
  */
 
 import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+import { whenWords } from "./audit-logic.js";
 import { UNKNOWN_REASON } from "./placeholders.js";
 import { UNKNOWN_CATEGORY, UNKNOWN_VENDOR } from "./placeholders.js";
 
@@ -929,6 +930,29 @@ const CENTS_AUDIT_FIELDS: ReadonlySet<string> = new Set([
   "rebate per unit",
 ]);
 
+const DATE_AUDIT_FIELDS: ReadonlySet<string> = new Set([
+  "starts_at",
+  "ends_at",
+  "valid_from",
+  "valid_to",
+  "started_at",
+  "effective_date",
+  "start date",
+  "end date",
+  "effective date",
+]);
+
+const UOM_AUDIT_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  SF: "square foot (SF)",
+  LF: "linear foot (LF)",
+  EA: "each (EA)",
+  PLT: "pallet (PLT)",
+  TON: "ton (TON)",
+  T: "tonne (T)",
+  CYD: "cubic yard (CYD)",
+  BAG: "bag (BAG)",
+});
+
 function auditValueWords(value: string, fieldName: string): string {
   const trimmed = value.trim();
   const field = fieldName.trim().toLowerCase();
@@ -947,6 +971,22 @@ function auditValueWords(value: string, fieldName: string): string {
       const n = trimNumber(Number(qtyMatch[1]));
       return qtyMatch[2] !== undefined ? `${n} ${qtyMatch[2]}` : n;
     }
+  }
+  if (field === "is_active" || field === "is active" || field === "state") {
+    if (trimmed.toLowerCase() === "true") return "Active";
+    if (trimmed.toLowerCase() === "false") return "Retired";
+  }
+  if (field === "margin_enforcement_disabled" || field === "margin enforcement") {
+    if (trimmed.toLowerCase() === "true") return "Off";
+    if (trimmed.toLowerCase() === "false") return "On";
+  }
+  if (DATE_AUDIT_FIELDS.has(field) || /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(trimmed)) {
+    const formatted = whenWords(trimmed);
+    if (formatted !== "") return formatted;
+  }
+  if (field.endsWith("_uom") || field === "price unit" || field === "threshold unit" || field === "from unit" || field === "to unit") {
+    const uomWord = UOM_AUDIT_WORDS[trimmed.toUpperCase()];
+    if (uomWord !== undefined) return uomWord;
   }
   if (field === "calc_type" || field === "calc type") return calcTypeWord(trimmed);
   if (field === "basis") return rebateBasisWords(trimmed);
@@ -1058,6 +1098,18 @@ const PRICING_AUDIT_FIELD_WORDS: Readonly<Record<string, string>> = Object.freez
   clearance_price_cents: "clearance price",
   rate_bps: "rebate rate",
   rate_cents_per_unit: "rebate per unit",
+  is_active: "state",
+  margin_enforcement_disabled: "margin enforcement",
+  starts_at: "start date",
+  ends_at: "end date",
+  valid_from: "start date",
+  valid_to: "end date",
+  started_at: "start date",
+  effective_date: "effective date",
+  price_uom: "price unit",
+  threshold_uom: "threshold unit",
+  from_uom: "from unit",
+  to_uom: "to unit",
 });
 
 /** A pricing audit entry's changed field in plain dealer words (UX-118). */
