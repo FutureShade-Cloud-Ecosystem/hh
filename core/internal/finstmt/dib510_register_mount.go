@@ -116,7 +116,7 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 	repo := billing.NewRepository(pool).WithZone(h.zone)
 	svc := billing.NewRegisterService(repo).
 		WithZone(h.zone).
-		WithMoney(billing.NewPaymentsReceiptWriter(payments.NewRepository(pool))).
+		WithMoney(billing.NewPaymentsReceiptWriter(billing.NewPaymentsRepository(pool, h.zone))).
 		// The money a reversal held and a manager put on an invoice (SF-2r): the payments module owns the table, so the
 		// register's Applied figure and timeline read it through this seam.
 		WithReapplied(billing.NewPaymentsReappliedReader(payments.NewRepository(pool))).

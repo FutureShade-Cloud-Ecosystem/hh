@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -84,6 +86,12 @@ const methodColumns = `id::text, customer_id::text, gateway, method_type, brand,
 type Repository struct {
 	pool *pgxpool.Pool // nil in scaffold/tests
 	till TillSeam      // the till's side of the held money drawer pay out and write off (payout.go); nil leaves them off
+	// discountTerms is the terms master read the early payment discount runs on (discount.go);
+	// nil discounts nothing. zone is the dealer's business day zone source the discount window is
+	// judged in (nil is the Ontario dealer's) and discountClock is the clock it is judged on.
+	discountTerms DiscountTermsReader
+	zone          houseday.Source
+	discountClock func() time.Time
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
@@ -312,14 +320,16 @@ func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in Appl
 		var row applyInvoiceRow
 		err := tx.QueryRow(ctx, `
 			SELECT id::text, invoice_no, customer_id::text, branch_id::text, status::text,
-			       issue_date, due_date, balance_cents, holdback_cents
+			       issue_date, due_date, balance_cents, holdback_cents,
+			       discount_date, COALESCE(terms_code, '')
 			  FROM invoices
 			 WHERE id = $1::uuid AND customer_id = $2::uuid
 			   AND doc_type = 'INVOICE'
 			   AND ($3::text[] IS NULL OR branch_id = ANY($3::uuid[]))
 			   FOR NO KEY UPDATE`, id, in.CustomerID, reach).
 			Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
-				&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents)
+				&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents,
+				&row.DiscountDate, &row.TermsCode)
 		if errors.Is(err, pgx.ErrNoRows) {
 			nsfRow, found, nsfErr := lockApplyNSFFeeByIDTx(ctx, tx, id, in.CustomerID, reach)
 			if nsfErr != nil {
@@ -416,7 +426,8 @@ func (r *Repository) readApplyInvoices(ctx context.Context, in ApplyRequest) ([]
 	found := make(map[string]applyInvoiceRow, len(ids))
 	rows, err := r.pool.Query(ctx, `
 		SELECT id::text, invoice_no, customer_id::text, branch_id::text, status::text,
-		       issue_date, due_date, balance_cents, holdback_cents
+		       issue_date, due_date, balance_cents, holdback_cents,
+		       discount_date, COALESCE(terms_code, '')
 		  FROM invoices
 		 WHERE id = ANY($1::uuid[]) AND customer_id = $2::uuid
 		   AND doc_type = 'INVOICE'
@@ -428,7 +439,8 @@ func (r *Repository) readApplyInvoices(ctx context.Context, in ApplyRequest) ([]
 	for rows.Next() {
 		var row applyInvoiceRow
 		if err := rows.Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
-			&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents); err != nil {
+			&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents,
+			&row.DiscountDate, &row.TermsCode); err != nil {
 			return nil, fmt.Errorf("apply preview: scan invoice: %w", err)
 		}
 		found[row.InvoiceID] = row
@@ -526,8 +538,10 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 		}
 	}
 	appliedBy := map[string]int64{}
+	discountedBy := map[string]int64{}
 	for _, a := range p.Allocations {
 		appliedBy[a.InvoiceID] += a.AmountCents
+		discountedBy[a.InvoiceID] += a.DiscountCents
 		ans.AppliedCents += a.AmountCents
 	}
 	for nsfID, amt := range nsfAllocs {
@@ -543,10 +557,12 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 		var row applyInvoiceRow
 		err := r.pool.QueryRow(ctx, `
 			SELECT id::text, invoice_no, customer_id::text, branch_id::text, status::text,
-			       issue_date, due_date, balance_cents, holdback_cents
+			       issue_date, due_date, balance_cents, holdback_cents,
+			       discount_date, COALESCE(terms_code, '')
 			  FROM invoices WHERE id = $1::uuid`, id).
 			Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
-				&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents)
+				&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents,
+				&row.DiscountDate, &row.TermsCode)
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = r.pool.QueryRow(ctx, `
 				SELECT n.id::text, 'NSF-FEE', COALESCE(n.customer_id, bp.customer_id)::text, bp.branch_id::text,
@@ -589,10 +605,14 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 	}
 	// The zero amount walk answers the rows in the allocation's own oldest first order with their
 	// live balances; each line is then patched with what THIS payment put on it.
-	lines, _ := allocateOldestFirst(rows, 0)
+	lines, _ := allocateOldestFirst(rows, 0, nil)
 	for i := range lines {
 		take := appliedBy[lines[i].InvoiceID]
 		lines[i].AppliedCents = take
+		// The discount this payment's own applications took on the invoice, read from the
+		// allocation rows with the money: a replay answers the posting's own split, discount
+		// included, never a fresh judgement of a window that has since closed.
+		lines[i].DiscountCents = discountedBy[lines[i].InvoiceID]
 		outcome := ApplyOutcomeNone
 		if take > 0 {
 			if rowStatus(rows, lines[i].InvoiceID) == "PAID" {
@@ -751,7 +771,7 @@ func (r *Repository) allocationsByPayment(ctx context.Context, paymentIDs []stri
 		return out, nil
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT pa.payment_id::text, pa.invoice_id::text, pa.amount_cents,
+		`SELECT pa.payment_id::text, pa.invoice_id::text, pa.amount_cents, pa.discount_cents,
 		        COALESCE(pa.allocated_by::text, ''), COALESCE(u.display_name, ''), pa.created_at
 		 FROM payment_allocations pa
 		 LEFT JOIN users u ON u.id = pa.allocated_by
@@ -764,7 +784,7 @@ func (r *Repository) allocationsByPayment(ctx context.Context, paymentIDs []stri
 	for rows.Next() {
 		var paymentID string
 		var a Allocation
-		if err := rows.Scan(&paymentID, &a.InvoiceID, &a.AmountCents,
+		if err := rows.Scan(&paymentID, &a.InvoiceID, &a.AmountCents, &a.DiscountCents,
 			&a.AllocatedBy, &a.AllocatedByName, &a.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan allocation: %w", err)
 		}
@@ -850,7 +870,7 @@ func (r *Repository) PayWithStamps(ctx context.Context, customerID, method, gate
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	total, branchID, err := lockAndTotal(ctx, tx, customerID, allocs)
+	total, branchID, err := r.lockAndTotal(ctx, tx, customerID, allocs, nil)
 	if err != nil {
 		return Payment{}, err
 	}
@@ -1106,10 +1126,14 @@ func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) erro
 // that the key share blocks closes a cycle (the return's refund rail then waits on the counter). With
 // NO KEY UPDATE the settle never waits on the return's share at all: no writer deletes invoices or
 // changes their keys, so the share is never something the settle needs to hold back.
-func lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Allocation) (int64, string, error) {
+func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Allocation, dctx *discountContext) (int64, string, error) {
 	if _, err := tx.Exec(ctx, lockPaymentsSequenceSQL); err != nil {
 		return 0, "", fmt.Errorf("pay: lock payments sequence: %w", err)
 	}
+	// The discount facts read under the locks this loop takes, so a context the caller did not
+	// bring (the per invoice settle, the portal settle) is built here from the rows themselves and
+	// the walk that did bring one re-reads nothing: its context is handed in already resolved.
+	discountRows := make([]applyInvoiceRow, 0, len(allocs))
 	var total int64
 	var branchID string
 	for _, a := range allocs {
@@ -1140,10 +1164,12 @@ func lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Al
 		}
 		var balance, holdback int64
 		var invBranch string
+		var discountDay *time.Time
+		var termsCode string
 		err := tx.QueryRow(ctx,
-			`SELECT balance_cents, holdback_cents, branch_id::text
+			`SELECT balance_cents, holdback_cents, branch_id::text, discount_date, COALESCE(terms_code, '')
 			 FROM invoices WHERE id = $2 AND customer_id = $1 FOR NO KEY UPDATE`,
-			customerID, a.InvoiceID).Scan(&balance, &holdback, &invBranch)
+			customerID, a.InvoiceID).Scan(&balance, &holdback, &invBranch, &discountDay, &termsCode)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return 0, "", ErrNotFound
@@ -1157,10 +1183,40 @@ func lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Al
 		if a.AmountCents <= 0 || a.AmountCents > payable {
 			return 0, "", httpx.BadRequestf("invoice %q balance changed; refresh and retry", a.InvoiceID)
 		}
+		discountRows = append(discountRows, applyInvoiceRow{
+			InvoiceID: a.InvoiceID, BalanceCents: balance, HoldbackCents: holdback,
+			DiscountDate: discountDay, TermsCode: termsCode,
+		})
 		total += a.AmountCents
 		if branchID == "" {
 			branchID = invBranch
 		}
+	}
+	// The early payment discount (TM-2), derived here for every caller of the one settle: the per
+	// invoice door and the portal settle bring no walk of their own, so the discount they take is
+	// decided on the same rows under the same locks, with the same clock the apply's walk used when
+	// the apply is the caller (its context arrives resolved and is not rebuilt).
+	if dctx == nil {
+		var err error
+		dctx, err = r.newDiscountContextTx(ctx, tx, discountRows, nil)
+		if err != nil {
+			return 0, "", err
+		}
+	}
+	byID := make(map[string]applyInvoiceRow, len(discountRows))
+	for _, row := range discountRows {
+		byID[row.InvoiceID] = row
+	}
+	for i := range allocs {
+		if allocs[i].IsNSFFee {
+			continue
+		}
+		row := byID[allocs[i].InvoiceID]
+		payable := row.BalanceCents - row.HoldbackCents
+		if payable < 0 {
+			payable = 0
+		}
+		allocs[i].DiscountCents = dctx.discountOn(payable, allocs[i].AmountCents, discountDayOf(row), row.TermsCode)
 	}
 	return total, branchID, nil
 }
@@ -1215,9 +1271,9 @@ func applyAllocations(ctx context.Context, tx pgx.Tx, p *Payment, customerID, me
 			by = allocatedBy
 		}
 		if err := tx.QueryRow(ctx,
-			`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents, allocated_by)
-			 VALUES ($1, $2, $3, $4::uuid) RETURNING created_at`,
-			p.ID, a.InvoiceID, a.AmountCents, by).Scan(&a.CreatedAt); err != nil {
+			`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents, discount_cents, allocated_by)
+			 VALUES ($1, $2, $3, $4, $5::uuid) RETURNING created_at`,
+			p.ID, a.InvoiceID, a.AmountCents, a.DiscountCents, by).Scan(&a.CreatedAt); err != nil {
 			return fmt.Errorf("pay: insert allocation: %w", err)
 		}
 		a.AllocatedBy = allocatedBy
@@ -1229,14 +1285,18 @@ func applyAllocations(ctx context.Context, tx pgx.Tx, p *Payment, customerID, me
 		// move that no pull can see is a feed that lies by omission.
 		// The reach is the same cross-table one this settle already
 		// takes on invoices (the file's own recorded posture).
+		//
+		// The early payment discount moves the balance with the money
+		// (TM-2): the invoice's own terms percent of what this
+		// application landed, decided in the same transaction.
 		if _, err := tx.Exec(ctx, invoicesFeedSeqCTE+`
 UPDATE invoices
-			 SET balance_cents = balance_cents - $3,
-				 status = CASE WHEN balance_cents - $3 <= 0 THEN 'PAID' ELSE 'PARTIALLY_PAID' END,
+			 SET balance_cents = balance_cents - $3 - $4,
+				 status = CASE WHEN balance_cents - $3 - $4 <= 0 THEN 'PAID' ELSE 'PARTIALLY_PAID' END,
 				 updated_at = now(),
 				 seq = (SELECT next_value FROM iseq)
 			 WHERE id = $2 AND customer_id = $1`,
-			customerID, a.InvoiceID, a.AmountCents); err != nil {
+			customerID, a.InvoiceID, a.AmountCents, a.DiscountCents); err != nil {
 			return fmt.Errorf("pay: update invoice balance: %w", err)
 		}
 
@@ -1246,9 +1306,46 @@ UPDATE invoices
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO customer_transactions
 				(customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id)
-			 VALUES ($1, 'PAYMENT', $2, $3, 'payment', $4, $5)`,
+		 VALUES ($1, 'PAYMENT', $2, $3, 'payment', $4, $5)`,
 			customerID, -a.AmountCents, runningAR, p.ID, branchID); err != nil {
 			return fmt.Errorf("pay: insert subledger txn: %w", err)
+		}
+		// The discount's own subledger row (TM-2): an ADJUSTMENT against the invoice (source_type
+		// 'invoice'), so the account's statement carries the discount beside the money and the
+		// aging's reconstruction at a past date reads it from here without counting it twice (the
+		// aging's current arm reads the invoice balance, which the move above already dropped).
+		if a.DiscountCents > 0 {
+			runningAR -= a.DiscountCents
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO customer_transactions
+					(customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+			 VALUES ($1, 'ADJUSTMENT', $2, $3, 'invoice', $4, $5, $6)`,
+				customerID, -a.DiscountCents, runningAR, a.InvoiceID, branchID,
+				"early payment discount ("+p.PaymentNo+")"); err != nil {
+				return fmt.Errorf("pay: insert the discount subledger txn: %w", err)
+			}
+			// The GL's half of the discount, emitted in the SAME transaction as the application:
+			// the consumer posts DR discounts allowed / CR 1100 on the key
+			// payment.discount.taken:<payment>:<invoice>, so a redelivered row posts once and the
+			// 1100 tie moves with the balance move above.
+			discountPayload, err := json.Marshal(map[string]any{
+				"payment_id":     p.ID,
+				"customer_id":    customerID,
+				"invoice_id":     a.InvoiceID,
+				"branch_id":      branchID,
+				"discount_cents": a.DiscountCents,
+				// FW1-01b: the receipt's own instant, so the discount journal posts in the month
+				// the money was applied, not the month the consumer ran.
+				"occurred_at": p.ReceivedAt,
+			})
+			if err != nil {
+				return fmt.Errorf("pay: marshal payment.discount.taken: %w", err)
+			}
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO events_outbox (topic, payload) VALUES ('payment.discount.taken', $1)`,
+				discountPayload); err != nil {
+				return fmt.Errorf("pay: emit payment.discount.taken: %w", err)
+			}
 		}
 
 		p.Allocations = append(p.Allocations, a)

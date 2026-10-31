@@ -254,7 +254,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// first construction, DIB-416; the second service the W3-B block built
 	// stays in wireOperations, the duplication the A1 ruling carries
 	// verbatim).
-	portalPaySvc := payments.NewService(payments.NewRepository(pool), ops.unionGateway).WithCurrency(newDealerCurrency(pool))
+	// The repository carries the early payment discount's terms read and the dealer's zone
+	// (TM-2): a card settle inside the invoice's own window discounts exactly as the money desk's
+	// walk does.
+	portalPaySvc := payments.NewService(billing.NewPaymentsRepository(pool, newDealerZone(pool)), ops.unionGateway).WithCurrency(newDealerCurrency(pool))
 
 	// Procurement Planning board: pricing + customers + the catalog seam.
 	procurementSvc := procurement.NewService(procurement.NewRepository(pool)).

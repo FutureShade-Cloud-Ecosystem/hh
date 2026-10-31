@@ -241,13 +241,23 @@ func (r *Repository) TermsFor(ctx context.Context, customerID string) (Terms, er
 	return t, nil
 }
 
-// TermsByCode reads one row of the master by its code.
+// TermsByCode reads one row of the master by its code. A caller inside its own transaction (a cash
+// application discounting inside its one transaction, TM-2) carries it with WithCallerTx and the
+// read rides it, the same discipline TermsFor rides (QD5: a pool read beside a held transaction
+// waits on a second connection, which a full pool of such callers never frees).
 func (r *Repository) TermsByCode(ctx context.Context, code string) (Terms, error) {
-	if r.pool == nil {
+	var q interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	}
+	if tx := callerTxFrom(ctx); tx != nil {
+		q = tx
+	} else if r.pool != nil {
+		q = r.pool
+	} else {
 		return Terms{}, errNoDB
 	}
 	var t Terms
-	err := r.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT code, name, net_days, discount_bps, discount_days
 		  FROM payment_terms
 		 WHERE code = $1`,
