@@ -31,7 +31,7 @@ export const JOB_SHAPES: readonly JobShape[] = Object.freeze([
   { profile: "counter", word: "Counter", what: "The desk's own view, the least privileged shape by default." },
   { profile: "yard", word: "Yard", what: "The yard's view: the queue, the picks, the stock." },
   { profile: "driver", word: "Driver", what: "The road's view: the runs, the stops, the proof." },
-  { profile: "manager", word: "Manager", what: "A manager role with no refinement row below; every seeded manager role has one." },
+  { profile: "manager", word: "Manager", what: "The manager's own Home." },
   { profile: "admin", word: "Admin", what: "Leadership's view: the register, the settings, the people." },
   { profile: "manager.branch", word: "Branch manager", what: "The branch manager's own Home and curation." },
   { profile: "manager.sales", word: "Sales manager", what: "The sales manager's own Home and curation." },

@@ -8164,6 +8164,24 @@ export type ReportingDatasetResult = {
   query: ReportingDatasetQuery;
   run_at: string;
 };
+export type ReportingSavedReportSort = {
+  column: string;
+  desc?: boolean;
+};
+export type ReportingSavedReportDefinition = {
+  name: string;
+  dataset: "ar" | "ap" | "gl" | "sales" | "stock";
+  columns: string[];
+  filters?: ReportingDatasetFilter[];
+  group_by?: string[];
+  as_of?: string;
+  sort?: ReportingSavedReportSort[];
+};
+export type ReportingSavedReport = ReportingSavedReportDefinition & { id: string; owner_user_id: string; created_at: string; updated_at: string };
+export type ReportingSavedReportList = {
+  items: ReportingSavedReport[];
+};
+export type ReportingSavedReportResult = ReportingDatasetResult & { report_id: string; report_name: string };
 export type ReportingCommissionRule = {
   id: string;
   rep_user_id: string;

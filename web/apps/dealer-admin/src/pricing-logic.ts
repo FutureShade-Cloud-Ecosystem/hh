@@ -1012,6 +1012,60 @@ export function deltaWords(oldValue: string | null, newValue: string | null, fie
   return "";
 }
 
+/**
+ * The floor check's shorthand values, worded for a dealer (UX-125). The core writes
+ * `rule <cents> at <pct>%`, `net <cents> margin <bps> floor <bps>`, `counter <cents>[ at <bps> bps]`
+ * and `net <cents> off <cents> rung by <staff id>`; cents and bps become dollars and percent for
+ * display only. A value that matches none of these comes back unchanged. `staffName` resolves the
+ * clerk id; an id it cannot resolve is left out.
+ */
+export function floorValueWords(value: string, staffName?: (id: string) => string): string {
+  const v = value.trim();
+  let m = /^rule (\d+) at (\d+(?:\.\d+)?)%$/.exec(v);
+  if (m !== null) return `Rule price ${moneyWords(Number(m[1]))}, ${m[2]}% off`;
+  m = /^net (\d+) margin (-?\d+) floor (-?\d+)$/.exec(v);
+  if (m !== null) return `Net ${moneyWords(Number(m[1]))}, margin ${pctWords(Number(m[2]))}, floor ${pctWords(Number(m[3]))}`;
+  m = /^counter (\d+)(?: at (\d+) bps)?$/.exec(v);
+  if (m !== null) {
+    const base = `Counter price ${moneyWords(Number(m[1]))}`;
+    return m[2] !== undefined ? `${base}, ${pctWords(Number(m[2]))} off` : base;
+  }
+  m = /^net (\d+) off (\d+) rung by (.+)$/.exec(v);
+  if (m !== null) {
+    const base = `Net ${moneyWords(Number(m[1]))}, ${moneyWords(Number(m[2]))} off`;
+    const who = staffName !== undefined ? staffName((m[3] ?? "").trim()) : "";
+    return who !== "" ? `${base}, rung by ${who}` : base;
+  }
+  return value;
+}
+
+/** A worded value set mid-sentence: the first letter drops to lower case ("Net $6.55" reads "net $6.55"). */
+function midSentence(words: string): string {
+  return words === "" ? words : words.charAt(0).toLowerCase() + words.slice(1);
+}
+
+/** One side of a before and after. A worded floor shape reads mid-sentence; a value that matched no
+ *  shape stays exactly as written (no case change), so nothing is invented about it. */
+function floorSide(value: string, staffName?: (id: string) => string): string {
+  const words = floorValueWords(value, staffName);
+  return words === value ? value : midSentence(words);
+}
+
+/** Closes a phrase with a full stop unless it already ends a sentence. */
+function closed(words: string): string {
+  return /[.!?]$/.test(words) ? words : `${words}.`;
+}
+
+/** A margin enforcement row's change, told as a before and after: "Was: ... Now: ...". */
+export function floorDeltaWords(oldValue: string | null, newValue: string | null, staffName?: (id: string) => string): string {
+  const a = oldValue !== null ? floorSide(oldValue, staffName) : null;
+  const b = newValue !== null ? floorSide(newValue, staffName) : null;
+  if (a !== null && b !== null) return `Was: ${closed(a)} Now: ${closed(b)}`;
+  if (a === null && b !== null) return `Now: ${closed(b)}`;
+  if (a !== null && b === null) return "cleared";
+  return "";
+}
+
 /** An import's answer, told from the server's own counts. */
 export function importResultWords(result: {
   readonly total_lines: number;
