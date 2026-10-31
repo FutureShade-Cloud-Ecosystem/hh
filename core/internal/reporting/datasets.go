@@ -487,84 +487,11 @@ func (s *Service) RunDataset(ctx context.Context, set string, q DatasetQuery) (D
 	}
 	meta := datasetLabels[set]
 
-	// The columns. A read projects at least one, and every name must be the catalog's, byte for byte.
-	if len(q.Columns) == 0 {
-		return DatasetResult{}, errBadRequest("name at least one column of the %s set: its columns are %s",
-			set, datasetColumnWords(cols))
-	}
-	seen := map[string]bool{}
-	projected := make([]DatasetColumn, 0, len(q.Columns))
-	for _, name := range q.Columns {
-		col, ok := datasetColumnByName(cols, name)
-		if !ok {
-			return DatasetResult{}, errBadRequest(
-				"the %s set has no column %q: its columns are %s", set, name, datasetColumnWords(cols))
-		}
-		if seen[name] {
-			return DatasetResult{}, errBadRequest("column %q is named twice in one read", name)
-		}
-		seen[name] = true
-		projected = append(projected, col)
-	}
-
-	// The filters. Each must name a filterable column and carry operators and values the column's kind
-	// admits. The window pushdowns are consumed here too: the sources apply them in their own reads.
-	filters, pushdown, err := validateDatasetFilters(set, cols, q.Filters)
+	plan, err := planDataset(c, set, cols, q)
 	if err != nil {
 		return DatasetResult{}, err
 	}
-
-	// The branch fence. A named branch outside the caller's reach is forbidden before any source is
-	// asked; inside the read, each owner cuts its own rows to the stamped caller's reach.
-	for _, f := range filters {
-		if f.column.Name != "branch_id" {
-			continue
-		}
-		for _, v := range f.values {
-			branch, _ := v.(string)
-			if !c.CanAccessBranch(branch) {
-				return DatasetResult{}, ErrForbidden
-			}
-		}
-	}
-
-	// The group by. Its columns must be requested, groupable, and leave nothing requested that can
-	// neither group nor sum.
-	groupBy := make([]DatasetColumn, 0, len(q.GroupBy))
-	for _, name := range q.GroupBy {
-		col, ok := datasetColumnByName(cols, name)
-		if !ok {
-			return DatasetResult{}, errBadRequest(
-				"the %s set has no column %q: its columns are %s", set, name, datasetColumnWords(cols))
-		}
-		if !col.Group {
-			return DatasetResult{}, errBadRequest(
-				"column %q of the %s set cannot group: a group by needs a column the catalog marks groupable", name, set)
-		}
-		if !seen[name] {
-			return DatasetResult{}, errBadRequest(
-				"group_by names %q, which the read does not carry: group by columns of the %s set must be among the requested columns", name, set)
-		}
-		groupBy = append(groupBy, col)
-	}
-	if len(groupBy) > 0 {
-		for _, col := range projected {
-			grouped := false
-			for _, g := range groupBy {
-				if g.Name == col.Name {
-					grouped = true
-					break
-				}
-			}
-			// A groupable column the read does not group by is refused too, not silently dropped: its
-			// per group value would be one row's value wearing the group's name, which is how a report
-			// ends up with a customer column that lies.
-			if !grouped && !col.Sum {
-				return DatasetResult{}, errBadRequest(
-					"a grouped read cannot carry %q: it is not in the group by and it cannot sum", col.Name)
-			}
-		}
-	}
+	projected, filters, pushdown, groupBy := plan.projected, plan.filters, plan.pushdown, plan.groupBy
 
 	// The read itself, through the owning module's own seam.
 	rows, asOfEcho, err := s.readDatasetRows(ctx, set, q, pushdown)
@@ -601,6 +528,101 @@ func (s *Service) RunDataset(ctx context.Context, set string, q DatasetQuery) (D
 		Set: set, Label: meta.label, Columns: projected, Rows: out, RowCount: len(out),
 		Totals: totals, Query: echo, RunAt: nowUTC(),
 	}, nil
+}
+
+// datasetPlan is a validated read: the projected columns, the coerced filters, the pushdowns and the
+// group by columns, ready to execute.
+type datasetPlan struct {
+	projected []DatasetColumn
+	filters   []datasetFilter
+	pushdown  datasetPushdown
+	groupBy   []DatasetColumn
+}
+
+// planDataset checks one read against the set's catalog and the caller's branch reach and answers
+// the plan to run, or the refusal in words. It reads nothing: RunDataset runs the plan, and a saved
+// report (W3-RW2) is checked with the same function when it is saved and again when it runs.
+func planDataset(c identity.StaffContext, set string, cols []DatasetColumn, q DatasetQuery) (datasetPlan, error) {
+	// The columns. A read projects at least one, and every name must be the catalog's, byte for byte.
+	if len(q.Columns) == 0 {
+		return datasetPlan{}, errBadRequest("name at least one column of the %s set: its columns are %s",
+			set, datasetColumnWords(cols))
+	}
+	seen := map[string]bool{}
+	projected := make([]DatasetColumn, 0, len(q.Columns))
+	for _, name := range q.Columns {
+		col, ok := datasetColumnByName(cols, name)
+		if !ok {
+			return datasetPlan{}, errBadRequest(
+				"the %s set has no column %q: its columns are %s", set, name, datasetColumnWords(cols))
+		}
+		if seen[name] {
+			return datasetPlan{}, errBadRequest("column %q is named twice in one read", name)
+		}
+		seen[name] = true
+		projected = append(projected, col)
+	}
+
+	// The filters. Each must name a filterable column and carry operators and values the column's kind
+	// admits. The window pushdowns are consumed here too: the sources apply them in their own reads.
+	filters, pushdown, err := validateDatasetFilters(set, cols, q.Filters)
+	if err != nil {
+		return datasetPlan{}, err
+	}
+
+	// The branch fence. A named branch outside the caller's reach is forbidden before any source is
+	// asked; inside the read, each owner cuts its own rows to the stamped caller's reach.
+	for _, f := range filters {
+		if f.column.Name != "branch_id" {
+			continue
+		}
+		for _, v := range f.values {
+			branch, _ := v.(string)
+			if !c.CanAccessBranch(branch) {
+				return datasetPlan{}, ErrForbidden
+			}
+		}
+	}
+
+	// The group by. Its columns must be requested, groupable, and leave nothing requested that can
+	// neither group nor sum.
+	groupBy := make([]DatasetColumn, 0, len(q.GroupBy))
+	for _, name := range q.GroupBy {
+		col, ok := datasetColumnByName(cols, name)
+		if !ok {
+			return datasetPlan{}, errBadRequest(
+				"the %s set has no column %q: its columns are %s", set, name, datasetColumnWords(cols))
+		}
+		if !col.Group {
+			return datasetPlan{}, errBadRequest(
+				"column %q of the %s set cannot group: a group by needs a column the catalog marks groupable", name, set)
+		}
+		if !seen[name] {
+			return datasetPlan{}, errBadRequest(
+				"group_by names %q, which the read does not carry: group by columns of the %s set must be among the requested columns", name, set)
+		}
+		groupBy = append(groupBy, col)
+	}
+	if len(groupBy) > 0 {
+		for _, col := range projected {
+			grouped := false
+			for _, g := range groupBy {
+				if g.Name == col.Name {
+					grouped = true
+					break
+				}
+			}
+			// A groupable column the read does not group by is refused too, not silently dropped: its
+			// per group value would be one row's value wearing the group's name, which is how a report
+			// ends up with a customer column that lies.
+			if !grouped && !col.Sum {
+				return datasetPlan{}, errBadRequest(
+					"a grouped read cannot carry %q: it is not in the group by and it cannot sum", col.Name)
+			}
+		}
+	}
+
+	return datasetPlan{projected: projected, filters: filters, pushdown: pushdown, groupBy: groupBy}, nil
 }
 
 // readDatasetRows calls the set's owning module and returns its typed lines as catalog cells, with the
