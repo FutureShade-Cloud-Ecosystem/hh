@@ -205,11 +205,21 @@ func (s *Service) SetTerms(ctx context.Context, customerID string, code string) 
 // standard days joins the standard master row for those days; with no code and non-standard
 // days, TermsFor answers the days with no code. TermsFor stays a read and never writes.
 func (r *Repository) TermsFor(ctx context.Context, customerID string) (Terms, error) {
-	if r.pool == nil {
+	// A caller inside its own transaction (an invoice written in the caller's one transaction,
+	// QD5) carries it with WithCallerTx, and the read rides it: a second pool connection would
+	// wait on the caller's own, and on a pool of one it never comes.
+	var q interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	}
+	if tx := callerTxFrom(ctx); tx != nil {
+		q = tx
+	} else if r.pool != nil {
+		q = r.pool
+	} else {
 		return Terms{}, errNoDB
 	}
 	var t Terms
-	err := r.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT COALESCE(t.code, ''), COALESCE(t.name, ''), COALESCE(t.net_days, c.payment_terms_days),
 		       COALESCE(t.discount_bps, 0), COALESCE(t.discount_days, 0)
 		  FROM customers c
