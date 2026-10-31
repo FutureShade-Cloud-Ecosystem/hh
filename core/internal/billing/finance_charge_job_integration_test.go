@@ -11,9 +11,12 @@
 package billing
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/jobs"
 )
 
 // fcSweep runs the sweep over the rig's own branches (the shared gate database holds other legs'
@@ -139,7 +142,8 @@ func TestIntegration_W3FC1B_TwoWorkerInstancesChargeOnce(t *testing.T) {
 	}
 }
 
-// The job is scheduled by name: migration 0477 seeds the row the worker registers.
+// The job is scheduled by name: migration 0477 seeds the row the worker registers, DISABLED, so a
+// Controller opts in (the job raises customer facing invoices on its own).
 func TestIntegration_W3FC1B_WorkerJobIsScheduled(t *testing.T) {
 	r := fcRigNew(t)
 	var kind string
@@ -150,7 +154,72 @@ func TestIntegration_W3FC1B_WorkerJobIsScheduled(t *testing.T) {
 	).Scan(&kind, &minute, &enabled); err != nil {
 		t.Fatalf("W3-FC1b red: no schedule row named %q: %v", FinanceChargeJobName, err)
 	}
-	if kind != "NIGHTLY" || minute != 540 || !enabled {
-		t.Fatalf("W3-FC1b red: the schedule is %s at minute %d enabled=%v, want nightly 09:00 UTC, on", kind, minute, enabled)
+	if kind != "NIGHTLY" || minute != 540 || enabled {
+		t.Fatalf("W3-FC1b red: the schedule is %s at minute %d enabled=%v, want nightly 09:00 UTC, seeded off", kind, minute, enabled)
+	}
+}
+
+// While the row is disabled the worker never runs the job, even when it is due; enabling the row makes
+// the next tick run it and charge. The sweep is the real one over the rig's own branch (so no other
+// leg's customers are charged), with the clock at the house midnight after the month.
+func TestIntegration_W3FC1B_EnablingTheJobMakesTheWorkerRun(t *testing.T) {
+	r := fcRigNew(t)
+	cust := r.customer(r.branch, "ENABLE")
+	r.tradeInvoice(cust, r.branch, fc1Due31, 100_000, "ENABLE")
+
+	// Put the row back exactly as it was, and drop the runs this leg made.
+	var wasEnabled bool
+	var wasNext, wasLast *time.Time
+	var wasStatus, wasErr string
+	if err := r.pool.QueryRow(r.ctx, `SELECT enabled, next_run_at, last_run_at, last_status, last_error FROM job_schedules WHERE name = $1`, FinanceChargeJobName).
+		Scan(&wasEnabled, &wasNext, &wasLast, &wasStatus, &wasErr); err != nil {
+		t.Fatalf("W3-FC1b red: no schedule row named %q: %v", FinanceChargeJobName, err)
+	}
+	if wasEnabled {
+		t.Fatalf("W3-FC1b red: the row is enabled before the leg started, it must seed disabled")
+	}
+	// The newest run on record before the leg (none on a fresh database): the leg's own runs are the later ones.
+	var baseline time.Time
+	if err := r.pool.QueryRow(r.ctx, `SELECT COALESCE(MAX(created_at), '-infinity'::timestamptz) FROM job_runs WHERE job_name = $1`, FinanceChargeJobName).Scan(&baseline); err != nil {
+		t.Fatalf("W3-FC1b red: read the job's run baseline: %v", err)
+	}
+	t.Cleanup(func() {
+		fcDelete(t, r.pool, "job_runs", `DELETE FROM job_runs WHERE job_name = $1 AND created_at > $2`, FinanceChargeJobName, baseline)
+		fcDelete(t, r.pool, "job_schedules", `UPDATE job_schedules SET enabled = $2, next_run_at = $3, last_run_at = $4, last_status = $5, last_error = $6, updated_at = now() WHERE name = $1`,
+			FinanceChargeJobName, wasEnabled, wasNext, wasLast, wasStatus, wasErr)
+	})
+	// Nothing else may be due, or the tick would run it too.
+	var other int
+	if err := r.pool.QueryRow(r.ctx, `SELECT COUNT(*) FROM job_schedules WHERE enabled AND next_run_at IS NOT NULL AND next_run_at <= now() AND name <> $1`, FinanceChargeJobName).Scan(&other); err != nil || other != 0 {
+		t.Fatalf("W3-FC1b red: %d other schedules are due on the shared database (%v), the leg cannot tick in isolation", other, err)
+	}
+
+	w := r.writer(func() time.Time { return time.Date(2026, 10, 1, 0, 0, 0, 0, fc1Loc()) })
+	runner := jobs.NewRunner(jobs.NewRepository(r.pool), nil).Register(FinanceChargeJobName, func(ctx context.Context) (jobs.Result, error) {
+		sweep, err := w.runDueFinanceCharges(ctx, []string{r.branch})
+		return jobs.Result{RowsRead: int64(sweep.Branches), RowsWritten: int64(sweep.Charged)}, err
+	})
+
+	// Due, but disabled: the tick runs nothing.
+	fcDelete(t, r.pool, "job_schedules", `UPDATE job_schedules SET next_run_at = now() - interval '1 hour' WHERE name = $1`, FinanceChargeJobName)
+	if n := runner.RunDue(r.ctx); n != 0 {
+		t.Fatalf("W3-FC1b red: a disabled job ran %d times", n)
+	}
+	if rows := r.chargeRows(r.branch); len(rows) != 0 {
+		t.Fatalf("W3-FC1b red: the disabled job charged %v", rows)
+	}
+
+	// Enabled (the operator's one statement): the next tick runs it and the customer is charged.
+	fcDelete(t, r.pool, "job_schedules", `UPDATE job_schedules SET enabled = TRUE WHERE name = $1`, FinanceChargeJobName)
+	if n := runner.RunDue(r.ctx); n != 1 {
+		t.Fatalf("W3-FC1b red: the enabled job ran %d times, want 1", n)
+	}
+	if rows := r.chargeRows(r.branch); rows[cust] != 1_500 {
+		t.Fatalf("W3-FC1b red: the enabled job's charge rows = %v, want 1500 for %s", rows, cust)
+	}
+	var status string
+	var written int64
+	if err := r.pool.QueryRow(r.ctx, `SELECT status, rows_written FROM job_runs WHERE job_name = $1 AND created_at > $2 ORDER BY created_at DESC LIMIT 1`, FinanceChargeJobName, baseline).Scan(&status, &written); err != nil || status != "SUCCEEDED" || written != 1 {
+		t.Fatalf("W3-FC1b red: the run record = %s, %d written (%v), want SUCCEEDED with 1", status, written, err)
 	}
 }

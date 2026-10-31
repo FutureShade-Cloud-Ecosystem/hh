@@ -8,9 +8,12 @@
 -- midnight of every North American zone from Newfoundland to the Pacific coast. A dealer further west
 -- is served by the three day catch-up window, one day late.
 --
--- Seeded ENABLED, like the AP revaluation reversal's row. The run is idempotent by its claim key, so
--- a second night replays and charges nothing. A dealer that wants a Controller to opt in first turns
--- the row off in job_schedules; the Controller's own route still presses a month by hand.
+-- Seeded DISABLED. Unlike the AP revaluation reversal (which only takes back an entry a Controller
+-- pressed), this job raises customer facing invoices by itself, at a rate and minimum the dealer's
+-- Controller has not yet seen, so the Controller opts in. The run is idempotent by its claim key, so a
+-- second night replays and charges nothing. Until the row is enabled the Controller's own route still
+-- presses a month by hand. To opt in, enable the row (UPDATE job_schedules SET enabled = TRUE WHERE
+-- name = 'billing.finance_charge_run'); the worker arms its next run when it starts.
 INSERT INTO job_schedules (name, kind, nightly_minute, enabled)
-VALUES ('billing.finance_charge_run', 'NIGHTLY', 540, TRUE)
+VALUES ('billing.finance_charge_run', 'NIGHTLY', 540, FALSE)
 ON CONFLICT (name) DO NOTHING;
