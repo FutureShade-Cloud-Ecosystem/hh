@@ -10,6 +10,7 @@
 // sends is the total the screen shows.
 
 import type { PurchasingT5018Report, PurchasingT5018Row } from "@hardscapehouse/api-client";
+import { formatMoney } from "./ar-money.js";
 
 export type { PurchasingT5018Report, PurchasingT5018Row };
 
@@ -74,7 +75,60 @@ export function businessNumberIsMissing(row: PurchasingT5018Row): boolean {
   return row.business_number_missing;
 }
 
+/** The CRA construction-income scope sentence the report carries at the top. */
+export const T5018_CONSTRUCTION_INCOME_NOTE =
+  "T5018 applies only where construction is more than half the dealer's business income.";
+
 /** The rows the screen shows: the route's order, which is the vendor's name in order. */
 export function t5018Rows(report: PurchasingT5018Report): readonly PurchasingT5018Row[] {
   return report.items;
+}
+
+/** The construction-income rule note shown under the T5018 report's title. */
+export function t5018RuleNote(report: PurchasingT5018Report | null): string {
+  if (report !== null && typeof report.rule_note === "string" && report.rule_note !== "") {
+    return report.rule_note;
+  }
+  return T5018_CONSTRUCTION_INCOME_NOTE;
+}
+
+/** The server's Box 22 figure for a row (construction subcontractor services share, tax included). */
+export function t5018Box22Cents(row: PurchasingT5018Row): number {
+  return row.box_22_cents;
+}
+
+/** The year's box 22 across every marked subcontractor, the report's own total. */
+export function t5018Box22TotalCents(report: PurchasingT5018Report): number {
+  return report.box_22_total_cents;
+}
+
+/** The server's under-threshold or nothing-paid words when a subcontractor's pre-tax services are under $500. */
+export function t5018ThresholdWords(row: PurchasingT5018Row): string {
+  if (row.paid_cents === 0 && row.box_22_cents === 0) {
+    return row.threshold_note !== undefined &&
+      row.threshold_note !== "" &&
+      !row.threshold_note.startsWith("Services before tax") &&
+      !row.threshold_note.startsWith("under the $500")
+      ? row.threshold_note
+      : "nothing paid this year";
+  }
+  if (!row.under_threshold) return "";
+  return row.threshold_note !== undefined && row.threshold_note !== ""
+    ? row.threshold_note
+    : `Services before tax ${formatMoney(row.services_subtotal_cents)}: under the $500 slip threshold, no slip.`;
+}
+
+/** The server's unmarked bill lines words when a subcontractor has paid lines with no goods/services mark. */
+export function t5018UnmarkedWords(row: PurchasingT5018Row): string {
+  if (row.unmarked_line_count <= 0) return "";
+  return row.unmarked_lines_note ?? "";
+}
+
+/** The server's note when a row's Box 22 differs from its total paid because Box 22 counts services only. */
+export function t5018ServicesOnlyWords(row: PurchasingT5018Row): string {
+  if (row.paid_cents === row.box_22_cents) return "";
+  if (!row.under_threshold && row.threshold_note !== undefined && row.threshold_note !== "") {
+    return row.threshold_note;
+  }
+  return "Box 22 counts services only";
 }

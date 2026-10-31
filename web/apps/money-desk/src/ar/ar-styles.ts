@@ -272,11 +272,19 @@ const receivablesStyles = css`
     table.stack, table.stack tbody { display: block; }
     table.stack tr { display: grid; gap: var(--hh-s-4) var(--hh-s-12); padding: var(--hh-s-12) 0; border-bottom: 1px solid var(--hh-line); }
     table.stack tbody td { display: block; padding: 0; border: 0; }
-    table.t5018 tbody td[data-label]::before { content: attr(data-label); display: block; color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-    table.stack tr[aria-current="true"] { background: var(--hh-row-alt); }
-    table.stack tr[aria-current="true"] td { background: none; }
+    table.t5018 tbody td[data-label] { display: flex; justify-content: space-between; align-items: baseline; gap: var(--hh-s-12); }
+    table.t5018 tbody td[data-label]::before { content: attr(data-label); color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; text-align: start; }
+    table.t5018 td:first-child .who { white-space: normal; overflow-wrap: anywhere; }
+    table.t5018 tbody td.num { text-align: end; }
     table.stack tfoot { display: table; width: 100%; }
     table.stack tfoot td:empty { display: none; }
+    table.stack.t5018 tfoot { display: block; width: 100%; }
+    table.t5018 tfoot tr { display: grid; gap: var(--hh-s-4); padding-top: var(--hh-s-12); border-top: 1px solid var(--hh-text); border-bottom: 0; }
+    table.t5018 tfoot td { display: block; padding: 0; border: 0; text-align: start; }
+    table.t5018 tfoot td.num { display: flex; justify-content: space-between; align-items: baseline; gap: var(--hh-s-12); text-align: end; }
+    table.t5018 tfoot td[data-label]::before { content: attr(data-label); color: var(--hh-text-dim); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; text-align: start; }
+    table.stack tr[aria-current="true"] { background: var(--hh-row-alt); }
+    table.stack tr[aria-current="true"] td { background: none; }
     table.reg tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "inv bal" "acct acct" "due due" "marks marks" "act act"; }
     table.reg tbody td:nth-child(3) { display: none; }
     table.reg tbody td:nth-child(6) { text-align: start; }

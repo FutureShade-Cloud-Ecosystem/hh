@@ -25,6 +25,16 @@ import {
   varianceRefusal,
 } from "../src/bills/bills-logic.ts";
 import { refusalWords } from "../src/po/po-logic.ts";
+import { renderBills } from "../src/bills/bills-views.ts";
+
+function flat(v) {
+  if (v == null || v === false) return "";
+  if (Array.isArray(v)) return v.map(flat).join("");
+  if (typeof v === "object" && v.strings) {
+    return Array.from(v.strings).map((s, i) => s + (i < v.values.length ? flat(v.values[i]) : "")).join("");
+  }
+  return typeof v === "symbol" ? "" : String(v);
+}
 
 const PO = {
   id: "c1",
@@ -192,4 +202,76 @@ test("a wall refusal names who posts bills and who sets the rules", () => {
   assert.match(refusalWords("bill", "Forbidden", 403), /Entering and posting a vendor bill is for Payables and Receivables/);
   assert.match(refusalWords("tolerance", "Forbidden", 403), /set by the super admin only/);
   assert.equal(refusalWords("bill", "bill is already POSTED", 409), "Bill is already POSTED.");
+});
+
+test("a bill line with no PO line carries its goods or services mark when chosen and leaves it off when unmarked", () => {
+  const services = billBody(
+    {
+      ...form({ lines: {} }),
+      extraLine: { description: "Subcontractor grading", qty: "1", cost: "480.00", supplyKind: "SERVICES" },
+    },
+    PO,
+  );
+  assert.equal(services.ok, true);
+  assert.deepEqual(services.body.lines, [
+    { description: "Subcontractor grading", qty_billed_base: 1, unit_cost_cents: 48000, supply_kind: "SERVICES" },
+  ]);
+
+  const goods = billBody(
+    {
+      ...form({ lines: {} }),
+      extraLine: { description: "Jobsite gravel", qty: "2", cost: "120.00", supplyKind: "GOODS" },
+    },
+    PO,
+  );
+  assert.equal(goods.ok, true);
+  assert.deepEqual(goods.body.lines, [
+    { description: "Jobsite gravel", qty_billed_base: 2, unit_cost_cents: 12000, supply_kind: "GOODS" },
+  ]);
+
+  const unmarked = billBody(
+    {
+      ...form({ lines: {} }),
+      extraLine: { description: "Site callout", qty: "1", cost: "95.00", supplyKind: "" },
+    },
+    PO,
+  );
+  assert.equal(unmarked.ok, true);
+  assert.deepEqual(unmarked.body.lines, [
+    { description: "Site callout", qty_billed_base: 1, unit_cost_cents: 9500 },
+  ]);
+
+  const entryHtml = flat(
+    renderBills({
+      phase: "ready",
+      view: "enter",
+      bills: [],
+      statusFilter: "",
+      matchFilter: "",
+      billable: [],
+      branchNames: new Map(),
+      entryPo: null,
+      entryReading: false,
+      entryCurrency: "CAD",
+      entryExtraSupplyKind: "",
+      detail: null,
+      lineUoms: new Map(),
+      confirm: null,
+      tolerance: null,
+      policy: null,
+      ruleVisibility: "MANAGER_UP",
+      ruleFallback: "CONFIRM",
+      canWrite: true,
+      canSetRules: false,
+      busy: false,
+      error: "",
+      errorAt: "bill",
+      notice: "",
+      today: "2026-10-29",
+    }),
+  );
+  assert.match(entryHtml, /data-action=bill-extra-supply-kind data-choice= aria-pressed="true">Not marked<\/button>/);
+  assert.match(entryHtml, /data-action=bill-extra-supply-kind data-choice=GOODS aria-pressed="false">Goods<\/button>/);
+  assert.match(entryHtml, /data-action=bill-extra-supply-kind data-choice=SERVICES aria-pressed="false">Services<\/button>/);
+  assert.ok(entryHtml.includes("Not marked counts as services on the T5018 report until someone marks it."));
 });
