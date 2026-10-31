@@ -7,6 +7,7 @@ package gl
 import (
 	"context"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/csvsafe"
 	"sort"
 	"strings"
 	"time"
@@ -934,9 +935,7 @@ func dollars(cents int64) string {
 // here. It serves the GP parity body (account name, memo), the mapped draft body (package account,
 // account name, memo) and the QBO body (account, description).
 func csvEscape(s string) string {
-	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
-		s = "'" + s
-	}
+	s = csvsafe.Cell(s)
 	if strings.ContainsAny(s, ",\"\n\r") {
 		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 	}
