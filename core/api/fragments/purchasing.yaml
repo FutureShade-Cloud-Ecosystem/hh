@@ -1105,6 +1105,126 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/purchasing/ap-revaluations:
+    get:
+      operationId: purchasingListAPRevaluations
+      tags: [staff-purchasing]
+      x-addition: "W3 FX-2b: the Controller reads a branch's month end AP revaluation runs; no ERP source route"
+      summary: List a branch's AP revaluation runs
+      description: >-
+        The month end revaluation runs of one branch, newest month first: the
+        rate the Controller entered, what the run measured, the journal it
+        posted (none when the difference was zero), who pressed it and when,
+        and the reversal once it has posted. A branch outside the caller's
+        reach is refused.
+      x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The branch's revaluation runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingAPRevaluationRunList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: purchasingRunAPRevaluation
+      tags: [staff-purchasing]
+      x-addition: "W3 FX-2b: the Controller presses a house month's AP revaluation with the month end rate; no ERP source route"
+      summary: Press a month's AP revaluation at a rate
+      description: >-
+        Revalues the open USD bills of one branch at the month end rate the
+        Controller enters, posting one temporary journal for the difference
+        (the unrealised foreign exchange account against 2100). A month is
+        run once it has ended on the dealer's day; a re-press at the same rate
+        answers the same run and another rate is refused as already run. A
+        run is refused while an earlier month of the branch is unreversed or
+        a later month has a posted run. The rate is a Controller's input, so
+        only the Controller roles may press it.
+      x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingRunAPRevaluationRequest"
+      responses:
+        "200":
+          description: The run, or the same run again on a re-press
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingAPRevaluationRun"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: The month has not ended, there is nothing to revalue, or the order of months forbids the run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/purchasing/ap-revaluations/{month}/reversal:
+    post:
+      operationId: purchasingReverseAPRevaluation
+      tags: [staff-purchasing]
+      x-addition: "W3 FX-2b: the Controller presses a month's AP revaluation reversal; no ERP source route"
+      summary: Press a month's AP revaluation reversal
+      description: >-
+        Posts the reversal of the month's run: the run's own legs swapped,
+        dated the next house day, which must have begun. A re-press answers
+        the first reversal. The worker also takes the entry back on the next
+        house day, so this is the Controller's own way to do it by hand.
+      x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: month
+          in: path
+          required: true
+          description: The house month, YYYY-MM
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingReverseAPRevaluationRequest"
+      responses:
+        "200":
+          description: The reversal, or the same reversal again on a re-press
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingAPRevaluationReversal"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: The next house day has not begun, or the month has no revaluation journal to reverse
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/v1/purchasing/vendor-credits:
     get:
       operationId: purchasingListVendorCredits
@@ -3239,6 +3359,77 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/PurchasingAPAgingRow" }
+        next_cursor: { type: [string, "null"] }
+
+    PurchasingRunAPRevaluationRequest:
+      type: object
+      required: [branch_id, month, fx_rate]
+      properties:
+        branch_id: { type: string, format: uuid }
+        month: { type: string, description: "The house month, YYYY-MM" }
+        fx_rate: { type: number, format: double, description: "The month end rate, CAD per USD, at most six decimals" }
+
+    PurchasingReverseAPRevaluationRequest:
+      type: object
+      required: [branch_id]
+      properties:
+        branch_id: { type: string, format: uuid }
+
+    PurchasingAPRevaluationRun:
+      type: object
+      description: One run's answer; posted is false when the difference was zero and no journal was needed
+      required: [branch_id, month, month_end, fx_rate, bills, doc_open_cents, carried_cad_cents, revalued_cad_cents, difference_cents, posted]
+      properties:
+        branch_id: { type: string, format: uuid }
+        month: { type: string }
+        month_end: { type: string, format: date }
+        fx_rate: { type: number, format: double }
+        bills: { type: integer, format: int32 }
+        doc_open_cents: { type: integer, format: int64 }
+        carried_cad_cents: { type: integer, format: int64 }
+        revalued_cad_cents: { type: integer, format: int64 }
+        difference_cents: { type: integer, format: int64 }
+        posted: { type: boolean }
+        journal_id: { type: string, format: uuid }
+
+    PurchasingAPRevaluationReversal:
+      type: object
+      required: [branch_id, month, next_house_day, difference_cents, journal_id, reversal_journal_id]
+      properties:
+        branch_id: { type: string, format: uuid }
+        month: { type: string }
+        next_house_day: { type: string, format: date }
+        difference_cents: { type: integer, format: int64 }
+        journal_id: { type: string, format: uuid }
+        reversal_journal_id: { type: string, format: uuid }
+
+    PurchasingAPRevaluationRunRecord:
+      type: object
+      description: One run's record, with its reversal once it has posted
+      required: [branch_id, month, fx_rate, bills, doc_open_cents, carried_cad_cents, revalued_cad_cents, difference_cents, created_by, created_at]
+      properties:
+        branch_id: { type: string, format: uuid }
+        month: { type: string }
+        fx_rate: { type: number, format: double }
+        bills: { type: integer, format: int32 }
+        doc_open_cents: { type: integer, format: int64 }
+        carried_cad_cents: { type: integer, format: int64 }
+        revalued_cad_cents: { type: integer, format: int64 }
+        difference_cents: { type: integer, format: int64 }
+        journal_id: { type: string, format: uuid }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        reversal_journal_id: { type: string, format: uuid }
+        reversed_by: { type: string }
+        reversed_at: { type: string, format: date-time }
+
+    PurchasingAPRevaluationRunList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PurchasingAPRevaluationRunRecord" }
         next_cursor: { type: [string, "null"] }
 
     # --- payment runs ----------------------------------------------------------
