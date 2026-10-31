@@ -30355,6 +30355,199 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/v1/lien/holdback/province-rules:
+    get:
+      operationId: lienListProvinceRules
+      tags:
+        - staff-lien
+      summary: List every province's statutory holdback rule
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The province rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienProvinceRuleList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/lien/holdback/jobs/{customerJobID}/rule:
+    get:
+      operationId: lienGetJobHoldbackRule
+      tags:
+        - staff-lien
+      summary: The holdback rule for one customer job
+      description: "One read answers the rule: the job's own override, else the dealer's, else the province's. The province is the job's site province when its ship to address names one, else the dealer's own. Only the percent is overridable; the preserve and perfect days are the province's. A province with no rule is refused in words. A job at a branch outside the caller's reach is not found."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerJobID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The rule that answers the job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienHoldbackRule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: The province has no holdback rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/lien/holdback/dealer-rule:
+    put:
+      operationId: lienSetDealerHoldbackOverride
+      tags:
+        - staff-lien
+      summary: Set or clear the dealer's holdback percent override
+      description: The percent is basis points from 0 to 10000 (0 to 100 percent); null clears the override. The field must be present. The write is recorded.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LienHoldbackOverrideInput"
+      responses:
+        "200":
+          description: The dealer rule as it now stands
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienDealerRule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: The percent is outside 0 to 100 percent, or the field is missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/lien/holdback/jobs/{customerJobID}/override:
+    put:
+      operationId: lienSetJobHoldbackOverride
+      tags:
+        - staff-lien
+      summary: Set or clear one customer job's holdback percent override
+      description: The percent is basis points from 0 to 10000 (0 to 100 percent); null clears the override. The job must sit inside the caller's branch reach. The write is recorded. The answer is the rule as it now stands for the job.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerJobID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LienHoldbackOverrideInput"
+      responses:
+        "200":
+          description: The rule that now answers the job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienHoldbackRule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: The percent is outside 0 to 100 percent, or the field is missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/lien/jobs/{id}/customer-job:
+    put:
+      operationId: lienLinkCustomerJob
+      tags:
+        - staff-lien
+      summary: Link a lien job to one customer job of the same customer
+      description: A job of another customer and a closed job are refused in words; null unlinks. The lien job must have a customer and sit inside the caller's branch reach.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LienCustomerJobLinkInput"
+      responses:
+        "200":
+          description: The lien job with its link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: The job is another customer's, is closed, or the lien job has no customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/compliance/calendar:
     get:
       operationId: complianceListCalendar
@@ -64184,6 +64377,8 @@ components:
           type: string
         customer_id:
           type: string
+        customer_job_id:
+          type: string
         branch_id:
           type: string
         description:
@@ -64217,6 +64412,99 @@ components:
         created_at:
           type: string
           format: date-time
+    LienProvinceRule:
+      type: object
+      required:
+        - province
+        - holdback_pct_bps
+        - preserve_days
+        - perfect_days
+      properties:
+        province:
+          type: string
+        holdback_pct_bps:
+          type: integer
+          format: int32
+        preserve_days:
+          type: integer
+          format: int32
+        perfect_days:
+          type: integer
+          format: int32
+    LienProvinceRuleList:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LienProvinceRule"
+    LienDealerRule:
+      type: object
+      description: The dealer's province, and an optional percent that overrides the province's (null is no override, never zero).
+      required:
+        - province
+        - holdback_pct_bps
+      properties:
+        province:
+          type: string
+        holdback_pct_bps:
+          type:
+            - integer
+            - "null"
+          format: int32
+    LienHoldbackOverrideInput:
+      type: object
+      required:
+        - holdback_pct_bps
+      properties:
+        holdback_pct_bps:
+          type:
+            - integer
+            - "null"
+          format: int32
+    LienHoldbackRule:
+      type: object
+      required:
+        - holdback_pct_bps
+        - preserve_days
+        - perfect_days
+        - pct_source
+        - province
+        - province_source
+      properties:
+        holdback_pct_bps:
+          type: integer
+          format: int32
+        preserve_days:
+          type: integer
+          format: int32
+        perfect_days:
+          type: integer
+          format: int32
+        pct_source:
+          type: string
+          enum:
+            - JOB
+            - DEALER
+            - PROVINCE
+        province:
+          type: string
+        province_source:
+          type: string
+          enum:
+            - SITE
+            - DEALER
+    LienCustomerJobLinkInput:
+      type: object
+      required:
+        - customer_job_id
+      properties:
+        customer_job_id:
+          type:
+            - string
+            - "null"
     LienJobInput:
       type: object
       description: The create-job payload

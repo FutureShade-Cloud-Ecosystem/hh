@@ -207,7 +207,12 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// The co-signer resolver is the re-pointed rail repository read (a
 	// projection by ERP user id; decide-time authority never runs through
 	// it).
+	// RT-1: the holdback rule and the lien job link read the customer module's job accounts through
+	// its own service (the job row stays the customer module's table); the rule read rides a
+	// transaction a caller carries with customer.WithCallerTx.
+	lienJobsRepo := customer.NewRepository(pool)
 	lienSvc := lien.NewService(lien.NewRepository(pool)).
+		WithCustomerJobs(lien.NewCustomerJobs(customer.NewService(lienJobsRepo).WithJobs(lienJobsRepo))).
 		WithStandardRate(newTaxEngine(pool)). // the HST on holdback gross up reads the dealer's standard rate
 		WithOrderHoldback(orderRepo).
 		WithGLPoster(lienGLPoster{svc: spine.glSvc}).

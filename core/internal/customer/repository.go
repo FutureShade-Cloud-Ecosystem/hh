@@ -425,3 +425,8 @@ func (r *Repository) GetAccountScoped(ctx context.Context, customerID string, re
 		return Account{}, false, fmt.Errorf("customer: get account %q: %w", customerID, err)
 	}
 }
+
+// CallerTx returns the transaction a caller carried on ctx with WithCallerTx, nil when none rides. It is
+// exported so a module that reads inside a customer-carried transaction (the lien rule read, which RT-2
+// calls inside an invoice's write) joins the same connection instead of asking the pool for a second one.
+func CallerTx(ctx context.Context) pgx.Tx { return callerTxFrom(ctx) }

@@ -10,6 +10,7 @@ type Job struct {
 	ID                  string `json:"id"`
 	JobNo               string `json:"job_no"`
 	CustomerID          string `json:"customer_id,omitempty"`
+	CustomerJobID       string `json:"customer_job_id,omitempty"` // the customer job this lien job links to (RT-1)
 	BranchID            string `json:"branch_id"`
 	Description         string `json:"description"`
 	ContractCents       int64  `json:"contract_cents"`
