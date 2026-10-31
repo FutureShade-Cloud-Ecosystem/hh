@@ -302,6 +302,7 @@ func healthyRules() []RuleRef {
 		"pos.return.written_off":        {"expense", "cogs"},
 		"ar.invoice.write_off":          {"write_off_expense", "ar"},
 		"ar.invoice.write_off_reversed": {"write_off_expense", "ar"},
+		"ar.holdback.released":          {"ar", "holdback"},
 	}
 	var out []RuleRef
 	for et, roles := range set {
