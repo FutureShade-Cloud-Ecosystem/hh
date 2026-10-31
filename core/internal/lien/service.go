@@ -73,10 +73,17 @@ func (s *Service) registerReleaseDeadline(ctx context.Context, job Job) {
 
 // - holdback sync (idempotent) -
 
-// SyncHoldbacks books RETENTION rows into the holdback ledger from billing's holdback-bearing invoices for a
-// job's branch/customer. IDEMPOTENT: an invoice already booked as RETENTION for this job is skipped, so a
-// re-run books nothing new (the sync-idempotent AC). Retention was posted to 1150 at invoice.finalized, so no
-// GL journal rides a RETENTION row (the 0038 CHECK only requires a journal on RELEASE).
+// SyncHoldbacks books RETENTION rows into the holdback ledger for a lien job from billing's holdback-bearing
+// invoices. It books ONLY the invoices raised on the customer job this lien job is linked to (RT-1's link),
+// and never an invoice some lien job's ledger already holds, so a second lien job for the same customer
+// can never re-book the first job's invoice. A lien job linked to no customer job books nothing.
+//
+// IDEMPOTENT: an invoice already held is skipped, so a re-run books nothing new. The amount is the
+// invoice's open holdback exactly as 1150 holds it (billing lowers it as credits and write offs take their
+// parts), never grossed up: the ledger never books more than 1150 holds. Retention was posted to 1150 at
+// invoice.finalized, so no GL journal rides a RETENTION row (the 0038 CHECK only requires a journal on
+// RELEASE). Since RT-2 an invoice that withholds is ledgered as it is written; the sync books the ones
+// that were not (a holdback written before the lien job was linked).
 func (s *Service) SyncHoldbacks(ctx context.Context, jobID string) (SyncResult, error) {
 	if _, err := s.caller(ctx); err != nil {
 		return SyncResult{}, err
@@ -86,36 +93,26 @@ func (s *Service) SyncHoldbacks(ctx context.Context, jobID string) (SyncResult, 
 		return SyncResult{}, err
 	}
 	res := SyncResult{JobID: jobID}
-	if s.holdback == nil {
+	if s.holdback == nil || job.CustomerJobID == "" {
 		return res, nil
 	}
 	invoices, err := s.holdback.InvoicesWithHoldback(ctx, job.BranchID)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("lien: read holdback invoices: %w", err)
 	}
-	booked, err := s.store.RetentionInvoiceIDs(ctx, jobID)
+	held, err := s.store.HeldInvoiceIDs(ctx)
 	if err != nil {
 		return SyncResult{}, err
 	}
-	// The dealer's standard rate, read once per sync and only for a job that opted into HST on holdback.
-	hstBps := int64(ontarioHSTBps)
-	if job.HSTOnHoldback && s.standard != nil {
-		bps, err := s.standard.StandardRateBps(ctx, "")
-		if err != nil {
-			return SyncResult{}, fmt.Errorf("lien: the dealer's standard rate for the HST on holdback: %w", err)
-		}
-		hstBps = int64(bps)
-	}
 	for _, inv := range invoices {
-		// Scope a job to its customer when one is set (a job with no customer sweeps its whole branch).
-		if job.CustomerID != "" && inv.CustomerID != "" && inv.CustomerID != job.CustomerID {
+		if inv.CustomerJobID != job.CustomerJobID {
 			continue
 		}
-		if booked[inv.InvoiceID] {
+		if held[inv.InvoiceID] {
 			res.SkippedCount++
 			continue
 		}
-		amount := holdbackAt(inv.HoldbackCents, job.HSTOnHoldback, hstBps)
+		amount := inv.HoldbackCents
 		if amount <= 0 {
 			res.SkippedCount++
 			continue
@@ -130,30 +127,11 @@ func (s *Service) SyncHoldbacks(ctx context.Context, jobID string) (SyncResult, 
 		}); err != nil {
 			return SyncResult{}, err
 		}
-		booked[inv.InvoiceID] = true // guard against a duplicate invoice id inside the same batch
+		held[inv.InvoiceID] = true // guard against a duplicate invoice id inside the same batch
 		res.BookedCount++
 		res.BookedCents += amount
 	}
 	return res, nil
-}
-
-// ontarioHSTBps is the 13% Ontario HST rate an unwired service grosses a holdback up by: the rate every
-// dealer had before the standard rate came through StandardRateReader.
-const ontarioHSTBps = 1300
-
-// holdbackAmount is holdbackAt at the Ontario rate, the shape of the sync before the seam.
-func holdbackAmount(base int64, hstOnHoldback bool) int64 {
-	return holdbackAt(base, hstOnHoldback, ontarioHSTBps)
-}
-
-// holdbackAt applies the HST-on-holdback config flag. billing already computes holdback_cents on the
-// pre-tax base; when a job opts into HST-on-holdback, the retention is grossed up by the dealer's standard
-// rate so the held amount matches a tax-inclusive contract.
-func holdbackAt(base int64, hstOnHoldback bool, hstBps int64) int64 {
-	if !hstOnHoldback {
-		return base
-	}
-	return base + (base*hstBps)/10000
 }
 
 // - dual-gated release -

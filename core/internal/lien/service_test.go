@@ -71,6 +71,15 @@ func (f *fakeStore) RetentionInvoiceIDs(_ context.Context, jobID string) (map[st
 	}
 	return out, nil
 }
+func (f *fakeStore) HeldInvoiceIDs(_ context.Context) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, e := range f.entries {
+		if e.EntryType == "RETENTION" && e.AmountCents > 0 && e.InvoiceID != "" {
+			out[e.InvoiceID] = true
+		}
+	}
+	return out, nil
+}
 func (f *fakeStore) InsertHoldbackEntry(_ context.Context, e HoldbackEntry) (string, error) {
 	e.ID = f.id("hb")
 	if e.CreatedAt.IsZero() {
@@ -245,10 +254,10 @@ func itoa(n int) string {
 
 func TestSyncHoldbacks_Idempotent(t *testing.T) {
 	st := newFakeStore()
-	job, _ := st.InsertJob(context.Background(), JobInput{JobNo: "J1", BranchID: "br1", CustomerID: "cust1", Direction: dirReceivable}, "u")
+	job := linkedJob(st, JobInput{JobNo: "J1", BranchID: "br1", CustomerID: "cust1", Direction: dirReceivable}, "cj1")
 	hb := fakeHoldback{invoices: []HoldbackInvoice{
-		{InvoiceID: "inv1", InvoiceNo: "INV-1", CustomerID: "cust1", BranchID: "br1", HoldbackCents: 5000},
-		{InvoiceID: "inv2", InvoiceNo: "INV-2", CustomerID: "cust1", BranchID: "br1", HoldbackCents: 3000},
+		{InvoiceID: "inv1", InvoiceNo: "INV-1", CustomerID: "cust1", CustomerJobID: "cj1", BranchID: "br1", HoldbackCents: 5000},
+		{InvoiceID: "inv2", InvoiceNo: "INV-2", CustomerID: "cust1", CustomerJobID: "cj1", BranchID: "br1", HoldbackCents: 3000},
 	}}
 	svc := newSvc(st).WithHoldbackFacts(hb)
 	ctx := ctxWith(gm("u"))
@@ -268,11 +277,59 @@ func TestSyncHoldbacks_Idempotent(t *testing.T) {
 		t.Fatalf("second sync booked=%d skipped=%d, want 0/2 (idempotent)", r2.BookedCount, r2.SkippedCount)
 	}
 	// A customer-scoped job ignores another customer's holdback invoice.
-	hb.invoices = append(hb.invoices, HoldbackInvoice{InvoiceID: "inv3", InvoiceNo: "INV-3", CustomerID: "other", BranchID: "br1", HoldbackCents: 9000})
+	hb.invoices = append(hb.invoices, HoldbackInvoice{InvoiceID: "inv3", InvoiceNo: "INV-3", CustomerID: "other", CustomerJobID: "cj-other", BranchID: "br1", HoldbackCents: 9000})
 	svc2 := newSvc(st).WithHoldbackFacts(hb)
 	r3, _ := svc2.SyncHoldbacks(ctx, job.ID)
 	if r3.BookedCount != 0 {
 		t.Fatalf("cross-customer invoice booked=%d, want 0", r3.BookedCount)
+	}
+}
+
+// linkedJob inserts a lien job linked to a customer job (RT-1's link), as the real store holds it.
+func linkedJob(st *fakeStore, in JobInput, customerJobID string) Job {
+	j, _ := st.InsertJob(context.Background(), in, "u")
+	j.CustomerJobID = customerJobID
+	st.jobs[j.ID] = j
+	return j
+}
+
+// P1-4: a second lien job for the same customer never books the first job's invoice, and a lien job
+// linked to no customer job books nothing.
+func TestSyncHoldbacks_BooksOnlyTheInvoicesOfItsOwnLinkedJob(t *testing.T) {
+	st := newFakeStore()
+	a := linkedJob(st, JobInput{JobNo: "A", BranchID: "br1", CustomerID: "cust1", Direction: dirReceivable}, "cjA")
+	b := linkedJob(st, JobInput{JobNo: "B", BranchID: "br1", CustomerID: "cust1", Direction: dirReceivable}, "cjB")
+	unlinked, _ := st.InsertJob(context.Background(), JobInput{JobNo: "U", BranchID: "br1", CustomerID: "cust1", Direction: dirReceivable}, "u")
+	hb := fakeHoldback{invoices: []HoldbackInvoice{
+		{InvoiceID: "invA", InvoiceNo: "INV-A", CustomerID: "cust1", CustomerJobID: "cjA", BranchID: "br1", HoldbackCents: 10000},
+	}}
+	svc := newSvc(st).WithHoldbackFacts(hb)
+	ctx := ctxWith(gm("u"))
+	if r, err := svc.SyncHoldbacks(ctx, a.ID); err != nil || r.BookedCount != 1 || r.BookedCents != 10000 {
+		t.Fatalf("job A: %+v %v, want its own invoice booked once", r, err)
+	}
+	if r, err := svc.SyncHoldbacks(ctx, b.ID); err != nil || r.BookedCount != 0 {
+		t.Fatalf("job B booked %d of job A's invoice (%v)", r.BookedCount, err)
+	}
+	if r, err := svc.SyncHoldbacks(ctx, unlinked.ID); err != nil || r.BookedCount != 0 {
+		t.Fatalf("an unlinked lien job booked %d (%v)", r.BookedCount, err)
+	}
+	// An invoice some other job's ledger already holds is skipped even on its own job.
+	hb.invoices = append(hb.invoices, HoldbackInvoice{InvoiceID: "invB", InvoiceNo: "INV-B", CustomerID: "cust1", CustomerJobID: "cjB", BranchID: "br1", HoldbackCents: 4000})
+	_, _ = st.InsertHoldbackEntry(context.Background(), HoldbackEntry{JobID: a.ID, InvoiceID: "invB", BranchID: "br1", EntryType: "RETENTION", AmountCents: 4000})
+	if r, _ := newSvc(st).WithHoldbackFacts(hb).SyncHoldbacks(ctx, b.ID); r.BookedCount != 0 {
+		t.Fatalf("an invoice held by another job was booked again")
+	}
+}
+
+// P3 (HST gross up): the ledger never books more than 1150 holds, whatever the job's HST flag says.
+func TestSyncHoldbacks_NeverGrossesTheRetentionUp(t *testing.T) {
+	st := newFakeStore()
+	j := linkedJob(st, JobInput{JobNo: "H", BranchID: "br1", CustomerID: "cust1", Direction: dirReceivable, HSTOnHoldback: true}, "cj1")
+	hb := fakeHoldback{invoices: []HoldbackInvoice{{InvoiceID: "inv1", InvoiceNo: "INV-1", CustomerID: "cust1", CustomerJobID: "cj1", BranchID: "br1", HoldbackCents: 10000}}}
+	r, err := newSvc(st).WithHoldbackFacts(hb).SyncHoldbacks(ctxWith(gm("u")), j.ID)
+	if err != nil || r.BookedCents != 10000 {
+		t.Fatalf("booked %d (%v), want the 10000 that 1150 holds", r.BookedCents, err)
 	}
 }
 
@@ -467,15 +524,6 @@ func TestAgeBucket(t *testing.T) {
 		if got := ageBucket(c.days); got != c.want {
 			t.Errorf("ageBucket(%d)=%s, want %s", c.days, got, c.want)
 		}
-	}
-}
-
-func TestHoldbackAmount_HSTFlag(t *testing.T) {
-	if got := holdbackAmount(10000, false); got != 10000 {
-		t.Fatalf("no-HST=%d, want 10000", got)
-	}
-	if got := holdbackAmount(10000, true); got != 11300 {
-		t.Fatalf("HST-on-holdback=%d, want 11300 (13%%)", got)
 	}
 }
 

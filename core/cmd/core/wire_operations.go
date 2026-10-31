@@ -213,7 +213,6 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	lienJobsRepo := customer.NewRepository(pool)
 	lienSvc := lien.NewService(lien.NewRepository(pool)).
 		WithCustomerJobs(lien.NewCustomerJobs(customer.NewService(lienJobsRepo).WithJobs(lienJobsRepo))).
-		WithStandardRate(newTaxEngine(pool)). // the HST on holdback gross up reads the dealer's standard rate
 		WithOrderHoldback(orderRepo).
 		WithGLPoster(lienGLPoster{svc: spine.glSvc}).
 		WithCoSigner(identity.NewApprovalRepository(pool)).

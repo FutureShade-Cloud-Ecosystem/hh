@@ -203,36 +203,46 @@ func TestIntegration_PayableReleaseRefused(t *testing.T) {
 	}
 }
 
-// I3: holdback sync is idempotent through the real repo (RetentionInvoiceIDs + InsertHoldbackEntry).
+// I3: holdback sync is idempotent through the real repo (HeldInvoiceIDs + InsertHoldbackEntry), and books
+// only the invoices of the customer job the lien job is linked to.
 func TestIntegration_SyncIdempotent(t *testing.T) {
-	pool := intPool(t)
+	w := rt1Plant(t)
 	ctx := context.Background()
-	svc := realSvc(t, pool, gm("gm-int"))
-	job, err := svc.CreateJob(ctx, JobInput{JobNo: uniqueJobNo("SYN"), BranchID: trentonBranch, Direction: dirReceivable})
-	if err != nil {
-		t.Fatalf("create job: %v", err)
+	lienID := w.lienJob(t, w.customerA, w.branchA)
+	t.Cleanup(func() { rt1Del(t, w.pool, "holdback_ledger", "job_id = $1", lienID) })
+	if _, err := w.pool.Exec(ctx, `UPDATE lien_jobs SET customer_job_id = $2 WHERE id = $1`, lienID, w.jobOnSiteON); err != nil {
+		t.Fatalf("link the lien job: %v", err)
 	}
+	svc := w.svc
 	// A real seeded invoice id (holdback_ledger.invoice_id is FK'd to invoices), the fake reader supplies the
-	// holdback amount; only the id must be a valid FK.
+	// holdback amount and the customer job; only the id must be a valid FK.
 	inv := "19000000-0000-4000-9000-000000000001"
-	svc.WithHoldbackFacts(fakeIntHoldback{inv: inv})
-	r1, err := svc.SyncHoldbacks(ctx, job.ID)
+	svc.WithHoldbackFacts(fakeIntHoldback{inv: inv, branch: w.branchA, job: w.jobOnSiteON})
+	r1, err := svc.SyncHoldbacks(w.as(gm("gm-int")), lienID)
 	if err != nil {
 		t.Fatalf("sync1: %v", err)
 	}
-	r2, err := svc.SyncHoldbacks(ctx, job.ID)
+	r2, err := svc.SyncHoldbacks(w.as(gm("gm-int")), lienID)
 	if err != nil {
 		t.Fatalf("sync2: %v", err)
 	}
 	if r1.BookedCount != 1 || r2.BookedCount != 0 {
 		t.Fatalf("sync booked r1=%d r2=%d, want 1/0 (idempotent)", r1.BookedCount, r2.BookedCount)
 	}
+	// A second lien job linked to ANOTHER customer job books nothing of that invoice.
+	other := w.lienJob(t, w.customerA, w.branchA)
+	if _, err := w.pool.Exec(ctx, `UPDATE lien_jobs SET customer_job_id = $2 WHERE id = $1`, other, w.jobOnSiteZA); err != nil {
+		t.Fatalf("link the second lien job: %v", err)
+	}
+	if r3, err := svc.SyncHoldbacks(w.as(gm("gm-int")), other); err != nil || r3.BookedCount != 0 {
+		t.Fatalf("second lien job booked %d of the first job's invoice (%v)", r3.BookedCount, err)
+	}
 }
 
-type fakeIntHoldback struct{ inv string }
+type fakeIntHoldback struct{ inv, branch, job string }
 
 func (f fakeIntHoldback) InvoicesWithHoldback(_ context.Context, _ string) ([]HoldbackInvoice, error) {
-	return []HoldbackInvoice{{InvoiceID: f.inv, InvoiceNo: "INV-SYNC", BranchID: trentonBranch, HoldbackCents: 4000}}, nil
+	return []HoldbackInvoice{{InvoiceID: f.inv, InvoiceNo: "INV-SYNC", BranchID: f.branch, CustomerJobID: f.job, HoldbackCents: 4000}}, nil
 }
 func (f fakeIntHoldback) InvoiceHoldbackFacts(_ context.Context, _ string) (HoldbackFacts, error) {
 	return HoldbackFacts{}, nil

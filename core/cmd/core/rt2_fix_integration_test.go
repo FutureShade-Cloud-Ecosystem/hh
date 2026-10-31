@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"testing"
 	"time"
 
@@ -215,4 +216,65 @@ func TestRT2Fix_AWriteOffSplitsTheHoldbackAndItsReversalRestoresIt(t *testing.T)
 	eq(t, "the invoice's holdback after the reversal", l.holdbackOf(doc.InvoiceID), int64(10_000))
 	eq(t, "the aging after the reversal", l.agingTotal()-l.agingBase, int64(103_000))
 	l.ties("after the write off is reversed")
+}
+
+// secondLinkedJob plants another customer job for the SAME customer with its own lien job linked to it,
+// and answers (customer job, lien job).
+func (l *rt2Leg) secondLinkedJob() (string, string) {
+	l.t.Helper()
+	ctx := context.Background()
+	l.n++
+	job, err := customer.NewRepository(l.pool).InsertJob(ctx, customer.JobWrite{
+		CustomerID: l.cust, BranchID: l.branch, JobNo: fmt.Sprintf("RT2-JOB-%d", l.n), Fields: customer.JobFields{Name: "Walkway"},
+	})
+	if err != nil {
+		l.t.Fatalf("plant the second job: %v", err)
+	}
+	var lienID string
+	if err := l.pool.QueryRow(ctx, `
+		INSERT INTO lien_jobs (job_no, customer_id, branch_id, customer_job_id)
+		VALUES ($1, $2::uuid, $3::uuid, $4::uuid) RETURNING id::text`,
+		fmt.Sprintf("RT2-LIEN-%d", l.n), l.cust, l.branch, job.JobID).Scan(&lienID); err != nil {
+		l.t.Fatalf("plant the second lien job: %v", err)
+	}
+	return job.JobID, lienID
+}
+
+// P1-4: two lien jobs for one customer; the sync of one never books the other's invoice, and the ledger
+// equals 1150 job by job.
+func TestRT2Fix_ASecondLienJobNeverReBooksTheFirstJobsInvoice(t *testing.T) {
+	l := rt2Setup(t, "twolien")
+	l.newJob(true)
+	lienA := l.lien
+	jobA := l.job
+	jobB, lienB := l.secondLinkedJob()
+	docA := l.invoice(100_000, 0) // on job A: 10,000 booked on lien job A as it is written
+	seam := newHoldbackSeam(l.pool).WithHoldbackFacts(billing.NewRepository(l.pool))
+	ctx := fw1StaffCtx(context.Background())
+	for _, id := range []string{lienB, lienA} {
+		r, err := seam.SyncHoldbacks(ctx, id)
+		if err != nil {
+			t.Fatalf("sync %s: %v", id, err)
+		}
+		eq(t, "invoices the sync booked", r.BookedCount, 0)
+	}
+	eq(t, "the ledger after both syncs", l.ledgerNet(), int64(10_000))
+	// An invoice on job B books on lien job B.
+	l.job = jobB
+	docB := l.invoice(50_000, 0)
+	l.job = jobA
+	eq(t, "the ledger holds both invoices", l.ledgerNet(), int64(15_000))
+	var onA, onB int64
+	for _, c := range []struct {
+		job string
+		out *int64
+	}{{lienA, &onA}, {lienB, &onB}} {
+		if err := l.pool.QueryRow(context.Background(), `SELECT COALESCE(SUM(amount_cents),0) FROM holdback_ledger WHERE job_id = $1::uuid`, c.job).Scan(c.out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eq(t, "lien job A holds its own invoice only", onA, int64(10_000))
+	eq(t, "lien job B holds its own invoice only", onB, int64(5_000))
+	_, _ = docA, docB
+	l.ties("after two lien jobs")
 }
