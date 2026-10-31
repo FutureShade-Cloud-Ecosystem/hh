@@ -29,6 +29,7 @@ package billing
 // beside its module's staff routes.
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -57,6 +58,18 @@ type RegisterHandler struct {
 	trail    PaymentTrailReader
 	// taxWords is the dealer's tax word for the printed invoice's tax row. Nil is the Ontario dealer's "HST".
 	taxWords taxwords.Source
+	// lateDiscount is the approval wall for an early payment discount taken outside its window
+	// (TM-2): the role gate's own admission of the caller to the money desk's manager access, held
+	// through a bindable holder because the handler is wired before the gate exists. Nil refuses
+	// every ask in words.
+	lateDiscount *LateDiscountApprovals
+}
+
+// WithLateDiscountApprovals binds the late discount approval wall (TM-2). The holder is bound to
+// the role gate by the composition root; an ask through an unbound holder is refused.
+func (h *RegisterHandler) WithLateDiscountApprovals(l *LateDiscountApprovals) *RegisterHandler {
+	h.lateDiscount = l
+	return h
 }
 
 // WithTaxLabel binds the dealer's tax word seam (platform/taxwords) for the printed invoice.
@@ -319,12 +332,42 @@ func (h *RegisterHandler) applyReceived(w http.ResponseWriter, r *http.Request, 
 		h.writeErr(w, r, err)
 		return
 	}
+	// The late discount ask (TM-2): the caller's words, stamped with who is asking (the staff
+	// context the guard chain stamped) and whether the caller holds the approval wall (the route
+	// gate's own answer, never the client's claim). The walk refuses an ask the wall did not admit,
+	// in words that name the closed window.
+	if reason := strings.TrimSpace(in.LateDiscountReason); reason != "" {
+		staff, _ := identity.StaffContextFromContext(r.Context())
+		held, err := h.lateDiscountApproval(r.Context(), caller, staff.UserID)
+		if err != nil {
+			h.writeErr(w, r, err)
+			return
+		}
+		in.DiscountApproval = &payments.DiscountApproval{
+			ApprovedBy: staff.UserID,
+			Reason:     reason,
+			Manager:    held,
+		}
+	}
 	res, err := h.svc.ApplyReceivedPayment(r.Context(), in)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// lateDiscountApproval answers whether the caller holds the late discount approval wall. An
+// unwired holder refuses the ask in words rather than open the wall for lack of a question.
+func (h *RegisterHandler) lateDiscountApproval(ctx context.Context, caller guards.StaffCaller, approverID string) (bool, error) {
+	if h.lateDiscount == nil {
+		return false, errors.New("billing: the late discount approval gate is not wired on this deployment")
+	}
+	held, err := h.lateDiscount.holds(ctx, caller.PlatformUserID, caller.OrgID)
+	if err != nil {
+		return false, err
+	}
+	return held, nil
 }
 
 func (h *RegisterHandler) sendInvoice(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {

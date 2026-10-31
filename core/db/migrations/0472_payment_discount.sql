@@ -37,3 +37,28 @@ ALTER TABLE payment_allocations ADD COLUMN IF NOT EXISTS discount_cents BIGINT N
 
 COMMENT ON COLUMN payment_allocations.discount_cents IS
 'in integer cents, the early payment discount this application took on the invoice (TM-2): the invoice''s own terms percent of the money applied, rounded half to even, taken inside the invoice''s stored discount window or under a recorded manager approval outside it. A reversal''s contra row carries the discount it gives back, positive like its amount.';
+
+-- 4. The manager's approval of a discount taken OUTSIDE its window. The walk refuses a late
+--    discount unless the caller passed the approval gate (the same wall the AR write off route
+--    runs: the money desk's manage level under the manager tier), and a manager's approval is
+--    RECORDED: who approved, when, the invoice, the amount taken and the manager's reason, one row
+--    per invoice whose discount rode the approval, written in the application's own transaction so
+--    a discount taken on an approval never stands without its record. A retry under the same key
+--    replays the first posting and writes no second row.
+CREATE TABLE IF NOT EXISTS invoice_discount_approvals (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    invoice_id     UUID NOT NULL REFERENCES invoices(id),
+    payment_id     UUID NOT NULL REFERENCES payments(id),
+    approved_by    UUID NOT NULL,
+    approved_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    discount_cents BIGINT NOT NULL CHECK (discount_cents > 0),
+    reason         TEXT NOT NULL CHECK (length(btrim(reason)) > 0),
+    branch_id      UUID NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_discount_approvals_invoice ON invoice_discount_approvals (invoice_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_discount_approvals_payment ON invoice_discount_approvals (payment_id);
+
+COMMENT ON TABLE invoice_discount_approvals IS
+'TM-2: one manager approval of an early payment discount taken outside its window, recorded in the application''s own transaction beside the discount it allowed.';

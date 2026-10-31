@@ -44,7 +44,7 @@ func TestAllocateOldestFirst_TheServerOrdersByAgeNotByTheList(t *testing.T) {
 	old := applyRow("old", "INV-OLD", 90, 60, 30000, 0)
 	mid := applyRow("mid", "INV-MID", 60, 30, 20000, 0)
 	fresh := applyRow("new", "INV-NEW", 30, -10, 10000, 0)
-	lines, capacity := allocateOldestFirst([]applyInvoiceRow{fresh, mid, old}, 40000, nil)
+	lines, capacity, _ := allocateOldestFirst([]applyInvoiceRow{fresh, mid, old}, 40000, nil)
 	if capacity != 60000 {
 		t.Fatalf("capacity %d, want the three payables 60000", capacity)
 	}
@@ -68,7 +68,7 @@ func TestAllocateOldestFirst_TiesBreakDeterministically(t *testing.T) {
 	a := applyRow("id-b", "INV-002", 60, 30, 10000, 0) // due the earliest: first
 	b := applyRow("id-a", "INV-003", 60, 20, 10000, 0) // later due, higher number: last
 	c := applyRow("id-c", "INV-001", 60, 20, 10000, 0) // later due, lowest number: second
-	lines, _ := allocateOldestFirst([]applyInvoiceRow{a, b, c}, 25000, nil)
+	lines, _, _ := allocateOldestFirst([]applyInvoiceRow{a, b, c}, 25000, nil)
 	if lines[0].InvoiceID != "id-b" || lines[1].InvoiceID != "id-c" || lines[2].InvoiceID != "id-a" {
 		t.Fatalf("want due date then number then id (b, c, a), got %v", lines)
 	}
@@ -76,7 +76,7 @@ func TestAllocateOldestFirst_TiesBreakDeterministically(t *testing.T) {
 	x := applyRow("id-a", "INV-002", 60, 20, 10000, 0)
 	y := applyRow("id-z", "INV-001", 60, 20, 10000, 0)
 	z := applyRow("id-b", "INV-001", 60, 20, 10000, 0)
-	lines, _ = allocateOldestFirst([]applyInvoiceRow{x, y, z}, 30000, nil)
+	lines, _, _ = allocateOldestFirst([]applyInvoiceRow{x, y, z}, 30000, nil)
 	if lines[0].InvoiceID != "id-b" || lines[1].InvoiceID != "id-z" || lines[2].InvoiceID != "id-a" {
 		t.Fatalf("want number then id (b, z, a), got %v", lines)
 	}
@@ -87,7 +87,7 @@ func TestAllocateOldestFirst_TiesBreakDeterministically(t *testing.T) {
 func TestAllocateOldestFirst_TheHoldbackIsNotCollectable(t *testing.T) {
 	held := applyRow("held", "INV-HELD", 90, 60, 50000, 10000)
 	open := applyRow("open", "INV-OPEN", 30, 0, 10000, 0)
-	lines, capacity := allocateOldestFirst([]applyInvoiceRow{open, held}, 50000, nil)
+	lines, capacity, _ := allocateOldestFirst([]applyInvoiceRow{open, held}, 50000, nil)
 	if capacity != 50000 {
 		t.Fatalf("capacity %d, want 40000 + 10000", capacity)
 	}
@@ -110,7 +110,7 @@ func TestAllocateOldestFirst_TheHoldbackIsNotCollectable(t *testing.T) {
 func TestAllocateOldestFirst_AFullyHeldBackInvoiceTakesNothing(t *testing.T) {
 	held := applyRow("held", "INV-HELD", 90, 60, 8000, 8000)
 	open := applyRow("open", "INV-OPEN", 30, 0, 10000, 0)
-	lines, capacity := allocateOldestFirst([]applyInvoiceRow{held, open}, 10000, nil)
+	lines, capacity, _ := allocateOldestFirst([]applyInvoiceRow{held, open}, 10000, nil)
 	if capacity != 10000 {
 		t.Fatalf("capacity %d, want the one payable invoice alone", capacity)
 	}
@@ -126,7 +126,7 @@ func TestAllocateOldestFirst_AFullyHeldBackInvoiceTakesNothing(t *testing.T) {
 // figure the desk reads to answer "what is left on this one".
 func TestAllocateOldestFirst_StaysOpenIsThePayableAfter(t *testing.T) {
 	inv := applyRow("inv", "INV-1", 60, 30, 30000, 5000)
-	lines, _ := allocateOldestFirst([]applyInvoiceRow{inv}, 10000, nil)
+	lines, _, _ := allocateOldestFirst([]applyInvoiceRow{inv}, 10000, nil)
 	l := lines[0]
 	if l.BalanceAfterCents != 20000 || l.StaysOpenCents != 15000 {
 		t.Fatalf("balance after %d and stays open %d, want 20000 and 15000", l.BalanceAfterCents, l.StaysOpenCents)

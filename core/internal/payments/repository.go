@@ -605,7 +605,7 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 	}
 	// The zero amount walk answers the rows in the allocation's own oldest first order with their
 	// live balances; each line is then patched with what THIS payment put on it.
-	lines, _ := allocateOldestFirst(rows, 0, nil)
+	lines, _, _ := allocateOldestFirst(rows, 0, nil)
 	for i := range lines {
 		take := appliedBy[lines[i].InvoiceID]
 		lines[i].AppliedCents = take

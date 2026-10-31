@@ -17,6 +17,7 @@ package payments
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,4 +193,96 @@ func TestApplyReceived_AfterTheWindowNoDiscount(t *testing.T) {
 		t.Fatalf("a payment after the window takes no discount: allocation %d subledger %d event %d",
 			allocDiscount, subAdjust, eventCents)
 	}
+}
+
+// TestApplyReceived_LateDiscountIsRefusedForAClerk is item 2's refusal: a clerk asks for the
+// discount after the window closed, and the whole application is refused in words, nothing
+// applied, the key unspent.
+func TestApplyReceived_LateDiscountIsRefusedForAClerk(t *testing.T) {
+	w := newApplyWorld(t).bindTerms()
+	ctx := context.Background()
+	inv := w.discountInvoice(t, w.customerID, "LATE1", 100000, dayShift(-1))
+
+	_, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ 810",
+		IdempotencyKey: w.tag + "-clerk", InvoiceIDs: []string{inv}, AmountCents: 98000,
+		DiscountApproval: &DiscountApproval{ApprovedBy: "", Reason: "customer phoned", Manager: false},
+	})
+	if err == nil {
+		t.Fatal("a clerk's late discount must be refused in words")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "window closed") || !strings.Contains(msg, "manager") {
+		t.Fatalf("the refusal names the closed window and asks for a manager, got %q", msg)
+	}
+	// Nothing applied: the invoice stands open at face and the key is unspent.
+	if balance, status := w.invoiceState(t, inv); balance != 100000 || status != "FINALIZED" {
+		t.Fatalf("a refused application leaves everything untouched: balance %d status %s", balance, status)
+	}
+	var n int
+	if err := w.pool.QueryRow(ctx, `SELECT COUNT(*) FROM payments WHERE customer_id = $1::uuid`, w.customerID).Scan(&n); err != nil {
+		t.Fatalf("count payments: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("a refused application writes no payment row, found %d", n)
+	}
+}
+
+// TestApplyReceived_LateDiscountWithAManagerApprovalPosts is item 2's approval: a manager's words
+// take the discount outside the window, and the approval is RECORDED: who, when, the invoice, the
+// amount and the reason.
+func TestApplyReceived_LateDiscountWithAManagerApprovalPosts(t *testing.T) {
+	w := newApplyWorld(t).bindTerms()
+	ctx := context.Background()
+	inv := w.discountInvoice(t, w.customerID, "LATE2", 100000, dayShift(-1))
+	approver := seedDiscountApprover(t, w)
+
+	_, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ 811",
+		IdempotencyKey: w.tag + "-mgr", InvoiceIDs: []string{inv}, AmountCents: 98000,
+		DiscountApproval: &DiscountApproval{ApprovedBy: approver, Reason: "cheque mailed inside the window", Manager: true},
+	})
+	if err != nil {
+		t.Fatalf("a manager's approved late discount posts: %v", err)
+	}
+	if balance, status := w.invoiceState(t, inv); balance != 0 || status != "PAID" {
+		t.Fatalf("the approved discount closes the invoice: balance %d status %s", balance, status)
+	}
+	var who, reason string
+	var when time.Time
+	var amount int64
+	var invID string
+	if err := w.pool.QueryRow(ctx, `
+		SELECT approved_by::text, approved_at, invoice_id::text, discount_cents, reason
+		  FROM invoice_discount_approvals
+		 WHERE invoice_id = $1::uuid`, inv).Scan(&who, &when, &invID, &amount, &reason); err != nil {
+		t.Fatalf("the approval is recorded: %v", err)
+	}
+	if who != approver || reason != "cheque mailed inside the window" || amount != 2000 || invID != inv || when.IsZero() {
+		t.Fatalf("the approval row carries who %q when %v the invoice %s the amount %d and the reason %q",
+			who, when, invID, amount, reason)
+	}
+	allocDiscount, subAdjust, eventCents := w.discountRows(t, inv)
+	if allocDiscount != 2000 || subAdjust != -2000 || eventCents != 2000 {
+		t.Fatalf("the approved discount is posted beside the receipt: allocation %d subledger %d event %d",
+			allocDiscount, subAdjust, eventCents)
+	}
+}
+
+// seedDiscountApprover plants one staff user to be the approving manager.
+func seedDiscountApprover(t *testing.T, w *applyWorld) string {
+	t.Helper()
+	var id string
+	if err := w.pool.QueryRow(context.Background(),
+		`INSERT INTO users (email, display_name, status)
+		 VALUES ($1, 'TM2 Approver', 'ACTIVE') RETURNING id::text`,
+		w.tag+"-approver@example.test").Scan(&id); err != nil {
+		t.Fatalf("seed the approver: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = w.pool.Exec(context.Background(),
+			`DELETE FROM invoice_discount_approvals WHERE approved_by = $1::uuid`, id)
+		_, _ = w.pool.Exec(context.Background(), `DELETE FROM users WHERE id = $1::uuid`, id)
+	})
+	return id
 }

@@ -24,11 +24,13 @@ package payments
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
 // DiscountTerms is the one fact of a terms row the discount needs: the rate in basis points (100
@@ -261,4 +263,75 @@ func discountDayOf(row applyInvoiceRow) string {
 		return ""
 	}
 	return row.DiscountDate.Format("2006-01-02")
+}
+
+// judgeLateDiscount is item 2's refusal: a discount asked for OUTSIDE its window is taken only on
+// a manager's approval with words, and a clerk's ask refuses the whole application in words with
+// nothing applied and the key unspent. The refusal names the invoices and the days their windows
+// closed, because the operator's next act (a manager's approval or a payment at face) depends on
+// knowing which document and which day.
+func judgeLateDiscount(rows []applyInvoiceRow, dctx *discountContext) error {
+	if dctx.late == nil {
+		return nil
+	}
+	valid := dctx.late.Manager && strings.TrimSpace(dctx.late.Reason) != ""
+	var closed []applyInvoiceRow
+	for _, row := range rows {
+		if row.IsNSFFee {
+			continue
+		}
+		if bps, _ := dctx.eligible(discountDayOf(row), row.TermsCode); bps > 0 && !dctx.windowOpen(discountDayOf(row)) {
+			closed = append(closed, row)
+		}
+	}
+	if len(closed) == 0 || valid {
+		return nil
+	}
+	names := make([]string, 0, len(closed))
+	for _, row := range closed {
+		names = append(names, fmt.Sprintf("%s (window closed %s)", row.InvoiceNo, discountDayOf(row)))
+	}
+	return httpx.BadRequestf(
+		"the early payment discount window has closed: %s; taking the discount late needs a manager's approval with a reason, or record the payment at face",
+		strings.Join(names, ", "))
+}
+
+// recordDiscountApprovals writes the approval record for every invoice whose discount rode the
+// late approval rather than its window: who approved, when, the invoice, the amount taken and the
+// manager's reason, on the application's own transaction.
+func recordDiscountApprovals(ctx context.Context, tx pgx.Tx, p Payment, rows []applyInvoiceRow, lateLines []string, dctx *discountContext) error {
+	if len(lateLines) == 0 || dctx.late == nil {
+		return nil
+	}
+	byID := make(map[string]applyInvoiceRow, len(rows))
+	for _, row := range rows {
+		byID[row.InvoiceID] = row
+	}
+	var by any
+	if dctx.late.ApprovedBy != "" {
+		by = dctx.late.ApprovedBy
+	}
+	for _, line := range lateLines {
+		row := byID[line]
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO invoice_discount_approvals
+			       (invoice_id, payment_id, approved_by, discount_cents, reason, branch_id)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid)`,
+			line, p.ID, by, discountTakenOn(line, p), dctx.late.Reason, row.BranchID); err != nil {
+			return fmt.Errorf("payments: record the discount approval on invoice %s: %w", line, err)
+		}
+	}
+	return nil
+}
+
+// discountTakenOn answers the discount one payment took on one invoice, from the allocations the
+// settle wrote.
+func discountTakenOn(invoiceID string, p Payment) int64 {
+	var d int64
+	for _, a := range p.Allocations {
+		if a.InvoiceID == invoiceID {
+			d += a.DiscountCents
+		}
+	}
+	return d
 }

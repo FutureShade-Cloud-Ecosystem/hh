@@ -162,3 +162,51 @@ func bindPaymentTrail(money *moneySpine, gate *authz.RoleGate) error {
 	money.paymentTrail.Bind(reader)
 	return nil
 }
+
+// lateDiscountApprovalRoutes names the route whose gate is the late discount approval's wall (TM-2
+// item 2): the money desk's manager exceptions run the AR write off's annotation (requireManager,
+// money-desk manage), and the caller that gate admits is the caller who may approve an early
+// payment discount outside its window. The role list is therefore the route's own, read from the
+// loaded configuration, never restated here.
+var lateDiscountApprovalRoutes = []struct{ method, path string }{
+	{"POST", "/api/v1/ar/write-offs"},
+}
+
+// lateDiscountApprovalReader adapts the role gate onto the register's approval wall.
+type lateDiscountApprovalReader struct {
+	gate   *authz.RoleGate
+	access authz.RouteAccess
+}
+
+func newLateDiscountApprovalReader(gate *authz.RoleGate) (*lateDiscountApprovalReader, error) {
+	if gate == nil {
+		return nil, errors.New("late discount approval: the role gate is required")
+	}
+	r := &lateDiscountApprovalReader{gate: gate}
+	route := lateDiscountApprovalRoutes[0]
+	access, ok := authz.RouteAccessFor(route.method, route.path)
+	if !ok {
+		return nil, fmt.Errorf("late discount approval: %s %s carries no staff access in the document", route.method, route.path)
+	}
+	r.access = access
+	return r, nil
+}
+
+// HoldsLateDiscountApproval is the gate's own answer for the caller on the write off route's access.
+func (r *lateDiscountApprovalReader) HoldsLateDiscountApproval(ctx context.Context, platformUserID, orgID string) (bool, error) {
+	return r.gate.Holds(ctx, platformUserID, orgID, r.access)
+}
+
+// bindLateDiscountApprovals binds the register's late discount approval wall to the role gate.
+// Both composition roots call it beside bindPaymentTrail.
+func bindLateDiscountApprovals(tops *topsSpine, gate *authz.RoleGate) error {
+	if tops == nil || tops.lateDiscountApprovals == nil {
+		return nil
+	}
+	reader, err := newLateDiscountApprovalReader(gate)
+	if err != nil {
+		return err
+	}
+	tops.lateDiscountApprovals.Bind(reader)
+	return nil
+}

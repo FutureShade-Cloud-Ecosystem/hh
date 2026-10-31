@@ -118,15 +118,16 @@ func (w *PaymentsReceiptWriter) PayableCentsFor(ctx context.Context, invoiceID s
 // the whole of this adapter's job, and the walk's words are the operator's words.
 func (w *PaymentsReceiptWriter) ApplyReceived(ctx context.Context, in ApplyReceivedCommand) (payments.ApplyAnswer, error) {
 	return w.repo.ApplyReceived(ctx, payments.ApplyRequest{
-		CustomerID:     in.CustomerID,
-		Method:         in.Method,
-		Reference:      in.Reference,
-		IdempotencyKey: in.IdempotencyKey,
-		ReceivedBy:     in.ReceivedBy,
-		BranchIDs:      in.BranchIDs,
-		InvoiceIDs:     in.InvoiceIDs,
-		AmountCents:    in.AmountCents,
-		Preview:        in.Preview,
+		CustomerID:       in.CustomerID,
+		Method:           in.Method,
+		Reference:        in.Reference,
+		IdempotencyKey:   in.IdempotencyKey,
+		ReceivedBy:       in.ReceivedBy,
+		BranchIDs:        in.BranchIDs,
+		InvoiceIDs:       in.InvoiceIDs,
+		AmountCents:      in.AmountCents,
+		Preview:          in.Preview,
+		DiscountApproval: in.DiscountApproval,
 	})
 }
 

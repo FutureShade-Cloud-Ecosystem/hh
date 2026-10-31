@@ -89,6 +89,13 @@ func (h *Handler) WithCustomerReach(r billing.WorkspaceReach) *Handler {
 // CustomerReachWired reports whether the customer reach rule is bound.
 func (h *Handler) CustomerReachWired() bool { return h.customerReach != nil }
 
+// WithRegisterLateDiscountApprovals binds the register's late discount approval wall (TM-2): the
+// holder the composition root later binds to the role gate. Unbound, an ask is refused in words.
+func (h *Handler) WithRegisterLateDiscountApprovals(l *billing.LateDiscountApprovals) *Handler {
+	h.registerLateDiscount = l
+	return h
+}
+
 // WithRegisterTaxLabel binds the dealer's tax word seam (platform/taxwords) for the register's printed
 // invoice. Unbound is the Ontario dealer's "HST".
 func (h *Handler) WithRegisterTaxLabel(src taxwords.Source) *Handler {
@@ -131,6 +138,7 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 		WithUserLinker(h.userLink).
 		WithPaymentTrail(h.paymentTrail).
 		WithTaxLabel(h.registerTaxWords).
+		WithLateDiscountApprovals(h.registerLateDiscount).
 		RegisterRoutes(r, g)
 	// Walk change 8 S5/S6/S8: promises list, account payment policy, reminder rules + enrol/exempt.
 	// Lives here because cmd/server/main.go is off limits to a lane and the same pool backs it;

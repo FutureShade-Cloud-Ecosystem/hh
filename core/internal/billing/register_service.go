@@ -181,6 +181,9 @@ type ApplyReceivedCommand struct {
 	// the caller's branches otherwise. The seam answers an invoice outside it as not found.
 	BranchIDs  []string
 	ReceivedBy string
+	// DiscountApproval is the late discount ask, stamped by the route from the caller's own facts
+	// (who, the words, and whether the caller passed the approval wall). Nil asks nothing.
+	DiscountApproval *payments.DiscountApproval
 }
 
 // ReceiptWrite is the register's request to the money seam.
@@ -580,15 +583,16 @@ func (s *RegisterService) ApplyReceivedPayment(ctx context.Context, in ApplyPaym
 	// would tell the desk the payment was not recorded.
 	caller, _ := s.callerFrom(ctx)
 	res, err := s.money.ApplyReceived(ctx, ApplyReceivedCommand{
-		CustomerID:     in.CustomerID,
-		Method:         strings.ToUpper(strings.TrimSpace(in.Method)),
-		Reference:      in.Reference,
-		IdempotencyKey: in.IdempotencyKey,
-		InvoiceIDs:     in.InvoiceIDs,
-		AmountCents:    in.AmountCents,
-		Preview:        in.Preview,
-		BranchIDs:      s.reach(ctx).IDs,
-		ReceivedBy:     caller.UserID,
+		CustomerID:       in.CustomerID,
+		Method:           strings.ToUpper(strings.TrimSpace(in.Method)),
+		Reference:        in.Reference,
+		IdempotencyKey:   in.IdempotencyKey,
+		InvoiceIDs:       in.InvoiceIDs,
+		AmountCents:      in.AmountCents,
+		Preview:          in.Preview,
+		BranchIDs:        s.reach(ctx).IDs,
+		ReceivedBy:       caller.UserID,
+		DiscountApproval: in.DiscountApproval,
 	})
 	if err != nil {
 		return payments.ApplyAnswer{}, err
