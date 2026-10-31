@@ -75,7 +75,6 @@ import {
 } from "./pricing-logic.js";
 import { whenWords } from "./audit-logic.js";
 import {
-  UNKNOWN_ACTOR,
   UNKNOWN_BATCH,
   UNKNOWN_BRANCH,
   UNKNOWN_CATEGORY,
@@ -2618,6 +2617,13 @@ function renderLowMarginProbe(model: PricingModel, pickers: PricingPickers): Tem
  * house placeholder word, never as the id's own first block.
  */
 function auditEntityWords(row: PricingAuditRow, model: PricingModel): string {
+  const words = auditEntityNamed(row, model);
+  if (words !== "") return words;
+  const entityWord = pricingAuditEntityWord(row.entity_type);
+  return `${entityWord} / ${row.entity_type === "margin_enforcement" ? "A product" : UNKNOWN_ENTITY}`;
+}
+
+function auditEntityNamed(row: PricingAuditRow, model: PricingModel): string {
   const entityWord = pricingAuditEntityWord(row.entity_type);
   if (row.entity_id === "") return entityWord;
   const cat = categoryName(row.entity_id, model.categories);
@@ -2637,14 +2643,16 @@ function auditEntityWords(row: PricingAuditRow, model: PricingModel): string {
   if (clear !== undefined && (clear.name !== "" || clear.sku !== "")) return `${entityWord} / ${clear.name !== "" ? clear.name : clear.sku}`;
   const rebate = model.rebates.rows.find((r) => r.id === row.entity_id);
   if (rebate !== undefined && rebate.name !== "") return `${entityWord} / ${rebate.name}`;
-  return `${entityWord} / ${UNKNOWN_ENTITY}`;
+  const product = model.audit.productNames[row.entity_id];
+  if (product !== undefined) return `${entityWord} / ${product}`;
+  return "";
 }
 
 function pricingActorWords(userId: string, staff: readonly StaffMemberRow[]): string {
   if (userId === "") return "Automatic";
   const member = staff.find((s) => s.user_id === userId);
   if (member !== undefined) return member.display_name !== "" ? member.display_name : member.email;
-  return UNKNOWN_ACTOR;
+  return "A staff member";
 }
 
 export function renderPricingAudit(model: PricingModel, staff: readonly StaffMemberRow[] = []): TemplateResult {

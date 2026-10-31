@@ -125,6 +125,7 @@ export interface PricingDoor {
   lowMarginScan(query?: { from?: string; to?: string; doc_type?: string; cleared_only?: boolean; sort?: string }): Promise<{ ok: true; value: readonly LowMarginScanRow[] } | { ok: false; error: string; status?: number }>;
   lowMarginReport(lines: readonly { customer_id: string; customer_type: string; product_id: string; category_id: string; branch_id: string; qty_entered: number; uom_entered: string; cost_cents: number }[]): Promise<{ ok: true; value: readonly LowMarginEntry[] } | { ok: false; error: string; status?: number }>;
   pricingAudit(query?: { entity_type?: string; action?: string }): Promise<{ ok: true; value: readonly PricingAuditRow[] } | { ok: false; error: string; status?: number }>;
+  productName?(id: string): Promise<{ ok: true; value: string } | { ok: false; error: string; status?: number }>;
   changeLog(query?: { product_id?: string; batch_id?: string }): Promise<{ ok: true; value: readonly ChangeLogRow[] } | { ok: false; error: string; status?: number }>;
   previewFloor(body: PricingFloorPreviewRequest): Promise<
     { ok: true; value: FloorPreview } | { ok: false; error: string; status?: number }
@@ -452,6 +453,8 @@ export interface PricingAuditModel {
   readonly phase: LoadPhase;
   readonly rows: readonly PricingAuditRow[];
   readonly filters: { readonly entityType: string; readonly action: string };
+  /** Product id to its dealer words, for margin enforcement rows that name a product. */
+  readonly productNames: Readonly<Record<string, string>>;
   readonly error: string;
 }
 
@@ -667,6 +670,7 @@ function emptyPricingAudit(): PricingAuditModel {
     phase: "idle",
     rows: [],
     filters: { entityType: "", action: "" },
+    productNames: {},
     error: "",
   };
 }
@@ -3490,6 +3494,28 @@ export class PricingController {
       return;
     }
     this.#setAudit({ phase: "ready", rows: result.value });
+    await this.#loadAuditProductNames(result.value);
+  }
+
+  /**
+   * A margin enforcement row names a category, or the product itself when the
+   * line carried no category. Ask the catalog for the ids the categories do
+   * not explain, so the entity cell reads as a name.
+   */
+  async #loadAuditProductNames(rows: readonly PricingAuditRow[]): Promise<void> {
+    if (typeof this.#door.productName !== "function") return;
+    const ids = new Set<string>();
+    for (const r of rows) {
+      if (r.entity_type !== "margin_enforcement" || r.entity_id === "") continue;
+      if (this.model.categories.some((c) => c.id === r.entity_id)) continue;
+      ids.add(r.entity_id);
+    }
+    const found: Record<string, string> = {};
+    for (const id of [...ids].slice(0, 25)) {
+      const named = await this.#door.productName(id);
+      if (named.ok && named.value !== "") found[id] = named.value;
+    }
+    if (Object.keys(found).length > 0) this.#setAudit({ productNames: found });
   }
 
   async loadChangeLog(): Promise<void> {
