@@ -74,6 +74,9 @@ var allowlisted = map[string]exemption{
 	"cmd/core/finworld_ap_read_test.go": {[]string{"time.Now()"},
 		"the world's data is dated from a fixed 2025-10-01 day 0, and the read is AS OF time.Now() plus a minute, which is always after every dated row, so the comparison's outcome cannot change with the calendar."},
 
+	"internal/billing/finance_charge_integration_test.go": {[]string{"time.Now()"},
+		"the run's month, due dates and writer clock are fixed and injected; time.Now().Add(time.Hour) is only the aging and AR reads' as-of, always after every row the leg made, so the comparison's outcome cannot change with the calendar."},
+
 	// -- real clock is used for UNIQUENESS, never as a date --------------------------------------
 	"internal/quote/qd1_ownership_integration_test.go": {[]string{"time.Now()"},
 		"time.Now().UnixNano() only mints unique row tags; every date compared is the test's own fixed `now`, passed explicitly (the edit_integration_test.go pattern)."},
