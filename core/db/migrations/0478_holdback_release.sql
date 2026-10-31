@@ -57,3 +57,23 @@ INSERT INTO posting_rules (event_type, line_role, account_code) VALUES
     ('ar.holdback.released', 'ar',       '1100'),
     ('ar.holdback.released', 'holdback', '1150')
 ON CONFLICT (event_type, line_role) WHERE branch_id IS NULL DO NOTHING;
+
+-- 6. A released part falls due on its release day (RT-3 fix round). A holdback release brings the held part
+--    into the invoice's net; that part is due on the RELEASE row's house day (released_at) plus the invoice's
+--    own terms, never before the invoice's own due date, not on the invoice's original due date. These two
+--    lien-owned functions answer the released part and its release day as of an instant, so the aging, the
+--    finance charge and the statement read one dated source and no reader rebuilds it by hand. An invoice is
+--    released once (the unique index), so the day is the one RELEASE row's.
+CREATE OR REPLACE FUNCTION invoice_released_cents_as_of(p_invoice_id uuid, p_as_of timestamptz) RETURNS bigint
+LANGUAGE sql STABLE AS $$
+  SELECT COALESCE(SUM(l.amount_cents), 0)::bigint
+    FROM holdback_ledger l
+   WHERE l.invoice_id = p_invoice_id AND l.entry_type = 'RELEASE' AND l.created_at <= p_as_of
+$$;
+
+CREATE OR REPLACE FUNCTION invoice_released_on(p_invoice_id uuid, p_as_of timestamptz) RETURNS date
+LANGUAGE sql STABLE AS $$
+  SELECT MAX(l.released_at)
+    FROM holdback_ledger l
+   WHERE l.invoice_id = p_invoice_id AND l.entry_type = 'RELEASE' AND l.created_at <= p_as_of
+$$;

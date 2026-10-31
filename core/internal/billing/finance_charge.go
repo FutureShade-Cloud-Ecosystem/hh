@@ -232,13 +232,23 @@ func roundHalfEvenDiv(num, den int64) int64 {
 // not money past due, so the overdue balance is the net, as the aging reads it (balance less the
 // holdback, never below zero).
 //
+// THE RELEASED PART AGES FROM ITS RELEASE DAY (RT-3 fix): the part of an invoice a holdback release
+// brought into the net falls due on the release row's house day plus the invoice's own terms (never before
+// the invoice's own due date), so it is charged only once it is more than 30 days past THAT date. The rest
+// of the invoice keeps its original due date. A payment is taken off the older part first.
+//
 // Parameters: $1 the branch, $2 the month's last house day, $3 the month's last instant.
 const financeChargeCandidatesSQL = `
 	WITH overdue AS (
-		SELECT r.customer_id,
-		       r.raw - LEAST(r.hb, GREATEST(r.raw, 0)) AS bal
+		SELECT q.customer_id, x.bal
+		  FROM (
+		SELECT r.customer_id, r.due_date, r.rel_cents, r.rel_due,
+		       r.raw - LEAST(r.hb, GREATEST(r.raw, 0)) AS net
 		  FROM (
 		SELECT i.customer_id, invoice_holdback_as_of(i.id, $3::timestamptz) AS hb,
+		       i.due_date,
+		       invoice_released_cents_as_of(i.id, $3::timestamptz) AS rel_cents,
+		       GREATEST(invoice_released_on(i.id, $3::timestamptz) + GREATEST(i.due_date - i.issue_date, 0), i.due_date) AS rel_due,
 		       i.total_cents
 		         + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
 		             WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
@@ -255,10 +265,14 @@ const financeChargeCandidatesSQL = `
 		   AND i.source_kind NOT IN ('FINANCE_CHARGE', 'SUPPLIER_DEPOSIT')
 		   AND i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
 		   AND COALESCE(i.finalized_at, i.created_at) <= $3::timestamptz
-		   AND i.due_date < $2::date - 30
 		   AND NOT EXISTS (SELECT 1 FROM finance_charge_waivers w
 		           WHERE w.customer_id = i.customer_id AND w.cleared_at IS NULL)
 		  ) r
+		  ) q
+		  CROSS JOIN LATERAL (VALUES
+		        (q.net - LEAST(q.rel_cents, GREATEST(q.net, 0)), q.due_date),
+		        (LEAST(q.rel_cents, GREATEST(q.net, 0)), q.rel_due)) AS x(bal, due_date)
+		 WHERE x.due_date < $2::date - 30
 	)
 	SELECT customer_id::text, SUM(bal) AS past_due
 	  FROM overdue
