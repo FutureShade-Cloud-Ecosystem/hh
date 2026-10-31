@@ -8711,7 +8711,11 @@ export type TenantPayRequest = {
   payment_method_id?: string;
   nonce?: string;
   idempotency_key?: string;
-  expected_cents?: number;
+  expected_cents: number;
+};
+export type TenantPayConflict = {
+  error: string;
+  code?: "quote_changed";
 };
 export type TenantProjectStatus = "PLANNING" | "QUOTING" | "ORDERED" | "FULFILLED" | "CANCELLED";
 export type TenantProject = {

@@ -1191,6 +1191,7 @@ export const SCHEMA_NAMES: readonly string[] = [
   "TenantPaymentAllocation",
   "TenantPayment",
   "TenantPayRequest",
+  "TenantPayConflict",
   "TenantProjectStatus",
   "TenantProject",
   "TenantProjectLine",
