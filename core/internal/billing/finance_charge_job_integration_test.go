@@ -180,7 +180,7 @@ func TestIntegration_W3FC1B_EnablingTheJobMakesTheWorkerRun(t *testing.T) {
 	}
 	// The newest run on record before the leg (none on a fresh database): the leg's own runs are the later ones.
 	var baseline time.Time
-	if err := r.pool.QueryRow(r.ctx, `SELECT COALESCE(MAX(created_at), '-infinity'::timestamptz) FROM job_runs WHERE job_name = $1`, FinanceChargeJobName).Scan(&baseline); err != nil {
+	if err := r.pool.QueryRow(r.ctx, `SELECT COALESCE(MAX(created_at), TIMESTAMPTZ 'epoch') FROM job_runs WHERE job_name = $1`, FinanceChargeJobName).Scan(&baseline); err != nil {
 		t.Fatalf("W3-FC1b red: read the job's run baseline: %v", err)
 	}
 	t.Cleanup(func() {
