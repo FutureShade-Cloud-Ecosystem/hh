@@ -130,8 +130,9 @@ $rt2_net$;
 -- no reader rebuilds a past holdback by hand and RT-3's release reaches every one of them by writing
 -- its row. An invoice with no ledger row withheld nothing and answers zero.
 --
--- invoice_holdback_withheld(invoice) is the holdback the invoice was first written with: its positive
--- RETENTION rows, whatever later lowered it. NULL when the ledger never held the invoice.
+-- invoice_holdback_withheld(invoice) is the holdback the invoice was first written with: its first
+-- positive RETENTION row, whatever later lowered it or restored it (a write off's reversal is a later
+-- positive row and is not a second withholding). NULL when the ledger never held the invoice.
 CREATE OR REPLACE FUNCTION invoice_holdback_as_of(p_invoice_id uuid, p_as_of timestamptz) RETURNS bigint
 LANGUAGE sql STABLE AS $$
   SELECT GREATEST(COALESCE(SUM(CASE l.entry_type WHEN 'RETENTION' THEN l.amount_cents ELSE -l.amount_cents END), 0), 0)::bigint
@@ -141,9 +142,11 @@ $$;
 
 CREATE OR REPLACE FUNCTION invoice_holdback_withheld(p_invoice_id uuid) RETURNS bigint
 LANGUAGE sql STABLE AS $$
-  SELECT SUM(l.amount_cents)::bigint
+  SELECT l.amount_cents::bigint
     FROM holdback_ledger l
    WHERE l.invoice_id = p_invoice_id AND l.entry_type = 'RETENTION' AND l.amount_cents > 0
+   ORDER BY l.created_at, l.id
+   LIMIT 1
 $$;
 
 -- The reader's index: one invoice's rows by date.
