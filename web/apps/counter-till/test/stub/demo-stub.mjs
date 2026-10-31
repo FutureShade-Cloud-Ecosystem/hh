@@ -70,6 +70,7 @@
 // numbers, every one carrying its unit of measure.
 import { createSyncStub } from "./sync-stub.mjs";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 
 const port = Number(process.env.CT_STUB_PORT ?? 4821);
 
@@ -1016,16 +1017,23 @@ function customerFor(customerId) {
 // account customer, derived from the customer id so the stub and its tests
 // agree without a second channel. The sale door fences a named job exactly as
 // the core's own fence does, with the customer module's own sentences.
-const jobForCustomer = (customerId) => `job-${customerId}-drive`;
-const closedJobForCustomer = (customerId) => `job-${customerId}-done`;
+// A job id is a uuid, as the core's is, derived from the customer id by hash so the test derives the same.
+const jobUuid = (kind, customerId) => {
+  const h = createHash("sha1").update(`job:${kind}:${customerId}`).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+};
+const jobForCustomer = (customerId) => jobUuid("open", customerId);
+const closedJobForCustomer = (customerId) => jobUuid("closed", customerId);
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function fenceJob(customerId, jobId) {
+  if (!UUID_SHAPE.test(jobId)) return { status: 400, error: "job id must be a uuid" };
   const known = CUSTOMERS.some(
     (c) => jobId === jobForCustomer(c.id) || jobId === closedJobForCustomer(c.id),
   );
-  if (!known) return { status: 404, error: "not found" };
+  if (!known) return { status: 404, error: "that job was not found" };
   if (jobId === jobForCustomer(customerId)) return null;
-  if (jobId === closedJobForCustomer(customerId) || jobId.endsWith("-done")) {
+  if (jobId === closedJobForCustomer(customerId)) {
     return { status: 400, error: "the job is closed, so it takes no new document" };
   }
   return { status: 400, error: "that job is another customer's job" };

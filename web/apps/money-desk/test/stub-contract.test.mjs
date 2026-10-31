@@ -721,8 +721,8 @@ test("the credit memo door fences a named job with the core's own words", async 
   const mine = aging.json.items[0].customer_id;
   const other = aging.json.items[1].customer_id;
   assert.ok(mine !== other, "the aging read answers at least two customers");
-  const jobDrive = (c) => `job-${c}-drive`;
-  const jobDone = (c) => `job-${c}-done`;
+  const jobDrive = (c) => `a0${c.slice(2)}`; // the stub's job uuids: the customer's uuid, first digits changed
+  const jobDone = (c) => `b0${c.slice(2)}`;
 
   const carries = await call("POST", "/api/v1/ar/credit-memos", {
     customer_id: mine,
@@ -765,10 +765,24 @@ test("the credit memo door fences a named job with the core's own words", async 
     amount_cents: 100,
     reason: "Pallet came back",
     idempotency_key: "k-job-unknown",
-    job_id: "job-that-is-no-job",
+    job_id: "6f1d2c3e-0000-4000-8000-000000000000",
   });
   assert.equal(unknown.status, 404);
-  assert.equal(unknown.json.error, "not found");
+  assert.equal(unknown.json.error, "that job was not found");
+  assert.ok(coreSource.includes("that job was not found"), "the refusal is the core's own sentence");
+  assert.ok(/errors\.As\(err, &notFoundWords\)[\s\S]{0,300}http\.StatusNotFound/.test(coreSource), "the memo handler answers a job that is no job 404");
+
+  const notUuid = await call("POST", "/api/v1/ar/credit-memos", {
+    customer_id: mine,
+    branch_id: "b-office-1",
+    amount_cents: 100,
+    reason: "Pallet came back",
+    idempotency_key: "k-job-not-uuid",
+    job_id: "job-that-is-no-job",
+  });
+  assert.equal(notUuid.status, 400);
+  assert.equal(notUuid.json.error, "job_id must be a job id, pick a job from the customer's jobs");
+  assert.ok(coreSource.includes("job_id must be a job id, pick a job from the customer's jobs"), "the refusal is the core's own sentence");
 });
 
 test("the credit change routes answer in the contract's shapes and the refusals are the core's own sentences", async () => {

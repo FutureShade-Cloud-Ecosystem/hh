@@ -594,17 +594,23 @@ const custId = (n) => uuid("e", n);
 // customer, derived from the customer id. The credit memo door fences a named
 // job exactly as the core's own fence does (the contract test holds these
 // sentences to the core's source).
-const jobForCustomer = (customerId) => `job-${customerId}-drive`;
-const closedJobForCustomer = (customerId) => `job-${customerId}-done`;
+// A job id is a uuid, as the core's is: the open job and the closed job are the customer's uuid with its
+// first two hex digits changed, so the test derives the same ids without a second channel.
+const jobForCustomer = (customerId) => `a0${customerId.slice(2)}`;
+const closedJobForCustomer = (customerId) => `b0${customerId.slice(2)}`;
 const CUSTOMER_IDS = [1, 2, 3, 4, 5, 6].map(custId);
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function fenceJob(customerId, jobId) {
+  if (!UUID_SHAPE.test(jobId)) {
+    return { status: 400, words: "job_id must be a job id, pick a job from the customer's jobs" };
+  }
   const known = CUSTOMER_IDS.some(
     (id) => jobId === jobForCustomer(id) || jobId === closedJobForCustomer(id),
   );
-  if (!known) return { status: 404, words: "not found" };
+  if (!known) return { status: 404, words: "that job was not found" };
   if (jobId === jobForCustomer(customerId)) return null;
-  if (jobId === closedJobForCustomer(customerId) || jobId.endsWith("-done")) {
+  if (jobId === closedJobForCustomer(customerId)) {
     return { status: 400, words: "the job is closed, so it takes no new document" };
   }
   return { status: 400, words: "that job is another customer's job" };
