@@ -15,22 +15,27 @@ import (
 	"time"
 )
 
-// TestIntegration_Export_TheWholeYearRunsOnTheSeededCore is red leg 3 on the seeded 2026 books: the
-// pick the desk's Whole year button sends must answer the year's rows and record its batch.
+// TestIntegration_Export_TheWholeYearRunsOnTheSeededCore is red leg 3 on the seeded books: the
+// pick the desk's Whole year button sends must answer the year's rows and record its batch. The
+// leg's year is the seed's own latest year, derived, never hardcoded, and a seed with no movement
+// at all FAILS the leg instead of skipping it (S7's P3-3 on 719): with a database in hand, an
+// empty v_gl_detail is a broken fixture, not a year without movement.
 func TestIntegration_Export_TheWholeYearRunsOnTheSeededCore(t *testing.T) {
 	ctx := context.Background()
 	pool := intPool(t)
 	svc := exportSvc(t, pool, time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC))
 
+	var year int
 	var seeded int64
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM v_gl_detail WHERE period_year = 2026`).Scan(&seeded); err != nil {
-		t.Fatalf("count the seeded 2026 rows: %v", err)
+	if err := pool.QueryRow(ctx,
+		`SELECT period_year, count(*) FROM v_gl_detail GROUP BY period_year ORDER BY period_year DESC LIMIT 1`).Scan(&year, &seeded); err != nil {
+		t.Fatalf("the seeded books must carry movement for the whole year leg to read: %v", err)
 	}
 	if seeded == 0 {
-		t.Skip("no 2026 movement seeded")
+		t.Fatalf("the seeded books' year %d carries no movement; the fixture is broken, not quiet", year)
 	}
 
-	res, err := svc.Export(ctx, ExportQuery{Year: 2026, Month: 0})
+	res, err := svc.Export(ctx, ExportQuery{Year: year, Month: 0})
 	if err != nil {
 		t.Fatalf("the whole year export must run on the real core: %v", err)
 	}

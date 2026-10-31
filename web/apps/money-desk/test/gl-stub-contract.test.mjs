@@ -530,6 +530,10 @@ test("the policy, the receivables tie out, the BisTrack check and the export ans
   holds("GlExportResult", exp.json);
   assert.equal(exp.json.format, "GP_PARITY");
   assert.ok(exp.json.content.startsWith("# PARITY DRAFT"));
+  // the banner names the pick like the core's does, the quarter included (core close.go renderGPParity)
+  assert.ok(exp.json.content.includes("# fiscal_year=2026 month=0 quarter=0 rows="), "the banner carries quarter=");
+  const q2 = await call(IDS.controller, "POST", "/api/v1/gl/export", { year: 2026, month: 0, quarter: 2, branch_id: "" });
+  assert.ok(q2.json.content.includes("# fiscal_year=2026 month=0 quarter=2 rows="), "a quarter pick says its quarter");
   assert.ok(exp.json.content.includes("entry_no,posted_at,account_code,account_name,debit,credit,memo"));
   refused(await call(IDS.controller, "POST", "/api/v1/gl/export", { year: 0, month: 0, branch_id: "" }), 400, "gl: export requires a fiscal_year");
   refused(await call(IDS.payRec, "POST", "/api/v1/gl/export", { year: 2026, month: 0, branch_id: "" }), 403, "Forbidden");

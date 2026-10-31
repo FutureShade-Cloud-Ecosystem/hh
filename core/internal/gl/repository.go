@@ -2109,7 +2109,10 @@ func (r *Repository) InsertExportBatch(ctx context.Context, year, month int, for
 }
 
 // ExportRows reads one period's posted lines for the export: the fiscal year, the pick's months
-// (an empty slice is the whole year), and the branch scope ("" = consolidated).
+// (an empty slice is the whole year), and the branch scope ("" = consolidated). The posted day is
+// rendered in the DEALER's house zone, the same zone the posting path files periods by: an export
+// file's days are house days, never UTC days (a 9pm Ontario posting on the last day of a month is
+// that month's, in the books and in the file alike).
 func (r *Repository) ExportRows(ctx context.Context, year int, months []int, branchID string) ([]ExportRow, error) {
 	if r.pool == nil {
 		return nil, errNoDB
@@ -2117,14 +2120,18 @@ func (r *Repository) ExportRows(ctx context.Context, year int, months []int, bra
 	if months == nil {
 		months = []int{}
 	}
+	zone, err := r.BusinessZone(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT entry_no, COALESCE(to_char(posted_at,'YYYY-MM-DD'),''), account_code::text, account_name,
+		`SELECT entry_no, COALESCE(to_char(posted_at AT TIME ZONE $4, 'YYYY-MM-DD'),''), period_year, period_month, account_code::text, account_name,
 		        COALESCE(debit_cents,0), COALESCE(credit_cents,0), COALESCE(memo,'')
 		 FROM v_gl_detail
 		 WHERE period_year = $1
 		   AND (cardinality($2::int[]) = 0 OR period_month = ANY($2::int[]))
 		   AND ($3 = '' OR branch_id = $3::uuid)
-		 ORDER BY entry_no, account_code`, year, months, branchID)
+		 ORDER BY entry_no, account_code`, year, months, branchID, zone.Name())
 	if err != nil {
 		return nil, fmt.Errorf("gl: export rows: %w", err)
 	}
@@ -2132,7 +2139,7 @@ func (r *Repository) ExportRows(ctx context.Context, year int, months []int, bra
 	var out []ExportRow
 	for rows.Next() {
 		var e ExportRow
-		if err := rows.Scan(&e.EntryNo, &e.PostedAt, &e.AccountCode, &e.AccountName, &e.DebitCents, &e.CreditCents, &e.Memo); err != nil {
+		if err := rows.Scan(&e.EntryNo, &e.PostedAt, &e.PeriodYear, &e.PeriodMonth, &e.AccountCode, &e.AccountName, &e.DebitCents, &e.CreditCents, &e.Memo); err != nil {
 			return nil, fmt.Errorf("gl: scan export row: %w", err)
 		}
 		out = append(out, e)
