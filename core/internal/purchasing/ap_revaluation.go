@@ -279,10 +279,13 @@ func (s *Service) refuseUnreversedEarlierMonth(ctx context.Context, branchID str
 	if s.journalReader == nil {
 		return nil
 	}
-	first := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
 	for i := 1; i <= apRevalLookback; i++ {
-		prev := first.AddDate(0, -i, 0)
-		prevWords := fmt.Sprintf("%04d-%02d", prev.Year(), int(prev.Month()))
+		// Month arithmetic on the number, not on a calendar instant: a month is a name here.
+		idx := year*12 + (month - 1) - i
+		if idx < 12 {
+			break
+		}
+		prevWords := fmt.Sprintf("%04d-%02d", idx/12, idx%12+1)
 		runKey := apRevalKey(branchID, prevWords)
 		run, found, err := s.journalReader.JournalByKey(ctx, runKey)
 		if err != nil {
