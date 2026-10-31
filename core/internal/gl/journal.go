@@ -319,6 +319,15 @@ func (s *Service) GetJournal(ctx context.Context, id string) (Journal, error) {
 	return j, nil
 }
 
+// JournalByKey answers the POSTED journal filed under an idempotency key with its legs, found false
+// when no POSTED journal carries the key. It is the module-to-module read of a journal the asking
+// module itself posted (purchasing's month end AP revaluation reads its own run's journal to judge a
+// re-press and to reverse its legs), so it carries no caller gate, exactly like the other by-key
+// reads in journal_clock.go; the asking module owns the fence on its own door.
+func (s *Service) JournalByKey(ctx context.Context, key string) (Journal, bool, error) {
+	return s.repo.JournalByKey(ctx, key)
+}
+
 // - journal writes (maker-checker) -
 
 // CreateJournal validates a balanced manual entry and either posts it directly (below the gl_policy approval

@@ -224,6 +224,10 @@ type Service struct {
 	warrantyCredit WarrantyCreditReader
 	landedPayables LandedCostPayableReader
 	journalClock   GLJournalClock
+	// journalReader reads a posted journal the module itself filed, by its idempotency key
+	// (the AP revaluation's run and its reversal). Nil degrades the run's replay judgement
+	// and refuses the reversal in words.
+	journalReader GLJournalReader
 	// postingWindow reads the GL's posting horizon: whether a payment dated on a house day
 	// would post at all. A payment run asks it before it takes a pay date, so a date the
 	// books would refuse is refused at the desk and not only at the pay.
