@@ -633,3 +633,12 @@ test("UX-125: the delta joins the worded values like any other change", () => {
   assert.equal(floorDeltaWords("rule 745 at 12%", null), "cleared");
   assert.equal(floorDeltaWords(null, null), "");
 });
+
+test("UX-126 read P3-1: a value that matches no floor shape stays as written inside Was and Now", () => {
+  assert.equal(floorDeltaWords("SKU-1 Pending", "Done."), "Was: SKU-1 Pending. Now: Done.");
+  assert.equal(floorDeltaWords(null, "Hold ON"), "Now: Hold ON.");
+  assert.equal(
+    floorDeltaWords("SKU-1 Pending", "net 655 margin 1189 floor 2000"),
+    "Was: SKU-1 Pending. Now: net $6.55, margin 11.89%, floor 20.00%.",
+  );
+});
