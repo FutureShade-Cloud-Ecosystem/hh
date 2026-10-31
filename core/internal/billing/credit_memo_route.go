@@ -996,15 +996,16 @@ func (w *InvoiceWriter) ParkCreditMemoTx(ctx context.Context, tx pgx.Tx, in Cred
 		ReversesInvoiceID: in.ReversesInvoiceID, ClosesOrder: false,
 	}
 	journal := CreditMemoJournal{
-		CreditMemoID:   id,
-		CreditMemoNo:   no,
-		BranchID:       branchID,
-		IdempotencyKey: creditMemoJournalKey(id),
-		Memo:           "Credit memo awaiting approval: " + in.Memo,
-		OccurredAt:     w.now(),
-		ARCents:        total,
-		RevenueCents:   plan.subtotal,
-		TaxCents:       plan.tax,
+		CreditMemoID:       id,
+		CreditMemoNo:       no,
+		BranchID:           branchID,
+		IdempotencyKey:     creditMemoJournalKey(id),
+		Memo:               "Credit memo awaiting approval: " + in.Memo,
+		OccurredAt:         w.now(),
+		ARCents:            total,
+		RevenueCents:       plan.subtotal,
+		TaxCents:           plan.tax,
+		ReversesSourceKind: plan.origSourceKind,
 	}
 	return doc, journal, nil
 }

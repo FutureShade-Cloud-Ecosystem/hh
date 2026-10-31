@@ -73,6 +73,7 @@ type failedCreditMemo struct {
 	// the sign once, at the INSERT) and the journal takes positive magnitudes with the ROLES swapped.
 	arCents, revenueCents, taxCents int64
 	occurredAt                      time.Time
+	reversesSourceKind              string
 }
 
 // RepostFailedCreditMemoJournals finds credit memos with no reversing journal and posts it.
@@ -118,10 +119,11 @@ func (w *InvoiceWriter) repostAll(ctx context.Context, pending []failedCreditMem
 			Memo:           "Credit memo " + m.no + " (re-posted)",
 			// The memo's OWN date, not tonight's. A journal dated the night the sweep happened to
 			// run would land in the wrong period and re-open a month that was already closed.
-			OccurredAt:   m.occurredAt,
-			ARCents:      m.arCents,
-			RevenueCents: m.revenueCents,
-			TaxCents:     m.taxCents,
+			OccurredAt:         m.occurredAt,
+			ARCents:            m.arCents,
+			RevenueCents:       m.revenueCents,
+			TaxCents:           m.taxCents,
+			ReversesSourceKind: m.reversesSourceKind,
 		})
 		if perr != nil {
 			res.Failed++
@@ -160,8 +162,9 @@ func (w *InvoiceWriter) findCreditMemosWithoutJournals(ctx context.Context, limi
 	rows, err := w.pool.Query(ctx, `
 		SELECT i.id::text, i.invoice_no::text, i.branch_id::text,
 		       -i.total_cents, -i.subtotal_cents, -i.tax_cents,
-		       COALESCE(i.finalized_at, i.created_at)
+		       COALESCE(i.finalized_at, i.created_at), COALESCE(o.source_kind, '')
 		  FROM invoices i
+		  LEFT JOIN invoices o ON o.id = i.reverses_invoice_id
 		 WHERE i.doc_type = 'CREDIT_MEMO'
 		   AND i.source_kind <> 'IMPORT'
 		   AND NOT EXISTS (
@@ -177,7 +180,7 @@ func (w *InvoiceWriter) findCreditMemosWithoutJournals(ctx context.Context, limi
 	var out []failedCreditMemo
 	for rows.Next() {
 		var m failedCreditMemo
-		if err := rows.Scan(&m.id, &m.no, &m.branchID, &m.arCents, &m.revenueCents, &m.taxCents, &m.occurredAt); err != nil {
+		if err := rows.Scan(&m.id, &m.no, &m.branchID, &m.arCents, &m.revenueCents, &m.taxCents, &m.occurredAt, &m.reversesSourceKind); err != nil {
 			return nil, fmt.Errorf("billing: scan credit memo without journal: %w", err)
 		}
 		// A memo with no money in it has no journal to post, there are no legs, and gl would refuse
