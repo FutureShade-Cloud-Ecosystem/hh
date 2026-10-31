@@ -114,11 +114,14 @@ func roundHalfEvenCents(base int64, bps int64) int64 {
 //     follows the money, because the discount is the price of early money and only the money that
 //     arrived inside the window earned it; the rest of the invoice keeps its face for the next
 //     application.
-func applicationDiscount(payable, applied int64, bps int, eligible bool) int64 {
-	if !eligible || bps <= 0 || payable <= 0 || applied <= 0 {
+//   - Whatever the case, the running total of discounts on one invoice never passes the terms'
+//     percent of its discountable base: room is what is left of it, and the last partial takes
+//     only that.
+func applicationDiscount(payable, applied int64, bps int, room int64, eligible bool) int64 {
+	if !eligible || bps <= 0 || payable <= 0 || applied <= 0 || room <= 0 {
 		return 0
 	}
-	full := roundHalfEvenCents(payable, int64(bps))
+	full := min(roundHalfEvenCents(payable, int64(bps)), room)
 	if applied >= payable-full {
 		d := payable - applied
 		if d < 0 {
@@ -129,7 +132,7 @@ func applicationDiscount(payable, applied int64, bps int, eligible bool) int64 {
 		}
 		return d
 	}
-	d := roundHalfEvenCents(applied, int64(bps))
+	d := min(roundHalfEvenCents(applied, int64(bps)), room)
 	// The discount never overshoots the debt: the balance move is the money and the discount
 	// together, and a rounding edge on a tiny payable cannot take the balance below zero on a
 	// payment that does not close the document.
@@ -193,22 +196,22 @@ func (c *discountContext) eligible(discountDay, termsCode string) (bps int, allo
 // fullDiscountOn is the terms' own percent of the whole payable, half to even, when the document
 // is eligible: the discount a payment that closes the document takes, and therefore the money the
 // document needs to close (payable less it).
-func (c *discountContext) fullDiscountOn(payable int64, discountDay, termsCode string) int64 {
-	bps, allowed := c.eligible(discountDay, termsCode)
+func (c *discountContext) fullDiscountOn(payable int64, row applyInvoiceRow) int64 {
+	bps, allowed := c.eligible(discountDayOf(row), row.TermsCode)
 	if !allowed {
 		return 0
 	}
-	return roundHalfEvenCents(payable, int64(bps))
+	return min(roundHalfEvenCents(payable, int64(bps)), c.room(row))
 }
 
 // discountOn is applicationDiscount over one document's own facts, with the window and the late
 // approval already folded in by eligible.
-func (c *discountContext) discountOn(payable, applied int64, discountDay, termsCode string) int64 {
-	bps, allowed := c.eligible(discountDay, termsCode)
+func (c *discountContext) discountOn(payable, applied int64, row applyInvoiceRow) int64 {
+	bps, allowed := c.eligible(discountDayOf(row), row.TermsCode)
 	if !allowed {
 		return 0
 	}
-	return applicationDiscount(payable, applied, bps, true)
+	return applicationDiscount(payable, applied, bps, c.room(row), true)
 }
 
 // takesLate answers whether one document's discount, if any is taken at all, would ride the late
@@ -334,4 +337,47 @@ func discountTakenOn(invoiceID string, p Payment) int64 {
 		}
 	}
 	return d
+}
+
+// discountQuerier is the one read loadDiscountRoom needs: a transaction or the pool.
+type discountQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// loadDiscountRoom reads the two facts the running total cap needs for one invoice (P3-3): its
+// discountable base (the total less the retained holdback) and the discount its LIVE applications
+// have already taken. Live means a receipt still standing: a bounced, voided or reversed receipt
+// gave its discount back and no longer counts. An invoice with no discount terms is left alone.
+func loadDiscountRoom(ctx context.Context, q discountQuerier, row *applyInvoiceRow) error {
+	if row.IsNSFFee || row.DiscountDate == nil || row.TermsCode == "" {
+		return nil
+	}
+	if err := q.QueryRow(ctx, `
+		SELECT GREATEST(i.total_cents - i.holdback_cents, 0),
+		       COALESCE((SELECT SUM(pa.discount_cents)
+		                   FROM payment_allocations pa
+		                   JOIN payments p ON p.id = pa.payment_id
+		                  WHERE pa.invoice_id = i.id AND pa.kind = 'APPLICATION'
+		                    AND p.status IN ('RECEIVED', 'DEPOSITED')
+		                    AND p.reversed_at IS NULL AND p.reverses_payment_id IS NULL), 0)
+		  FROM invoices i WHERE i.id = $1::uuid`, row.InvoiceID).Scan(&row.BaseCents, &row.TakenDiscountCents); err != nil {
+		return fmt.Errorf("payments: read the discount room of invoice %s: %w", row.InvoiceID, err)
+	}
+	return nil
+}
+
+// room answers how many cents of discount one document may still take: the terms' percent of its
+// discountable base, less what its live applications already took, never below zero. Each
+// partial is rounded on its own, so on tiny partials the rounded sum can drift past the terms'
+// percent; this is the bound that holds the running total to the terms amount exactly.
+func (c *discountContext) room(row applyInvoiceRow) int64 {
+	rate := c.bps[row.TermsCode]
+	if rate <= 0 {
+		return 0
+	}
+	r := roundHalfEvenCents(row.BaseCents, int64(rate)) - row.TakenDiscountCents
+	if r < 0 {
+		return 0
+	}
+	return r
 }

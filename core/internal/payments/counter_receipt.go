@@ -203,10 +203,13 @@ func validateReceipt(in ReceiptRequest) error {
 // clock; nil makes the settle resolve its own from the rows it locks (the per invoice and portal
 // doors).
 func (r *Repository) settleReceipt(ctx context.Context, tx pgx.Tx, in ReceiptRequest, dctx *discountContext) (p Payment, claimed bool, err error) {
-	total, invBranch, err := r.lockAndTotal(ctx, tx, in.CustomerID, in.Allocations, dctx)
+	total, invBranch, clamped, err := r.lockAndTotal(ctx, tx, in.CustomerID, in.Allocations, dctx)
 	if err != nil {
 		return Payment{}, false, err
 	}
+	// Money past an eligible invoice's discounted payoff (a door that named the face) stays with
+	// the dealer as change, like the apply's own (P3-2).
+	in.ChangeCents += clamped
 	branchID := in.BranchID
 	if branchID == "" {
 		branchID = invBranch

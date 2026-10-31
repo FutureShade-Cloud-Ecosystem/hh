@@ -330,6 +330,9 @@ func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in Appl
 			Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
 				&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents,
 				&row.DiscountDate, &row.TermsCode)
+		if err == nil {
+			err = loadDiscountRoom(ctx, tx, &row)
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			nsfRow, found, nsfErr := lockApplyNSFFeeByIDTx(ctx, tx, id, in.CustomerID, reach)
 			if nsfErr != nil {
@@ -447,6 +450,13 @@ func (r *Repository) readApplyInvoices(ctx context.Context, in ApplyRequest) ([]
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("apply preview: read invoices: %w", err)
+	}
+	rows.Close()
+	for id, row := range found {
+		if err := loadDiscountRoom(ctx, r.pool, &row); err != nil {
+			return nil, err
+		}
+		found[id] = row
 	}
 	ordered := make([]applyInvoiceRow, 0, len(ids))
 	for _, id := range ids {
@@ -870,7 +880,7 @@ func (r *Repository) PayWithStamps(ctx context.Context, customerID, method, gate
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	total, branchID, err := r.lockAndTotal(ctx, tx, customerID, allocs, nil)
+	total, branchID, change, err := r.lockAndTotal(ctx, tx, customerID, allocs, nil)
 	if err != nil {
 		return Payment{}, err
 	}
@@ -886,7 +896,7 @@ VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), nextval('payment_no_se
         (SELECT org_id FROM customers WHERE id = $2::uuid),
         (SELECT next_value FROM pseq), $7)
 RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, status, gateway_ref, received_at`,
-		stamps.RowID, customerID, method, total, branchID, gatewayRef, stamps.ClientKey).Scan(
+		stamps.RowID, customerID, method, total+change, branchID, gatewayRef, stamps.ClientKey).Scan(
 		&p.ID, &p.PaymentNo, &pCustomerID, &p.Method, &p.AmountCents, &p.Status, &pGatewayRef, &p.ReceivedAt)
 	if err != nil {
 		return Payment{}, fmt.Errorf("pay: insert payment: %w", err)
@@ -898,7 +908,7 @@ RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, s
 		p.GatewayRef = *pGatewayRef
 	}
 
-	if err := applyAllocations(ctx, tx, &p, customerID, method, gatewayRef, branchID, allocs, "", 0); err != nil {
+	if err := applyAllocations(ctx, tx, &p, customerID, method, gatewayRef, branchID, allocs, "", change); err != nil {
 		return Payment{}, err
 	}
 
@@ -1126,15 +1136,15 @@ func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) erro
 // that the key share blocks closes a cycle (the return's refund rail then waits on the counter). With
 // NO KEY UPDATE the settle never waits on the return's share at all: no writer deletes invoices or
 // changes their keys, so the share is never something the settle needs to hold back.
-func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Allocation, dctx *discountContext) (int64, string, error) {
+func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Allocation, dctx *discountContext) (int64, string, int64, error) {
 	if _, err := tx.Exec(ctx, lockPaymentsSequenceSQL); err != nil {
-		return 0, "", fmt.Errorf("pay: lock payments sequence: %w", err)
+		return 0, "", 0, fmt.Errorf("pay: lock payments sequence: %w", err)
 	}
 	// The discount facts read under the locks this loop takes, so a context the caller did not
 	// bring (the per invoice settle, the portal settle) is built here from the rows themselves and
 	// the walk that did bring one re-reads nothing: its context is handed in already resolved.
 	discountRows := make([]applyInvoiceRow, 0, len(allocs))
-	var total int64
+	var total, change int64
 	var branchID string
 	for _, a := range allocs {
 		if a.IsNSFFee {
@@ -1149,12 +1159,12 @@ func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID str
 				a.InvoiceID, customerID).Scan(&remaining, &nsfBranch)
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
-					return 0, "", ErrNotFound
+					return 0, "", 0, ErrNotFound
 				}
-				return 0, "", fmt.Errorf("pay: lock nsf fee %q: %w", a.InvoiceID, err)
+				return 0, "", 0, fmt.Errorf("pay: lock nsf fee %q: %w", a.InvoiceID, err)
 			}
 			if a.AmountCents <= 0 || a.AmountCents > remaining {
-				return 0, "", httpx.BadRequestf("NSF fee %q balance changed; refresh and retry", a.InvoiceID)
+				return 0, "", 0, httpx.BadRequestf("NSF fee %q balance changed; refresh and retry", a.InvoiceID)
 			}
 			total += a.AmountCents
 			if branchID == "" {
@@ -1172,21 +1182,25 @@ func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID str
 			customerID, a.InvoiceID).Scan(&balance, &holdback, &invBranch, &discountDay, &termsCode)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return 0, "", ErrNotFound
+				return 0, "", 0, ErrNotFound
 			}
-			return 0, "", fmt.Errorf("pay: lock invoice %q: %w", a.InvoiceID, err)
+			return 0, "", 0, fmt.Errorf("pay: lock invoice %q: %w", a.InvoiceID, err)
 		}
 		payable := balance - holdback
 		if payable < 0 {
 			payable = 0
 		}
 		if a.AmountCents <= 0 || a.AmountCents > payable {
-			return 0, "", httpx.BadRequestf("invoice %q balance changed; refresh and retry", a.InvoiceID)
+			return 0, "", 0, httpx.BadRequestf("invoice %q balance changed; refresh and retry", a.InvoiceID)
 		}
-		discountRows = append(discountRows, applyInvoiceRow{
+		dRow := applyInvoiceRow{
 			InvoiceID: a.InvoiceID, BalanceCents: balance, HoldbackCents: holdback,
 			DiscountDate: discountDay, TermsCode: termsCode,
-		})
+		}
+		if err := loadDiscountRoom(ctx, tx, &dRow); err != nil {
+			return 0, "", 0, err
+		}
+		discountRows = append(discountRows, dRow)
 		total += a.AmountCents
 		if branchID == "" {
 			branchID = invBranch
@@ -1200,13 +1214,18 @@ func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID str
 		var err error
 		dctx, err = r.newDiscountContextTx(ctx, tx, discountRows, nil)
 		if err != nil {
-			return 0, "", err
+			return 0, "", 0, err
 		}
 	}
 	byID := make(map[string]applyInvoiceRow, len(discountRows))
 	for _, row := range discountRows {
 		byID[row.InvoiceID] = row
 	}
+	// ONE RULE AT EVERY DOOR (P3-2): money that reaches or passes an eligible invoice's discounted
+	// payoff takes the discount and closes it, whichever door brought it. The invoice takes the
+	// payoff (payable less the full discount, as the desk's walk does), and the rest of what the
+	// caller named is change, returned for the settle to leave on the customer's account. A caller
+	// that already walked (the apply) names no more than the payoff, so nothing is clamped there.
 	for i := range allocs {
 		if allocs[i].IsNSFFee {
 			continue
@@ -1216,9 +1235,14 @@ func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID str
 		if payable < 0 {
 			payable = 0
 		}
-		allocs[i].DiscountCents = dctx.discountOn(payable, allocs[i].AmountCents, discountDayOf(row), row.TermsCode)
+		if full := dctx.fullDiscountOn(payable, row); full > 0 && allocs[i].AmountCents > payable-full {
+			change += allocs[i].AmountCents - (payable - full)
+			total -= allocs[i].AmountCents - (payable - full)
+			allocs[i].AmountCents = payable - full
+		}
+		allocs[i].DiscountCents = dctx.discountOn(payable, allocs[i].AmountCents, row)
 	}
-	return total, branchID, nil
+	return total, branchID, change, nil
 }
 
 // applyAllocations writes the N allocations, moves the N invoice balances, writes the N subledger

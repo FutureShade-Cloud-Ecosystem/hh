@@ -153,6 +153,12 @@ type applyInvoiceRow struct {
 	// its discount runs and the term it was dated by. An NSF fee carries neither.
 	DiscountDate *time.Time
 	TermsCode    string
+	// BaseCents and TakenDiscountCents bound the discount's running total (P3-3): the invoice's
+	// discountable base (total less the retained holdback) and the discount the live applications
+	// on it have already taken. The terms percent of the base, less the taken discount, is the
+	// room the next application has.
+	BaseCents          int64
+	TakenDiscountCents int64
 }
 
 // ApplyReceived records ONE received payment against a list of the account's open invoices and
@@ -511,7 +517,7 @@ func allocateOldestFirst(rows []applyInvoiceRow, amountCents int64, dctx *discou
 		// and the walk is exactly the walk that ran before the discount existed.
 		payoff := payable
 		if dctx != nil {
-			if full := dctx.fullDiscountOn(payable, discountDayOf(row), row.TermsCode); full > 0 {
+			if full := dctx.fullDiscountOn(payable, row); full > 0 {
 				payoff = payable - full
 			}
 		}
@@ -525,7 +531,7 @@ func allocateOldestFirst(rows []applyInvoiceRow, amountCents int64, dctx *discou
 		}
 		discount := int64(0)
 		if take > 0 && dctx != nil {
-			discount = dctx.discountOn(payable, take, discountDayOf(row), row.TermsCode)
+			discount = dctx.discountOn(payable, take, row)
 		}
 		after := row.BalanceCents - take - discount
 		staysOpen := after - row.HoldbackCents
