@@ -545,6 +545,202 @@ export function canLiftHolds(roleCode: string): boolean {
   return roleCode === "financial_controller" || roleCode === "general_manager";
 }
 
+// ---- the credit limit's changes (CC-2) ---------------------------------------------------------------
+
+/**
+ * The roles the credit change routes admit, identity's own manager tiers: the route's gate
+ * (RequireManager) passes a tier one or tier two role, and the service refuses only HR. The codes
+ * are the session's own, lower case spelling. Every role that holds the Money Desk is here, and a
+ * role that is not sees neither the screens nor the controls, the way the route would refuse it.
+ */
+const CREDIT_CHANGE_ADMITTED: ReadonlySet<string> = new Set([
+  "financial_controller",
+  "general_manager",
+  "payables_receivables",
+  "branch_manager",
+  "procurement_manager",
+  "sales_manager",
+  "yard_manager",
+  "logistics_manager",
+  "super_admin",
+]);
+
+/**
+ * The roles that may decide a credit change: the service's own first approver set, a branch
+ * manager, the Financial Controller, the General Manager or the platform administrator. The second
+ * of two approvals is narrower still, and the service says so itself in its refusal; this gate only
+ * keeps the controls from roles the service would always turn away.
+ */
+const CREDIT_CHANGE_DECIDERS: ReadonlySet<string> = new Set(["branch_manager", "financial_controller", "general_manager", "super_admin"]);
+
+/** Whether the signed in role reaches the credit change routes at all. */
+export function canWorkCreditChanges(roleCode: string): boolean {
+  return CREDIT_CHANGE_ADMITTED.has(roleCode);
+}
+
+/** Whether the signed in role may approve or reject a credit change. */
+export function canDecideCreditChanges(roleCode: string): boolean {
+  return CREDIT_CHANGE_DECIDERS.has(roleCode);
+}
+
+/** The role words for the codes a credit change row carries (the core's stored, upper case spelling). */
+const CREDIT_ROLE_WORD: Record<string, string> = {
+  BRANCH_MANAGER: "the branch manager",
+  FINANCIAL_CONTROLLER: "the financial controller",
+  GENERAL_MANAGER: "the general manager",
+  PAYABLES_RECEIVABLES: "Payables and Receivables",
+  PROCUREMENT_MANAGER: "the procurement manager",
+  SALES_MANAGER: "the sales manager",
+  YARD_MANAGER: "the yard manager",
+  LOGISTICS_MANAGER: "the logistics manager",
+  SUPER_ADMIN: "the platform administrator",
+};
+
+/**
+ * Who a row names, in words: "you" when it is the person reading the screen, else the role the
+ * core stamped on the row. The row carries a user id, and this desk has no roster read, so the
+ * role is the one name every reader can trust; a code the desk does not know reads as a manager
+ * rather than as itself.
+ */
+export function creditWho(id: string | undefined, roleCode: string | undefined, youId: string): string {
+  if (id !== undefined && id !== "" && id === youId) return "you";
+  return (roleCode !== undefined && CREDIT_ROLE_WORD[roleCode]) || "a manager";
+}
+
+/** One credit change row as the words read it: only the fields the words need. */
+export interface CreditChangeWords {
+  readonly change_kind: string;
+  readonly previous_limit_cents: number;
+  readonly new_limit_cents?: number | undefined;
+  readonly delta_cents: number;
+  readonly reason: string;
+  readonly status: string;
+  readonly required_approvals: number;
+  readonly requested_by: string;
+  readonly requested_by_role?: string | undefined;
+  readonly requested_at: string;
+  readonly first_approved_by?: string | undefined;
+  readonly first_approved_by_role?: string | undefined;
+  readonly first_approved_at?: string | undefined;
+  readonly second_approved_by?: string | undefined;
+  readonly second_approved_by_role?: string | undefined;
+  readonly second_approved_at?: string | undefined;
+  readonly rejected_by?: string | undefined;
+  readonly rejected_by_role?: string | undefined;
+  readonly rejected_at?: string | undefined;
+  readonly rejection_reason?: string | undefined;
+  readonly applied_at?: string | undefined;
+}
+
+/** The house day an instant the core stamped falls on, in words (never the UTC day). */
+export function creditDay(stamp: string): string {
+  return dayWords(stampDay(stamp));
+}
+
+/** The rise or fall in the desk's one money voice: the row's own delta, read as words. */
+export function creditDeltaWords(deltaCents: number): string {
+  if (deltaCents > 0) return `up ${formatMoney(deltaCents)}`;
+  if (deltaCents < 0) return `down ${formatMoney(Math.abs(deltaCents))}`;
+  return "no change";
+}
+
+/** What one row asks for: the limit it moves to, and by how much, from the limit it names. */
+export function creditAskWords(row: CreditChangeWords): string {
+  if (row.change_kind !== "LIMIT_CHANGE" || row.new_limit_cents === undefined) return "a credit hold by hand";
+  return `${formatMoney(row.new_limit_cents)}, ${creditDeltaWords(row.delta_cents)} from ${formatMoney(row.previous_limit_cents)}`;
+}
+
+/**
+ * Where a waiting request stands, in words: which approval it waits for and which is already
+ * recorded. The counts are the row's own (the core raises them when the base moves); the names
+ * are the roles the core stamped.
+ */
+export function creditPendingWords(row: CreditChangeWords, youId: string): string {
+  if (row.required_approvals >= 2 && row.first_approved_by !== undefined) {
+    return `First of two approvals recorded (${creditWho(row.first_approved_by, row.first_approved_by_role, youId)}${row.first_approved_at === undefined ? "" : `, ${creditDay(row.first_approved_at)}`}). Waiting for the second.`;
+  }
+  const waiting = row.required_approvals >= 2 ? "two approvals" : "one approval";
+  return `Waiting for ${waiting}`;
+}
+
+/**
+ * Why the person reading cannot decide a waiting request, in a bookkeeper's words, or "" when
+ * they can. The core turns away the person who asked from approving and from rejecting, and the
+ * person who gave the first approval from giving the second; the screen says so before the press
+ * and the core's refusal stays the backstop.
+ */
+export function creditBlockedWords(row: CreditChangeWords, youId: string): { readonly approve: string; readonly reject: string } {
+  if (youId !== "" && row.requested_by === youId) {
+    const asked = "You asked for this one, so another person decides it.";
+    return { approve: asked, reject: asked };
+  }
+  if (youId !== "" && row.first_approved_by === youId) {
+    return { approve: "You approved this one; it needs a second person.", reject: "" };
+  }
+  return { approve: "", reject: "" };
+}
+
+/**
+ * What a request did, told to the person who just asked: a decrease took effect at once, and an
+ * increase moved nothing, with the tier's own count from the row the core answered.
+ */
+export function creditRequestWords(row: CreditChangeWords): string {
+  if (row.status === "APPLIED") {
+    return `The credit limit is now ${formatMoney(row.new_limit_cents ?? row.previous_limit_cents)}, ${creditDeltaWords(row.delta_cents)} from ${formatMoney(row.previous_limit_cents)}. The change is in place.`;
+  }
+  const tier = row.required_approvals >= 2 ? "two approvals" : "one approval";
+  return `The new limit of ${formatMoney(row.new_limit_cents ?? row.previous_limit_cents)} is waiting for ${tier}. Nothing has moved: the limit stays ${formatMoney(row.previous_limit_cents)} until it is approved.`;
+}
+
+/** What an approval did: applied the limit, or recorded the first of the two it needs. */
+export function creditApproveWords(row: CreditChangeWords): string {
+  if (row.status === "APPLIED") {
+    return `Approved: the credit limit is now ${formatMoney(row.new_limit_cents ?? row.previous_limit_cents)}, ${creditDeltaWords(row.delta_cents)} from ${formatMoney(row.previous_limit_cents)}.`;
+  }
+  return `First of two approvals recorded. Nothing has moved: the limit stays ${formatMoney(row.previous_limit_cents)} until the second approval lands.`;
+}
+
+/** What a rejection did: the asked limit will not take effect. */
+export function creditRejectWords(row: CreditChangeWords): string {
+  return `The request is rejected. The limit stays ${formatMoney(row.previous_limit_cents)}; the asked ${formatMoney(row.new_limit_cents ?? row.previous_limit_cents)} will not take effect.`;
+}
+
+/**
+ * The history's one line of decision, in a bookkeeper's words: who asked, who approved or
+ * rejected, before and after, and where a waiting request stands. The figures and the names are
+ * the row's own; nothing here works anything out.
+ */
+export function creditDecisionWords(row: CreditChangeWords, youId: string): string {
+  if (row.status === "REJECTED") {
+    const who = creditWho(row.rejected_by, row.rejected_by_role, youId);
+    const when = row.rejected_at === undefined ? "" : ` on ${creditDay(row.rejected_at)}`;
+    return `Rejected by ${who}${when}${row.rejection_reason === undefined || row.rejection_reason === "" ? "" : `: ${row.rejection_reason}`}.`;
+  }
+  if (row.status === "PENDING") return creditPendingWords(row, youId);
+  if (row.required_approvals === 0) {
+    return `Took effect the day it was asked${row.applied_at === undefined ? "" : `, ${creditDay(row.applied_at)}`}.`;
+  }
+  const first = creditWho(row.first_approved_by, row.first_approved_by_role, youId);
+  const second = row.second_approved_by === undefined ? "" : ` and ${creditWho(row.second_approved_by, row.second_approved_by_role, youId)}`;
+  const since = row.applied_at === undefined ? "" : `; in place since ${creditDay(row.applied_at)}`;
+  return `Approved by ${first}${second}${since}.`;
+}
+
+/**
+ * A credit change refusal in the server's own words. The core words every refusal this route
+ * answers, its 403s included (a role that may not decide, a self approval, a second approval by
+ * the same person), so unlike the role gate's shared body the sentence itself is the honest
+ * answer and it is kept; only the module prefix reads as the desk's other refusals do.
+ */
+export function creditRefusalWords(error: string, status: number | undefined): string {
+  if (status === 401) return "Your sign in has ended. Sign in again.";
+  if (status === undefined) return "The server could not be reached. Nothing was changed. Try again.";
+  if (status >= 500) return "The server hit a problem. Nothing was changed. Try again.";
+  const asDollars = error.replace(/\b(\d+) cents\b/g, (_whole, digits: string) => formatMoney(Number(digits)));
+  const words = sentence(asDollars);
+  return words === "" ? "The server refused that." : words;
+}
+
 /** The true void of a mis-keyed receipt is a manager act, the same pair the lift hold gate trusts (FW1-06b). The
  * server re-refuses: this only hides the button from roles the route would turn away. */
 export function canVoidReceipt(roleCode: string): boolean {

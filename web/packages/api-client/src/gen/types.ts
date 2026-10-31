@@ -637,6 +637,7 @@ export type BillingCreditMemoInput = {
   reason: string;
   gl_account?: string;
   idempotency_key?: string;
+  job_id?: string;
 };
 export type BillingCreditMemoQuoteInput = {
   customer_id: string;
@@ -5049,6 +5050,7 @@ export type PosSaleInput = {
   notes: string;
   po_job_ref?: string;
   salesperson_id?: string;
+  job_id?: string;
   job_address?: string;
   job_reference?: string;
   cash_tendered_cents?: number;
@@ -7506,6 +7508,7 @@ export type QuoteCreateRequest = {
   customer_id: string;
   branch_id: string;
   valid_until?: string;
+  job_id?: string;
 };
 export type QuoteValidUntilWrite = {
   valid_until?: string;
@@ -7603,6 +7606,7 @@ export type QuoteDecisionResult = {
 };
 export type QuoteConvertRequest = {
   fulfillment?: "PICKUP" | "WILL_CALL";
+  job_id?: string;
 };
 export type QuoteConvertResult = {
   order_id: string;
@@ -7614,6 +7618,7 @@ export type QuoteOrderPaymentRequest = {
   reference: string;
   idempotency_key: string;
   fulfillment?: "PICKUP" | "WILL_CALL";
+  job_id?: string;
 };
 export type QuoteOrderPaymentResult = {
   order_id: string;

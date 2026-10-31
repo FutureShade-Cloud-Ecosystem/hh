@@ -1189,7 +1189,7 @@ func (a w6cOrderInvoiceSource) InvoiceableOrder(ctx context.Context, orderID str
 	}
 	out := billing.OrderInvoiceFacts{
 		OrderID: f.OrderID, OrderNo: f.OrderNo, CustomerID: f.CustomerID, BranchID: f.BranchID,
-		TermsDays: f.TermsDays, TaxReasonCode: f.TaxReasonCode, ClosesOrder: f.ClosesOrder,
+		JobID: f.JobID, TermsDays: f.TermsDays, TaxReasonCode: f.TaxReasonCode, ClosesOrder: f.ClosesOrder,
 		GroupIDs: f.GroupIDs,
 	}
 	out.Lines = make([]billing.OrderInvoiceLine, 0, len(f.Lines))

@@ -16,6 +16,8 @@
 // plus 13 percent tax, a 452 cent total; three hundred square feet is a
 // 135600 cent total, past the first thousands group.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
@@ -180,4 +182,46 @@ test("the standing read answers a withheld caller withheld, and the hold the sam
   assert.equal(held.body.standing, "on_hold");
   assert.equal(held.body.on_hold, true);
   assert.equal(held.body.past_due_cents, undefined);
+});
+
+test("the sale door fences a named job with the core's own status and words", async () => {
+  // The job accounts are the demo world's own (demo-stub.mjs derives uuid job ids from the
+  // customer id, as the core's ids are uuids): the customer's open job carries the sale; another
+  // customer's job, a closed job and a job outside the reach are refused 400 with the customer
+  // module's sentences, a uuid that is no job is 404, and the till handler answers all of them
+  // as the stub does (core/internal/pos/handler.go writeErr, the customer module's job_document.go).
+  const coreFence = readFileSync(fileURLToPath(new URL("../../../../core/internal/customer/job_document.go", import.meta.url)), "utf8");
+  const coreHandler = readFileSync(fileURLToPath(new URL("../../../../core/internal/pos/handler.go", import.meta.url)), "utf8");
+  assert.ok(/errors\.As\(err, &jobBad\)[\s\S]{0,400}http\.StatusBadRequest/.test(coreHandler), "the till handler answers the fence's refusals 400");
+  assert.ok(/errors\.As\(err, &jobNF\)[\s\S]{0,400}http\.StatusNotFound/.test(coreHandler), "the till handler answers a job that is no job 404");
+  const maple = "c-maple-ridge";
+  const fenwick = "c-fenwick";
+  const jobId = (kind, customerId) => {
+    const h = createHash("sha1").update(`job:${kind}:${customerId}`).digest("hex");
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+  };
+  const ring = (customerId, id) => post("/api/v1/pos/sales", saleBody({ customer_id: customerId, job_id: id }), bearer);
+
+  const carries = await ring(maple, jobId("open", maple));
+  assert.equal(carries.status, 201, `the customer's own open job carries the sale: ${JSON.stringify(carries.body)}`);
+
+  const other = await ring(maple, jobId("open", fenwick));
+  assert.equal(other.status, 400);
+  assert.equal(other.body.error, "that job is another customer's job");
+  assert.ok(coreFence.includes("that job is another customer's job"));
+
+  const closed = await ring(maple, jobId("closed", maple));
+  assert.equal(closed.status, 400);
+  assert.equal(closed.body.error, "the job is closed, so it takes no new document");
+  assert.ok(coreFence.includes("the job is closed, so it takes no new document"));
+
+  const unknown = await ring(maple, "6f1d2c3e-0000-4000-8000-000000000000");
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.body.error, "that job was not found");
+  assert.ok(coreFence.includes("that job was not found"));
+
+  const notUuid = await ring(maple, "job-that-is-no-job");
+  assert.equal(notUuid.status, 400);
+  assert.equal(notUuid.body.error, "job id must be a uuid");
+  assert.ok(coreFence.includes("job id must be a uuid"));
 });

@@ -24,6 +24,8 @@ import {
   type BillingARLanding,
   type BillingARWorklistResponse,
   type BillingCreateHoldRequest,
+  type BillingCreditChangePage,
+  type BillingCreditChangeRequest,
   type BillingCreditHold,
   type BillingCreditMemoInput,
   type BillingCreditMemoQuote,
@@ -287,6 +289,53 @@ export class ArApi {
   // rides through the same Result channel every other call rides through.
   createHold(input: BillingCreateHoldRequest): Promise<Result<BillingCreditHold>> {
     return staffBilling.billingCreateHold(this.#client, input);
+  }
+
+  // ---- the credit limit's changes (CC-2) -----------------------------------------------------------------
+
+  /**
+   * One account's credit change history, newest first: the asks, the decisions, before and after.
+   * The core's list answers only the branches the caller reaches.
+   */
+  creditChanges(customerId: string): Promise<Result<BillingCreditChangePage>> {
+    return staffBilling.billingListCreditChanges(this.#client, { customer_id: customerId, limit: 50 });
+  }
+
+  /**
+   * Every credit change waiting for a decision in the caller's reach, newest first.
+   */
+  pendingCreditChanges(): Promise<Result<BillingCreditChangePage>> {
+    return staffBilling.billingListCreditChanges(this.#client, { status: "PENDING", limit: 50 });
+  }
+
+  /**
+   * Ask for a new credit limit for one account. The core decides everything that is money: a
+   * decrease or the same limit takes effect at once, an increase waits for the approvals its tier
+   * needs, and the answer says which it did.
+   */
+  requestCreditChange(input: { customerId: string; newLimitCents: number; reason: string }): Promise<Result<BillingCreditChangeRequest>> {
+    return staffBilling.billingRequestCreditChange(this.#client, {
+      customer_id: input.customerId,
+      new_limit_cents: input.newLimitCents,
+      reason: input.reason,
+    });
+  }
+
+  /**
+   * Approve a waiting credit change. The core judges the request under one lock, rechecks the tier
+   * on the limit the account has now, applies the limit when the approvals are met, and answers
+   * with the row as it stands; a rising tier records the first of two approvals and moves nothing.
+   */
+  approveCreditChange(id: string): Promise<Result<BillingCreditChangeRequest>> {
+    return staffBilling.billingApproveCreditChange(this.#client, id, {});
+  }
+
+  /**
+   * Reject a waiting credit change. The core requires the reason, carries it on the row, and the
+   * asked limit never takes effect.
+   */
+  rejectCreditChange(id: string, reason: string): Promise<Result<BillingCreditChangeRequest>> {
+    return staffBilling.billingRejectCreditChange(this.#client, id, { reason });
   }
 
   // Generate a deterministic dealer paylink (Change 8 S3). Staff-gated: the row

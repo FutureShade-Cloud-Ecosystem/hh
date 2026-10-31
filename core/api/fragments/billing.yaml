@@ -3370,6 +3370,14 @@ components:
             Makes a retry safe: the same key returns the same credit. Absent
             means the server derives one from the request, so a double click
             raises one credit and not two.
+        job_id:
+          type: string
+          format: uuid
+          description: >-
+            The job account the credit is opened on, one of the customer's
+            own job accounts. Another customer's job, a closed job and a job
+            outside the caller's reach are refused in words; absent means the
+            credit belongs to the account as a whole.
 
     BillingCreditMemoQuoteInput:
       type: object

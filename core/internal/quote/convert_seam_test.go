@@ -412,7 +412,7 @@ func TestConvert_FulfillmentDefaultIsByteIdentical(t *testing.T) {
 	if cols != "" || vals != "" {
 		t.Fatalf("unspecified fulfilment produced SQL fragments %q / %q, it must produce none", cols, vals)
 	}
-	if got := convertInsertSQL(cols, vals); got != want {
+	if got := convertInsertSQL(cols, vals, "", ""); got != want {
 		t.Fatalf("the conversion INSERT is no longer byte-identical when no fulfilment is chosen.\n"+
 			"got:\n%s\nwant:\n%s", got, want)
 	}
@@ -442,7 +442,7 @@ func TestConvert_FulfillmentChoiceReachesTheSQL(t *testing.T) {
 		// next column too, and it is the property fulfillmentColumns actually depends on: the column
 		// list and the SELECT list are paired positionally, so a splice that landed anywhere but the
 		// end of both would put a chosen fulfilment into the wrong column.
-		sql := convertInsertSQL(cols, vals)
+		sql := convertInsertSQL(cols, vals, "", "")
 		if !strings.Contains(sql, ", fulfillment)") {
 			t.Fatalf("%s: the fulfilment column is not last in the column list:\n%s", tc.choice, sql)
 		}

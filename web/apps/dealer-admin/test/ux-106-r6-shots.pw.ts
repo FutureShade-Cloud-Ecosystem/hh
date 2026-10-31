@@ -186,6 +186,7 @@ for (const size of SIZES) {
       await take(page, "roles", "grid", theme, size.width);
 
       // The curation editor: its own draft rows and my rows.
+      await page.locator('[data-test="config-toggle-all"]').click();
       await page.locator('[data-action="open-config-editor"]').first().click();
       await waitForQuiet(page);
       await take(page, "roles", "editor", theme, size.width);

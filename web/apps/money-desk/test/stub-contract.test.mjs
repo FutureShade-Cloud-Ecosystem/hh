@@ -28,7 +28,7 @@ import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
 
-const coreSource = ["billing", "payments", "purchasing", "till", join("platform", "authz"), join("platform", "httpx")]
+const coreSource = ["billing", "customer", "payments", "purchasing", "till", join("platform", "authz"), join("platform", "httpx")]
   .flatMap((dir) =>
     readdirSync(join(coreInternal, dir))
       .filter((f) => f.endsWith(".go") && !f.endsWith("_test.go"))
@@ -102,6 +102,10 @@ const CONTROLLER_TOKEN = tokenFor("de110000-0000-4000-9000-000000000008");
 // The Payables and Receivables clerk: at work on the money desk, so a manage level route there
 // turns the role away.
 const CLERK_TOKEN = tokenFor("de110000-0000-4000-9000-000000000007");
+// The credit change routes' deciders and a requester that may not decide (CC-2).
+const BRANCH_MANAGER_TOKEN = tokenFor("de5b2000-0000-4000-9000-000000000003");
+const SALES_MANAGER_TOKEN = tokenFor("de110000-0000-4000-9000-000000000002");
+const bearer = (token) => ({ Authorization: `Bearer ${token}` });
 
 const reset = () => fetch(`${base}/_stub/reset`, { method: "POST" });
 
@@ -720,4 +724,137 @@ test("the open AP and the bill payment answer in the contract's shapes, and the 
   // Payables and Receivables role is at work on that surface.
   const clerk = await call("POST", PAY_BILL, body, { Authorization: `Bearer ${CLERK_TOKEN}`, "Idempotency-Key": "clerk-key" });
   assert.equal(clerk.status, 403);
+});
+
+test("the credit memo door fences a named job with the core's own words", async () => {
+  // Wave 3 JA-2: a credit may name the job it is opened on. The job is fenced
+  // exactly as the core fences it (core/internal/customer/job_document.go),
+  // and the sentences here are the core's own: each must appear in the core's
+  // source, the same rule every other refusal in this file follows.
+  const aging = await call("GET", "/api/v1/ar/aging");
+  const mine = aging.json.items[0].customer_id;
+  const other = aging.json.items[1].customer_id;
+  assert.ok(mine !== other, "the aging read answers at least two customers");
+  const jobDrive = (c) => `a0${c.slice(2)}`; // the stub's job uuids: the customer's uuid, first digits changed
+  const jobDone = (c) => `b0${c.slice(2)}`;
+
+  const carries = await call("POST", "/api/v1/ar/credit-memos", {
+    customer_id: mine,
+    branch_id: "b-office-1",
+    amount_cents: 100,
+    reason: "Pallet came back",
+    idempotency_key: "k-job-open",
+    job_id: jobDrive(mine),
+  });
+  assert.equal(carries.status, 201, `the customer's own open job carries the credit: ${JSON.stringify(carries.json)}`);
+  holds("BillingCreditMemoResult", carries.json);
+
+  const otherCustomer = await call("POST", "/api/v1/ar/credit-memos", {
+    customer_id: mine,
+    branch_id: "b-office-1",
+    amount_cents: 100,
+    reason: "Pallet came back",
+    idempotency_key: "k-job-other",
+    job_id: jobDrive(other),
+  });
+  assert.equal(otherCustomer.status, 400);
+  assert.equal(otherCustomer.json.error, "that job is another customer's job");
+  assert.ok(coreSource.includes("that job is another customer's job"), "the refusal is the core's own sentence");
+
+  const closed = await call("POST", "/api/v1/ar/credit-memos", {
+    customer_id: mine,
+    branch_id: "b-office-1",
+    amount_cents: 100,
+    reason: "Pallet came back",
+    idempotency_key: "k-job-closed",
+    job_id: jobDone(mine),
+  });
+  assert.equal(closed.status, 400);
+  assert.equal(closed.json.error, "the job is closed, so it takes no new document");
+  assert.ok(coreSource.includes("the job is closed, so it takes no new document"), "the refusal is the core's own sentence");
+
+  const unknown = await call("POST", "/api/v1/ar/credit-memos", {
+    customer_id: mine,
+    branch_id: "b-office-1",
+    amount_cents: 100,
+    reason: "Pallet came back",
+    idempotency_key: "k-job-unknown",
+    job_id: "6f1d2c3e-0000-4000-8000-000000000000",
+  });
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.json.error, "that job was not found");
+  assert.ok(coreSource.includes("that job was not found"), "the refusal is the core's own sentence");
+  assert.ok(/errors\.As\(err, &notFoundWords\)[\s\S]{0,300}http\.StatusNotFound/.test(coreSource), "the memo handler answers a job that is no job 404");
+
+  const notUuid = await call("POST", "/api/v1/ar/credit-memos", {
+    customer_id: mine,
+    branch_id: "b-office-1",
+    amount_cents: 100,
+    reason: "Pallet came back",
+    idempotency_key: "k-job-not-uuid",
+    job_id: "job-that-is-no-job",
+  });
+  assert.equal(notUuid.status, 400);
+  assert.equal(notUuid.json.error, "job_id must be a job id, pick a job from the customer's jobs");
+  assert.ok(coreSource.includes("job_id must be a job id, pick a job from the customer's jobs"), "the refusal is the core's own sentence");
+});
+
+test("the credit change routes answer in the contract's shapes and the refusals are the core's own sentences", async () => {
+  await reset();
+  const aging = await call("GET", "/api/v1/ar/aging");
+  const customer = aging.json.items[0].customer_id;
+
+  // The gate is the manager tiers; a caller the stub does not know is turned away with the shared body.
+  const unknown = await call("GET", "/api/v1/ar/credit-changes", undefined, bearer(tokenFor("00000000-0000-4000-9000-000000000000")));
+  refused(unknown, 403, "Forbidden");
+
+  const waiting = await call("GET", "/api/v1/ar/credit-changes?status=PENDING", undefined, bearer(CONTROLLER_TOKEN));
+  assert.equal(waiting.status, 200);
+  holds("BillingCreditChangePage", waiting.json);
+  assert.ok(waiting.json.items.length >= 2);
+  assert.ok(waiting.json.items.every((r) => r.status === "PENDING"));
+
+  // A decrease applies at once; an increase waits, and the answer says which tier it needs.
+  const down = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 0, reason: "Past due" }, bearer(SALES_MANAGER_TOKEN));
+  assert.equal(down.status, 201);
+  holds("BillingCreditChangeRequest", down.json);
+  assert.equal(down.json.status, "APPLIED");
+  const up = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 2_000_000, reason: "Winter work" }, bearer(SALES_MANAGER_TOKEN));
+  assert.equal(up.status, 201);
+  holds("BillingCreditChangeRequest", up.json);
+  assert.equal(up.json.status, "PENDING");
+  assert.equal(up.json.required_approvals, 1);
+  const noReason = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 10, reason: " " }, bearer(SALES_MANAGER_TOKEN));
+  refused(noReason, 400, "credit change: a reason is required");
+
+  // The refusals of a decision, in the core's order and words.
+  refused(await call("POST", `/api/v1/ar/credit-changes/${up.json.id}/approve`, {}, bearer(SALES_MANAGER_TOKEN)), 403, "credit change: requester cannot approve their own request");
+  const other = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 2_200_000, reason: "More room" }, bearer(BRANCH_MANAGER_TOKEN));
+  refused(await call("POST", `/api/v1/ar/credit-changes/${other.json.id}/approve`, {}, bearer(SALES_MANAGER_TOKEN)), 403, "credit change: caller role is not permitted to approve this request");
+  const approved = await call("POST", `/api/v1/ar/credit-changes/${up.json.id}/approve`, {}, bearer(CONTROLLER_TOKEN));
+  assert.equal(approved.status, 200);
+  holds("BillingCreditChangeRequest", approved.json);
+  assert.equal(approved.json.status, "APPLIED");
+  refused(await call("POST", `/api/v1/ar/credit-changes/${up.json.id}/approve`, {}, bearer(CONTROLLER_TOKEN)), 409, "credit change: request is not pending");
+
+  // The first of two approvals moves nothing; the same person never approves twice.
+  const big = await call("POST", "/api/v1/ar/credit-changes", { customer_id: customer, new_limit_cents: 9_000_000, reason: "Two large jobs" }, bearer(SALES_MANAGER_TOKEN));
+  assert.equal(big.json.required_approvals, 2);
+  const first = await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/approve`, {}, bearer(CONTROLLER_TOKEN));
+  holds("BillingCreditChangeRequest", first.json);
+  assert.equal(first.json.status, "PENDING");
+  refused(await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/approve`, {}, bearer(CONTROLLER_TOKEN)), 403, "credit change: the same person cannot approve twice");
+  refused(await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/approve`, {}, bearer(BRANCH_MANAGER_TOKEN)), 403, "credit change: caller role is not permitted to approve this request");
+
+  // A rejection needs its reason and settles the request.
+  refused(await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/reject`, { reason: "" }, bearer(BRANCH_MANAGER_TOKEN)), 400, "credit change: a reason is required");
+  const rejected = await call("POST", `/api/v1/ar/credit-changes/${big.json.id}/reject`, { reason: "Balance is past due" }, bearer(BRANCH_MANAGER_TOKEN));
+  assert.equal(rejected.status, 200);
+  holds("BillingCreditChangeRequest", rejected.json);
+  assert.equal(rejected.json.status, "REJECTED");
+  assert.equal(rejected.json.rejection_reason, "Balance is past due");
+
+  const history = await call("GET", `/api/v1/ar/credit-changes?customer_id=${customer}`, undefined, bearer(CONTROLLER_TOKEN));
+  holds("BillingCreditChangePage", history.json);
+  assert.ok(history.json.items.every((r) => r.customer_id === customer));
 });

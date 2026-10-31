@@ -317,6 +317,7 @@ var migrationTopics = map[string]string{
 	"0466_payment_terms":                   "customer",
 	"0472_payment_discount":                "payments",
 	"0461_credit_change_requests":          "billing",
+	"0473_finance_charge_runs":             "billing",
 }
 
 // multiTopicSplits states the per-object attribution inside the five
@@ -427,6 +428,8 @@ var ownedObjects = map[string]string{
 	"customer_jobs":                         "customer",          // 0460_customer_jobs
 	"payment_terms":                         "customer",          // 0466_payment_terms
 	"invoice_discount_approvals":            "payments",          // 0472_payment_discount (the manager approval of a late early-payment discount, written by the application)
+	"finance_charge_runs":                   "billing",           // 0473_finance_charge_runs
+	"finance_charge_waivers":                "billing",           // 0473_finance_charge_runs
 	"dashboard_gallery_entries":             "dashboard",         // 0208_widget_gallery
 	"dashboard_needs_sources":               "dashboard",         // 0201_dashboard_widgets
 	"dashboard_profile_home":                "dashboard",         // 0141_dashboard_profile_home

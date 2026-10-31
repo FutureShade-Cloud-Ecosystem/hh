@@ -143,6 +143,34 @@ func TestSupplierDepositInvoicePostsToCustomerDeposits(t *testing.T) {
 	wantLeg(t, d2, "2200", 0, 949)
 }
 
+// Wave 3 FC-1: a finance charge document (source_kind FINANCE_CHARGE, the invoice the monthly
+// finance charge run raises through the invoice writer) posts fee income, not sale revenue:
+// DR 1100 AR / CR the finance charge income account the posting rule names, the whole total,
+// and no revenue and no tax legs (the charge is billed as stated, no tax was assessed on it).
+func TestFinanceChargeInvoicePostsToFinanceChargeIncome(t *testing.T) {
+	ctx := context.Background()
+	f := newFakeStore()
+	svc := newTestService(f).WithInvoiceReader(fakeInvoiceReader{amt: InvoiceAmounts{
+		SubtotalCents: 15000, TaxCents: 0, TotalCents: 15000, BranchID: "b1", InvoiceNo: "INV-FC",
+		SourceKind: "FINANCE_CHARGE",
+	}})
+	if err := svc.consume(ctx, ev("ar.invoice.finalized", map[string]any{"invoice_id": "ifc1"})); err != nil {
+		t.Fatalf("finance charge consume: %v", err)
+	}
+	d := f.lastInserted()
+	wantLeg(t, d, "1100", 15000, 0)
+	wantLeg(t, d, "4220", 0, 15000)
+	if _, has := leg(d, "4000"); has {
+		t.Fatalf("the finance charge document must post no revenue leg: %v", d.Lines)
+	}
+	if _, has := leg(d, "2200"); has {
+		t.Fatalf("the finance charge document must post no tax leg: %v", d.Lines)
+	}
+	if !d.balanced() {
+		t.Fatalf("finance charge journal unbalanced: dr=%d cr=%d", d.debitTotal(), d.creditTotal())
+	}
+}
+
 // AC7, the FN 13/8/5 split: invoice.finalized CREDITED 2200 the full 13%; the relief REDUCES that liability
 // to the 5% net federal by DEBITING 2200 for the 8% ON portion, offsetting the FN relief recoverable (1165):
 // DR 2200 8% / CR 1165 8%. A standard-rate sale (found=false) books nothing.

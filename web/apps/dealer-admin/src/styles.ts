@@ -883,6 +883,50 @@ export const dealerStyles = css`
     }
   }
 
+  /* UX-119c: a job shape with nothing curated is one line (its name, the
+     chip, the Show surfaces button) and opens its ten tiles on demand. The
+     button is the page's own aria-expanded recipe, as the phone Settings
+     control wears it (UX-104). A folded shape's tile row is hidden outright,
+     so its buttons leave the tab order. It folds by class, not by ?hidden or a
+     bound id, because the template position gate allows neither in an app
+     (so there is no aria-controls: no per-shape id can be bound). */
+  .config-grid-table tbody tr.is-folded {
+    display: none;
+  }
+  .shape-state {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-8);
+    margin-top: var(--hh-s-4);
+  }
+  @media (max-width: 900px) {
+    .shape-toggle,
+    .grid-toggle-all {
+      min-height: 44px;
+    }
+    .shape-state {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .shape-state .chip {
+      align-self: flex-start;
+    }
+  }
+  @media (min-width: 901px) {
+    .shape-state {
+      margin-top: 0;
+      margin-inline-start: auto;
+    }
+    .config-grid-table tbody tr.shape-row {
+      display: block;
+      padding: var(--hh-s-12) 0;
+    }
+    .config-grid-table tbody tr.shape-tiles {
+      padding-top: 0;
+    }
+  }
+
   /* The editor's field rows: the add row's fields and its buttons ride one
      line while the width holds, and wrap on a narrow card. */
   .editor-actions {

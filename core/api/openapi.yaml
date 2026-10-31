@@ -32969,6 +32969,10 @@ components:
         idempotency_key:
           type: string
           description: "Makes a retry safe: the same key returns the same credit. Absent means the server derives one from the request, so a double click raises one credit and not two."
+        job_id:
+          type: string
+          format: uuid
+          description: The job account the credit is opened on, one of the customer's own job accounts. Another customer's job, a closed job and a job outside the caller's reach are refused in words; absent means the credit belongs to the account as a whole.
     BillingCreditMemoQuoteInput:
       type: object
       description: "What to quote: the account, the branch the credit would be filed at, the invoice it would be against, and the amount to price. The amount is a positive magnitude, before tax, exactly as the credit takes it; zero prices the whole of what the invoice has left."
@@ -48643,6 +48647,10 @@ components:
         salesperson_id:
           type: string
           description: The staff member credited with the sale
+        job_id:
+          type: string
+          format: uuid
+          description: The job account the sale is opened on, one of the customer's own job accounts. Another customer's job, a closed job and a job outside the caller's reach are refused in words; absent means the sale belongs to the account as a whole. The free text job fields stay what the customer calls the work.
         job_address:
           type: string
           maxLength: 200
@@ -57643,6 +57651,10 @@ components:
           type: string
           format: date
           description: Empty or absent means the quote never expires
+        job_id:
+          type: string
+          format: uuid
+          description: The job the quote is written for, one of the customer's own job accounts. Another customer's job, a closed job and a job outside the caller's reach are refused in words; absent means the quote belongs to the account as a whole.
     QuoteValidUntilWrite:
       type: object
       description: The valid_until write. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8). An empty string clears the expiry.
@@ -57991,6 +58003,10 @@ components:
           enum:
             - PICKUP
             - WILL_CALL
+        job_id:
+          type: string
+          format: uuid
+          description: The job the conversion's order is opened on, one of the customer's own job accounts and fenced in words like the quote create's. Absent inherits the quote's own job.
     QuoteConvertResult:
       type: object
       description: "What a conversion returns: the new order's id and number, so the caller can redirect without the quote module importing the order module. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
@@ -58035,7 +58051,11 @@ components:
           enum:
             - PICKUP
             - WILL_CALL
-          description: "Optional. The fulfilment the order is created with when this action converts the quote (a customer with no credit account), graded exactly as the plain convert grades it: DELIVERY is refused in words, and an absent value leaves the default, Pickup. Ignored when the quote is already converted, because an order's fulfilment is chosen at its conversion."
+          description: "Optional. The fulfilment the order is created with when this action converts the quote (a customer with no credit account), graded exactly as the plain convert grades it: DELIVERY is refused in words, and an absent value leaves the default, Pickup."
+        job_id:
+          type: string
+          format: uuid
+          description: Optional. The job the action's conversion opens its order on, one of the customer's own job accounts and fenced in words; absent inherits the quote's own job. Ignored when the quote is already converted, because an order's fulfilment is chosen at its conversion.
     QuoteOrderPaymentResult:
       type: object
       description: "What the till's receipt needs: the payment, the invoice it settled against, the order and the balance now on the invoice. On a replay the payment fields (the reference and the receiver included) are the first payment's as stored, and replayed is true."

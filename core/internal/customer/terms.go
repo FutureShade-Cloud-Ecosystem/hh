@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -133,6 +134,14 @@ type termsReader interface {
 	TermsByCode(ctx context.Context, code string) (Terms, error)
 }
 
+// jobTermsReader is the JOB half of the same seam: the terms a document on one job is dated by.
+// Separate from termsReader for the same reason termsReader is separate from accountStore, and
+// optional for the same reason the terms seam itself is: a store that predates JA-2 answers the
+// customer's terms only, and the caller falls back to them rather than to a guess.
+type jobTermsReader interface {
+	TermsForJob(ctx context.Context, customerID, jobID string) (Terms, error)
+}
+
 // termsWriter is the optional write seam for the customer's terms code. It is separate from
 // customerWriter for the same reason termsReader is separate from accountStore.
 type termsWriter interface {
@@ -153,6 +162,39 @@ func (s *Service) TermsFor(ctx context.Context, customerID string) (Terms, error
 		return Terms{}, httpx.BadRequestf("customer terms not configured")
 	}
 	return r.TermsFor(ctx, customerID)
+}
+
+// TermsForJob is the sibling of TermsFor on the same seam: the terms a document on one job is
+// dated by. The job's own code when it carries one, else the customer's.
+//
+// A JOB CARRIES DAYS, NOT A CODE (JA-1's table): the code is answered the way TermsFor answers a
+// customer with no code, so the same ruling holds on both halves of the seam. The job's own days
+// name a standard term of the master (0, 15, 30, 45) when they match one, and answer NO code with
+// the days themselves when they do not: a code reaches a document only when the master holds its
+// row, never a made up one. A job with no own terms reads the customer's own terms exactly as
+// TermsFor answers them, discount window and all.
+//
+// A job that is not the customer's job is not found. This read is dated, not fenced: the doors
+// that name a job hold it through JobForNewDocument first (job_document.go), and this read only
+// answers what the document is dated by.
+func (s *Service) TermsForJob(ctx context.Context, customerID, jobID string) (Terms, error) {
+	if customerID == "" {
+		return Terms{}, httpx.BadRequestf("customer id is required")
+	}
+	if _, err := uuid.Parse(customerID); err != nil {
+		return Terms{}, httpx.BadRequestf("customer id must be a uuid")
+	}
+	if jobID == "" {
+		return Terms{}, httpx.BadRequestf("job id is required")
+	}
+	if _, err := uuid.Parse(jobID); err != nil {
+		return Terms{}, httpx.BadRequestf("job id must be a uuid")
+	}
+	r, ok := s.store.(jobTermsReader)
+	if !ok {
+		return Terms{}, httpx.BadRequestf("customer terms not configured")
+	}
+	return r.TermsForJob(ctx, customerID, jobID)
 }
 
 // TermsByCode returns one row of the master by its code. ErrNotFound when no term carries it.
@@ -237,6 +279,65 @@ func (r *Repository) TermsFor(ctx context.Context, customerID string) (Terms, er
 			return Terms{}, ErrNotFound
 		}
 		return Terms{}, fmt.Errorf("read the terms of customer %q: %w", customerID, err)
+	}
+	return t, nil
+}
+
+// jobTermsDaysCode is the master row a number of net days names: the four standard terms whose
+// days are their own. A number no standard term names has no row, and a document dated by it
+// carries no code. It is the same mapping TermsFor's customer arm joins through, stated once for
+// the job arm.
+const jobTermsDaysCode = `CASE j.terms_days
+	            WHEN 0  THEN 'RECEIPT'
+	            WHEN 15 THEN 'NET15'
+	            WHEN 30 THEN 'NET30'
+	            WHEN 45 THEN 'NET45'
+	          END`
+
+// TermsForJob reads the terms a document on one job is dated by: the job's own when it carries
+// them, the customer's when it does not.
+//
+// IT IS ONE READ, and it stays a read. The join answers both halves at once so the job's days and
+// the customer's code cannot be read at two different instants: the job's own days name a
+// standard row of the master when they match one, else the days answer with no code (the same
+// ruling as a customer with no code on non standard days, TM-1 round 1); a job with no own days
+// takes the customer's own arm unchanged, terms_code first and the standard row for the
+// customer's days under it.
+//
+// THE READ RIDES THE CALLER'S TRANSACTION when there is one, exactly as TermsFor does (QD5): a
+// document written in the caller's one transaction must not ask the pool for a second connection.
+func (r *Repository) TermsForJob(ctx context.Context, customerID, jobID string) (Terms, error) {
+	var q interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	}
+	if tx := callerTxFrom(ctx); tx != nil {
+		q = tx
+	} else if r.pool != nil {
+		q = r.pool
+	} else {
+		return Terms{}, errNoDB
+	}
+	var t Terms
+	err := q.QueryRow(ctx, `
+		SELECT COALESCE(t.code, ''), COALESCE(t.name, ''), COALESCE(j.terms_days, COALESCE(t.net_days, c.payment_terms_days)),
+		       COALESCE(t.discount_bps, 0), COALESCE(t.discount_days, 0)
+		  FROM customer_jobs j
+		  JOIN customers c ON c.id = j.customer_id
+		  LEFT JOIN payment_terms t
+		    ON t.code = CASE WHEN j.terms_days IS NOT NULL THEN `+jobTermsDaysCode+`
+		                     ELSE COALESCE(c.terms_code, CASE c.payment_terms_days
+		                            WHEN 0  THEN 'RECEIPT'
+		                            WHEN 15 THEN 'NET15'
+		                            WHEN 30 THEN 'NET30'
+		                            WHEN 45 THEN 'NET45'
+		                          END) END
+		 WHERE j.id = $1 AND j.customer_id = $2`,
+		jobID, customerID).Scan(&t.Code, &t.Name, &t.NetDays, &t.DiscountBps, &t.DiscountDays)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Terms{}, ErrNotFound
+		}
+		return Terms{}, fmt.Errorf("read the terms of the job %q: %w", jobID, err)
 	}
 	return t, nil
 }

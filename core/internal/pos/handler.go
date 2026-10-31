@@ -727,6 +727,8 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var cnt ErrCODNotForTermsAccount
 	var sdn ErrSupplierDepositNotCredit
 	var sdo ErrSupplierDepositOverPretax
+	var jobNF httpx.NotFoundError
+	var jobBad httpx.BadRequestError
 	switch {
 	case errors.As(err, &pba):
 		// Item 9.4, the part amount refusal, the problem body style again.
@@ -837,6 +839,13 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusConflict, nt.Error())
 	case errors.As(err, &ce):
 		httpx.Error(w, ce.status, ce.msg)
+	case errors.As(err, &jobNF):
+		// The job fence's refusal of a job id that is no job (wave 3 JA-2): a 404 in the fence's words.
+		httpx.Error(w, http.StatusNotFound, jobNF.Error())
+	case errors.As(err, &jobBad):
+		// The job fence's three refusals (another customer's job, a closed job, a job out of reach):
+		// the customer module's own sentence behind a 400, as the other document doors answer.
+		httpx.Error(w, http.StatusBadRequest, jobBad.Error())
 	case errors.Is(err, ErrUnknownTaxReason):
 		// The ring named a tax reason the engine refuses to bind: the cashier's client-correctable 400,
 		// the engine's words (the offending reason) riding behind the sentinel's, never the bare 500 the

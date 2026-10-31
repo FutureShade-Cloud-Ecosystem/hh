@@ -351,7 +351,7 @@ func TestIntegration_AccountSale_FinalizedNoPayment(t *testing.T) {
 	productID, branchID := aPaver(t, pool)
 	var custID string
 	if err := pool.QueryRow(ctx,
-		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents > 1000000 LIMIT 1`).Scan(&custID); err != nil {
+		`SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND payment_terms_days > 0 AND credit_limit_cents > 1000000 ORDER BY account_no LIMIT 1`).Scan(&custID); err != nil {
 		t.Skipf("no CONTRACTOR with credit seeded: %v", err)
 	}
 	svc := realPosSvc(t, pool, stubCharger{})
@@ -516,7 +516,7 @@ func TestIntegration_Idempotency_ReplayUnderRealDB(t *testing.T) {
 		Lines: []LineInput{{ProductID: productID, QtyEntered: 2, UOMEntered: "SF"}},
 	}
 	// WALK-IN has no credit → ACCOUNT would be COD-blocked; use a real contractor instead.
-	_ = pool.QueryRow(ctx, `SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents>1000000 LIMIT 1`).Scan(&in.CustomerID)
+	_ = pool.QueryRow(ctx, `SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND payment_terms_days > 0 AND credit_limit_cents > 1000000 ORDER BY account_no LIMIT 1`).Scan(&in.CustomerID)
 	first, err := svc.Sale(ctx, in)
 	if err != nil {
 		t.Fatalf("first sale: %v", err)
@@ -548,7 +548,7 @@ func TestIntegration_ReturnRequest_CrashWindow_RejectRefused_ApproveConverges(t 
 	ctx := globalCtx(t, pool)
 	productID, branchID := aPaver(t, pool)
 	var custID, userID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents>1000000 LIMIT 1`).Scan(&custID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND payment_terms_days > 0 AND credit_limit_cents > 1000000 ORDER BY account_no LIMIT 1`).Scan(&custID); err != nil {
 		t.Skipf("no contractor: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM users LIMIT 1`).Scan(&userID); err != nil {
@@ -694,7 +694,7 @@ func TestIntegration_OperatorReopen(t *testing.T) {
 	ctx := globalCtx(t, pool)
 	productID, branchID := aPaver(t, pool)
 	var custID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND credit_limit_cents>1000000 LIMIT 1`).Scan(&custID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM customers WHERE customer_type='CONTRACTOR' AND payment_terms_days > 0 AND credit_limit_cents > 1000000 ORDER BY account_no LIMIT 1`).Scan(&custID); err != nil {
 		t.Skipf("no contractor: %v", err)
 	}
 	svc := realPosSvc(t, pool, stubCharger{})
