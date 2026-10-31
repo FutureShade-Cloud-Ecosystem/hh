@@ -99,6 +99,58 @@ func newRVFixture(t *testing.T) *rvFixture {
 		WithStock(rvStock{svc: inv}).
 		WithOpenQuantityReleaser(order.NewRepository(pool))
 	f := &rvFixture{t: t, pool: pool, ctx: ctx, svc: svc, productID: productID, branchID: branchID, custID: custID}
+	// The sale and the return move the seeded product's stock balance rows. Capture them whole
+	// and put them back last (row 0.39: the leg sweep fails a leg that leaves a seeded row changed).
+	balanceImages := map[string]string{}
+	brows, err := pool.Query(ctx, `
+		SELECT location_id::text, row_to_json(s)::text FROM stock_balances s
+		 WHERE product_id = $1::uuid AND branch_id = $2::uuid`, productID, branchID)
+	if err != nil {
+		t.Fatalf("capture the stock balances: %v", err)
+	}
+	for brows.Next() {
+		var loc, img string
+		if err := brows.Scan(&loc, &img); err != nil {
+			brows.Close()
+			t.Fatalf("scan the stock balances: %v", err)
+		}
+		balanceImages[loc] = img
+	}
+	brows.Close()
+	if err := brows.Err(); err != nil {
+		t.Fatalf("read the stock balances: %v", err)
+	}
+	// cost() upserts the seeded branch cost row for the product, so that row is captured too.
+	var costImage string
+	if err := pool.QueryRow(ctx, `
+		SELECT row_to_json(c)::text FROM product_branch_costs c
+		 WHERE product_id = $1::uuid AND branch_id = $2::uuid`, productID, branchID).Scan(&costImage); err != nil && err != pgx.ErrNoRows {
+		t.Fatalf("capture the branch cost: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		if costImage != "" {
+			if _, err := pool.Exec(c, `
+				UPDATE product_branch_costs t SET avg_unit_cost_cents = r.avg_unit_cost_cents,
+				       updated_at = r.updated_at, org_id = r.org_id
+				  FROM json_populate_record(NULL::product_branch_costs, $3::json) r
+				 WHERE t.product_id = $1::uuid AND t.branch_id = $2::uuid`,
+				productID, branchID, costImage); err != nil {
+				t.Errorf("restore the branch cost: %v", err)
+			}
+		}
+		for loc, img := range balanceImages {
+			if _, err := pool.Exec(c, `
+				UPDATE stock_balances t SET on_hand_base = r.on_hand_base, allocated_base = r.allocated_base,
+				       updated_at = r.updated_at, bin_code = r.bin_code, qty_reserved = r.qty_reserved,
+				       org_id = r.org_id, seq = r.seq, deleted_at = r.deleted_at, idempotency_key = r.idempotency_key
+				  FROM json_populate_record(NULL::stock_balances, $3::json) r
+				 WHERE t.product_id = $1::uuid AND t.location_id = $2::uuid`,
+				productID, loc, img); err != nil {
+				t.Errorf("restore the stock balance at %s: %v", loc, err)
+			}
+		}
+	})
 	t.Cleanup(func() {
 		c := context.Background()
 		for _, oid := range f.orders {
