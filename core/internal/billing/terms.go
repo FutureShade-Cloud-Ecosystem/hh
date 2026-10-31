@@ -25,3 +25,18 @@ import (
 type TermsReader interface {
 	TermsFor(ctx context.Context, customerID string) (customer.Terms, error)
 }
+
+// JobTermsReader is the JOB half of the same seam (JA-2): the terms a document on one job is
+// dated by, the job's own when it carries them and the customer's when it does not.
+//
+// It is a separate, OPTIONAL interface on purpose: the seam's stubs (the terms legs' fixed-answer
+// doubles) answer the customer's terms only, and a writer whose facts carry no job never asks the
+// question. The production adapter (the customer module's Service) implements both, so a bound
+// seam always answers for a job.
+//
+// Exact signature for the union adapter:
+//
+//	TermsForJob(ctx context.Context, customerID, jobID string) (customer.Terms, error)
+type JobTermsReader interface {
+	TermsForJob(ctx context.Context, customerID, jobID string) (customer.Terms, error)
+}

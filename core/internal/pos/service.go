@@ -653,8 +653,10 @@ type salePlan struct {
 	poJobRef         string
 	jobAddress       string
 	jobReference     string
-	// jobID is the fenced job account the sale is opened on (JA-2), "" when none.
-	jobID string
+	// jobID is the fenced job account the sale is opened on (JA-2), "" when none; jobTerms is
+	// that job's OWN payment terms, nil when the job shares the customer's.
+	jobID           string
+	jobTerms        *int
 	salespersonName string
 	customerID      string
 	cust            customerRec
@@ -879,13 +881,16 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	// customer module's own words; the job's own terms come back with them so the ring's invoice
 	// is dated by them (step 12).
 	jobID := strings.TrimSpace(in.JobID)
+	var jobTerms *int
 	if jobID != "" {
 		if s.jobFence == nil {
 			return nil, nil, clientErr(http.StatusServiceUnavailable, "pos: the job fence is not wired, so no sale can name a job")
 		}
-		if _, err := s.jobFence.JobForNewDocument(ctx, customerID, jobID); err != nil {
+		job, err := s.jobFence.JobForNewDocument(ctx, customerID, jobID)
+		if err != nil {
 			return nil, nil, err
 		}
+		jobTerms = job.TermsDays
 	}
 
 	// 3 and 4. Price every line and assess the totals through the shared
@@ -1119,7 +1124,7 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 		deposit: deposit, supplierDeposit: supplierDeposit, subtotal: subtotal, tax: tax, total: total,
 		lines: lines, priced: priced, taxReason: taxReason, poJobRef: poJobRef, jobAddress: jobAddress,
 		jobReference: jobReference, salespersonName: salespersonName, customerID: customerID, cust: cust,
-		jobID: jobID,
+		jobID: jobID, jobTerms: jobTerms,
 		captures: captures, capturedCents: capturedCents, fullyPaid: fullyPaid, applied: applied, actor: actor, ring: ring,
 		zone: zone,
 	}, nil, nil
@@ -1134,7 +1139,7 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	lines, priced, taxReason := p.lines, p.priced, p.taxReason
 	poJobRef, jobAddress, jobReference, salespersonName := p.poJobRef, p.jobAddress, p.jobReference, p.salespersonName
 	customerID, cust, captures, capturedCents, fullyPaid, actor := p.customerID, p.cust, p.captures, p.capturedCents, p.fullyPaid, p.actor
-	jobID := p.jobID
+	jobID, jobTerms := p.jobID, p.jobTerms
 	applied := p.applied
 	// The sale's own instant, read once so every event this sale emits carries the same date (the
 	// order's date and the relief's assessment instant are the same moment, the ring).
@@ -1325,7 +1330,13 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 			invStatus = "PARTIALLY_PAID"
 		}
 		if !codSale {
-			dueDate = p.zone.AddDays(s.now, cust.PaymentTermsDays)
+			// JA-2: an invoice on a job that carries its own terms is due by THOSE terms on the
+			// house day; a job that carries none is dated by the customer's, exactly as before.
+			termsDays := cust.PaymentTermsDays
+			if jobTerms != nil {
+				termsDays = *jobTerms
+			}
+			dueDate = p.zone.AddDays(s.now, termsDays)
 		}
 	}
 	// Sub item 9.5: a supplier's demanded deposit rides the sale as its

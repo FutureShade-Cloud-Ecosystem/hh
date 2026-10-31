@@ -593,8 +593,12 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 	var docTerms customer.Terms
 	if w.terms != nil {
 		// The read rides the caller's transaction when there is one (QD5's one transaction): on a
-		// pool of one a second connection never comes.
-		t, err := w.terms.TermsFor(customer.WithCallerTx(ctx, ctxTx), f.CustomerID)
+		// pool of one a second connection never comes. A document on a JOB asks the seam's job half
+		// (JA-2): the job's own terms when it carries any, the customer's when it does not. The
+		// caller's days are overridden either way, which is why a job's terms may only ever arrive
+		// through this seam and never beside it (S2's P3-3 on PR 722).
+		tctx := customer.WithCallerTx(ctx, ctxTx)
+		t, err := w.termsFor(tctx, f)
 		if err != nil {
 			return InvoiceDoc{}, err
 		}
@@ -768,6 +772,19 @@ VALUES ($1, 'INVOICE', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 		return InvoiceDoc{}, err
 	}
 	return doc, nil
+}
+
+// termsFor is the terms read the writer dates by: the job's own through the seam's job half when
+// the facts carry a job and the bound seam knows jobs, the customer's own otherwise. A seam that
+// predates JA-2 (a stub) still dates a job's document by the customer's terms, exactly as it did
+// before the job half existed.
+func (w *InvoiceWriter) termsFor(ctx context.Context, f OrderInvoiceFacts) (customer.Terms, error) {
+	if f.JobID != "" {
+		if jr, ok := w.terms.(JobTermsReader); ok {
+			return jr.TermsForJob(ctx, f.CustomerID, f.JobID)
+		}
+	}
+	return w.terms.TermsFor(ctx, f.CustomerID)
 }
 
 // headerMetadata is the invoice header's metadata: empty for every producer but the counter's agreed
