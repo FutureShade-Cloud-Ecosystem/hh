@@ -40,9 +40,9 @@ test("UX-125: a margin enforcement row's Change reads in a dealer's words", asyn
   if (UX125_BLANK_MODE === "screen") await page.setContent("");
 
   const bypass = page.locator(`tr[data-audit="${MANAGER_ROW}"] td[data-label="Change"]`);
-  await expect(bypass).toHaveText("Rule price $7.45, 12% off to Net $6.55, margin 11.89%, floor 20.00%", { timeout: 5_000 });
+  await expect(bypass).toHaveText("Was: rule price $7.45, 12% off. Now: net $6.55, margin 11.89%, floor 20.00%.", { timeout: 5_000 });
   const update = page.locator(`tr[data-audit="${SALES_ROW}"] td[data-label="Change"]`);
-  await expect(update).toHaveText("Rule price $7.45, 0% off to Net $7.45, margin 11.89%, floor 20.00%");
+  await expect(update).toHaveText("Was: rule price $7.45, 0% off. Now: net $7.45, margin 11.89%, floor 20.00%.");
   await expect(page.locator(".surface-work")).not.toContainText("net 655");
 });
 
