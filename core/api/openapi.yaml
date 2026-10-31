@@ -35807,6 +35807,10 @@ components:
         overdue_cents:
           type: integer
           format: int64
+        holdback_cents:
+          type: integer
+          format: int64
+          description: "The holdback the account's open invoices still withhold: owed later, shown on its own line, and in none of the buckets or open_cents above (they are the net owed)."
     BillingCreditChangeInput:
       type: object
       required:

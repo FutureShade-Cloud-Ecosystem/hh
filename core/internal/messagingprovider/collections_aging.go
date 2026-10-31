@@ -40,7 +40,8 @@ var _ ARAgingSource = (*PgARAging)(nil)
 //   - status FINALIZED or PARTIALLY_PAID. A DRAFT invoice was never sent, a PAID one is settled, and a
 //     VOID one never existed as far as the customer is concerned. Texting about any of the three is a
 //     phone call to the office at best.
-//   - balance_cents > 0. A finalised invoice with a zero balance is paid in substance whatever its
+//   - NET balance > 0 (balance_cents less the open holdback: the holdback is money the customer may hold,
+//     never overdue, RT-2). A finalised invoice with a zero balance is paid in substance whatever its
 //     status column says, and the balance is the number the customer would argue about.
 //   - due_date strictly more than minDays before asOf.
 //
@@ -54,14 +55,14 @@ func (a *PgARAging) OverdueInvoices(ctx context.Context, asOf time.Time, minDays
 		limit = 500
 	}
 	rows, err := a.pool.Query(ctx, `
-		SELECT i.id::text, i.invoice_no::text, i.customer_id::text, i.balance_cents, i.due_date,
+		SELECT i.id::text, i.invoice_no::text, i.customer_id::text, (i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))), i.due_date,
 		       ($1::date - i.due_date)::int AS days_past_due, c.name
 		FROM invoices i
 		JOIN customers c ON c.id = i.customer_id
 		WHERE i.status IN ('FINALIZED','PARTIALLY_PAID')
-		  AND i.balance_cents > 0
+		  AND (i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))) > 0
 		  AND ($1::date - i.due_date)::int >= $2
-		ORDER BY days_past_due DESC, i.balance_cents DESC
+		ORDER BY days_past_due DESC, (i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))) DESC
 		LIMIT $3`, asOf.UTC(), minDays, limit)
 	if err != nil {
 		return nil, fmt.Errorf("messagingprovider: aging query: %w", err)

@@ -12,6 +12,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -203,36 +204,46 @@ func TestIntegration_PayableReleaseRefused(t *testing.T) {
 	}
 }
 
-// I3: holdback sync is idempotent through the real repo (RetentionInvoiceIDs + InsertHoldbackEntry).
+// I3: holdback sync is idempotent through the real repo (HeldInvoiceIDs + InsertHoldbackEntry), and books
+// only the invoices of the customer job the lien job is linked to.
 func TestIntegration_SyncIdempotent(t *testing.T) {
-	pool := intPool(t)
+	w := rt1Plant(t)
 	ctx := context.Background()
-	svc := realSvc(t, pool, gm("gm-int"))
-	job, err := svc.CreateJob(ctx, JobInput{JobNo: uniqueJobNo("SYN"), BranchID: trentonBranch, Direction: dirReceivable})
-	if err != nil {
-		t.Fatalf("create job: %v", err)
+	lienID := w.lienJob(t, w.customerA, w.branchA)
+	t.Cleanup(func() { rt1Del(t, w.pool, "holdback_ledger", "job_id = $1", lienID) })
+	if _, err := w.pool.Exec(ctx, `UPDATE lien_jobs SET customer_job_id = $2 WHERE id = $1`, lienID, w.jobOnSiteON); err != nil {
+		t.Fatalf("link the lien job: %v", err)
 	}
+	svc := w.svc
 	// A real seeded invoice id (holdback_ledger.invoice_id is FK'd to invoices), the fake reader supplies the
-	// holdback amount; only the id must be a valid FK.
+	// holdback amount and the customer job; only the id must be a valid FK.
 	inv := "19000000-0000-4000-9000-000000000001"
-	svc.WithHoldbackFacts(fakeIntHoldback{inv: inv})
-	r1, err := svc.SyncHoldbacks(ctx, job.ID)
+	svc.WithHoldbackFacts(fakeIntHoldback{inv: inv, branch: w.branchA, job: w.jobOnSiteON})
+	r1, err := svc.SyncHoldbacks(w.as(gm("gm-int")), lienID)
 	if err != nil {
 		t.Fatalf("sync1: %v", err)
 	}
-	r2, err := svc.SyncHoldbacks(ctx, job.ID)
+	r2, err := svc.SyncHoldbacks(w.as(gm("gm-int")), lienID)
 	if err != nil {
 		t.Fatalf("sync2: %v", err)
 	}
 	if r1.BookedCount != 1 || r2.BookedCount != 0 {
 		t.Fatalf("sync booked r1=%d r2=%d, want 1/0 (idempotent)", r1.BookedCount, r2.BookedCount)
 	}
+	// A second lien job linked to ANOTHER customer job books nothing of that invoice.
+	other := w.lienJob(t, w.customerA, w.branchA)
+	if _, err := w.pool.Exec(ctx, `UPDATE lien_jobs SET customer_job_id = $2 WHERE id = $1`, other, w.jobOnSiteZA); err != nil {
+		t.Fatalf("link the second lien job: %v", err)
+	}
+	if r3, err := svc.SyncHoldbacks(w.as(gm("gm-int")), other); err != nil || r3.BookedCount != 0 {
+		t.Fatalf("second lien job booked %d of the first job's invoice (%v)", r3.BookedCount, err)
+	}
 }
 
-type fakeIntHoldback struct{ inv string }
+type fakeIntHoldback struct{ inv, branch, job string }
 
 func (f fakeIntHoldback) InvoicesWithHoldback(_ context.Context, _ string) ([]HoldbackInvoice, error) {
-	return []HoldbackInvoice{{InvoiceID: f.inv, InvoiceNo: "INV-SYNC", BranchID: trentonBranch, HoldbackCents: 4000}}, nil
+	return []HoldbackInvoice{{InvoiceID: f.inv, InvoiceNo: "INV-SYNC", BranchID: f.branch, CustomerJobID: f.job, HoldbackCents: 4000}}, nil
 }
 func (f fakeIntHoldback) InvoiceHoldbackFacts(_ context.Context, _ string) (HoldbackFacts, error) {
 	return HoldbackFacts{}, nil
@@ -679,5 +690,63 @@ func TestIntegration_ReleaseDeadlineRegisteredAt45Days(t *testing.T) {
 	}
 	if ruleDays != 45 {
 		t.Fatalf("HOLDBACK_RELEASE rule_days=%d, want 45", ruleDays)
+	}
+}
+
+// barrierHoldback releases its callers together, so concurrent syncs of one lien job read the same
+// unheld invoice before either has booked it.
+type barrierHoldback struct {
+	fakeIntHoldback
+	wg *sync.WaitGroup
+}
+
+func (b barrierHoldback) InvoicesWithHoldback(ctx context.Context, branch string) ([]HoldbackInvoice, error) {
+	b.wg.Done()
+	b.wg.Wait()
+	return b.fakeIntHoldback.InvoicesWithHoldback(ctx, branch)
+}
+
+// RT-2 fix round 2, P3: two concurrent syncs of one lien job book an invoice once.
+func TestIntegration_TwoConcurrentSyncsBookAnInvoiceOnce(t *testing.T) {
+	w := rt1Plant(t)
+	ctx := context.Background()
+	lienID := w.lienJob(t, w.customerA, w.branchA)
+	t.Cleanup(func() { rt1Del(t, w.pool, "holdback_ledger", "job_id = $1", lienID) })
+	if _, err := w.pool.Exec(ctx, `UPDATE lien_jobs SET customer_job_id = $2 WHERE id = $1`, lienID, w.jobOnSiteON); err != nil {
+		t.Fatalf("link the lien job: %v", err)
+	}
+	const callers = 6
+	wg := &sync.WaitGroup{}
+	wg.Add(callers)
+	svc := w.svc
+	svc.WithHoldbackFacts(barrierHoldback{
+		fakeIntHoldback: fakeIntHoldback{inv: "19000000-0000-4000-9000-000000000001", branch: w.branchA, job: w.jobOnSiteON},
+		wg:              wg,
+	})
+	booked := make([]int, callers)
+	var run sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		run.Add(1)
+		go func(i int) {
+			defer run.Done()
+			r, err := svc.SyncHoldbacks(w.as(gm("gm-int")), lienID)
+			if err != nil {
+				t.Errorf("sync %d: %v", i, err)
+				return
+			}
+			booked[i] = r.BookedCount
+		}(i)
+	}
+	run.Wait()
+	total := 0
+	for _, n := range booked {
+		total += n
+	}
+	var rows int
+	if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM holdback_ledger WHERE job_id = $1 AND entry_type = 'RETENTION' AND amount_cents > 0`, lienID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 || total != 1 {
+		t.Errorf("concurrent syncs: %d ledger rows and %d reported booked, want 1 and 1", rows, total)
 	}
 }

@@ -228,10 +228,17 @@ func roundHalfEvenDiv(num, den int64) int64 {
 // unapplied credit is still charged. That is as built and is a question for Colton; changing the
 // rule means netting that arm in the overdue CTE below, and nowhere else.
 //
+// THE HOLDBACK IS NEVER CHARGED (RT-2 fix): an invoice's open holdback is money the customer may hold,
+// not money past due, so the overdue balance is the net, as the aging reads it (balance less the
+// holdback, never below zero).
+//
 // Parameters: $1 the branch, $2 the month's last house day, $3 the month's last instant.
 const financeChargeCandidatesSQL = `
 	WITH overdue AS (
-		SELECT i.customer_id,
+		SELECT r.customer_id,
+		       r.raw - LEAST(r.hb, GREATEST(r.raw, 0)) AS bal
+		  FROM (
+		SELECT i.customer_id, invoice_holdback_as_of(i.id, $3::timestamptz) AS hb,
 		       i.total_cents
 		         + COALESCE((SELECT SUM(t.amount_cents) FROM customer_transactions t
 		             WHERE t.source_type = 'invoice' AND t.source_ref_id = i.id
@@ -241,7 +248,7 @@ const financeChargeCandidatesSQL = `
 		             WHERE a.invoice_id = i.id AND a.created_at <= $3::timestamptz), 0)
 		         - COALESCE((SELECT SUM(ra.amount_cents) FROM payment_reapplications ra
 		             WHERE ra.invoice_id = i.id AND ra.created_at <= $3::timestamptz), 0)
-		       AS bal
+		       AS raw
 		  FROM invoices i
 		 WHERE i.branch_id = $1::uuid
 		   AND i.doc_type = 'INVOICE'
@@ -251,6 +258,7 @@ const financeChargeCandidatesSQL = `
 		   AND i.due_date < $2::date - 30
 		   AND NOT EXISTS (SELECT 1 FROM finance_charge_waivers w
 		           WHERE w.customer_id = i.customer_id AND w.cleared_at IS NULL)
+		  ) r
 	)
 	SELECT customer_id::text, SUM(bal) AS past_due
 	  FROM overdue

@@ -213,6 +213,29 @@ func (r *Repository) RetentionInvoiceIDs(ctx context.Context, jobID string) (map
 	return out, rows.Err()
 }
 
+// HeldInvoiceIDs is the invoice ids with a positive RETENTION on any lien job's ledger.
+func (r *Repository) HeldInvoiceIDs(ctx context.Context) (map[string]bool, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT DISTINCT invoice_id::text FROM holdback_ledger
+		 WHERE entry_type = 'RETENTION' AND amount_cents > 0 AND invoice_id IS NOT NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("lien: held invoice ids: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 func (r *Repository) InsertHoldbackEntry(ctx context.Context, e HoldbackEntry) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB

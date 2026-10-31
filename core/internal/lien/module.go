@@ -40,9 +40,12 @@ type HoldbackFactsReader interface {
 
 // HoldbackInvoice is one invoice with retention outstanding (the worklist row).
 type HoldbackInvoice struct {
-	InvoiceID     string `json:"invoice_id"`
-	InvoiceNo     string `json:"invoice_no"`
-	CustomerID    string `json:"customer_id"`
+	InvoiceID  string `json:"invoice_id"`
+	InvoiceNo  string `json:"invoice_no"`
+	CustomerID string `json:"customer_id"`
+	// CustomerJobID is the customer job the invoice was raised on ("" when it names none): the sync books
+	// an invoice only onto the lien job linked to that job (RT-2).
+	CustomerJobID string `json:"customer_job_id,omitempty"`
 	BranchID      string `json:"branch_id"`
 	HoldbackCents int64  `json:"holdback_cents"`
 	FinalizedAt   string `json:"finalized_at"`
@@ -118,8 +121,7 @@ type Service struct {
 	orders   OrderHoldbackReader
 	gl       GLPoster
 	calendar CalendarRegistrar
-	standard StandardRateReader // the dealer's standard tax rate; nil is the Ontario 13 percent
-	cosigner CoSignerResolver   // resolves the four-eyes co-signer's authority server-side (never body-asserted)
+	cosigner CoSignerResolver // resolves the four-eyes co-signer's authority server-side (never body-asserted)
 	audit    audit.Recorder
 	custJobs CustomerJobs // the customer module's job facts (the holdback rule, the link)
 	log      *slog.Logger
@@ -139,17 +141,6 @@ func NewService(repo *Repository) *Service {
 		callerFrom: identity.StaffContextFromContext,
 	}
 }
-
-// StandardRateReader answers the dealer's standard tax rate in basis points on a date ("" is today). The
-// composition root binds an adapter over the tax engine; lien reads it to gross a holdback up by the tax
-// on a job that opted into HST on holdback, so it never carries a rate of its own. Unwired, the Ontario
-// 13 percent stands.
-type StandardRateReader interface {
-	StandardRateBps(ctx context.Context, asOf string) (int, error)
-}
-
-// WithStandardRate injects the dealer's standard rate seam.
-func (s *Service) WithStandardRate(r StandardRateReader) *Service { s.standard = r; return s }
 
 // WithHoldbackFacts injects the billing holdback-facts seam.
 func (s *Service) WithHoldbackFacts(r HoldbackFactsReader) *Service { s.holdback = r; return s }
