@@ -28669,7 +28669,11 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: A changed amount (code quote_changed, nothing claimed), a transient pending verdict, or a charge that may already have moved money
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantPayConflict"
   /api/v1/tenant/procurement/projects:
     get:
       operationId: tenantListProcurementProjects
@@ -62051,6 +62055,17 @@ components:
           type: integer
           format: int64
           description: The open amount
+        payoff_cents:
+          type: integer
+          format: int64
+          description: "What a payment today would charge: the open amount less the holdback, less the early payment discount the invoice's own terms allow on the dealer's day. Present only on an open invoice the portal can pay. The pay flow charges exactly this amount."
+        discount_cents:
+          type: integer
+          format: int64
+          description: The early payment discount inside payoff_cents. Present only inside the discount window.
+        discount_by:
+          type: string
+          description: The last day of the dealer's calendar the discount runs (YYYY-MM-DD). Present with discount_cents.
     TenantInvoiceLine:
       type: object
       description: One invoice_lines row as the ERP serves it. Quantities are DECIMAL serialized as strings to preserve scale; qty_entered and uom_entered map onto InvoiceViewLine's quantity and uom.
@@ -62865,6 +62880,7 @@ components:
       description: "A multi-invoice payment: one charge for the summed balance of the selected invoices, funded by a stored method id or a one-time nonce. The server re-binds idempotency to the account and the request hash before charging; the client key is advisory."
       required:
         - invoice_ids
+        - expected_cents
       properties:
         invoice_ids:
           type: array
@@ -62880,6 +62896,23 @@ components:
           description: A one-time hosted-field nonce, or use payment_method_id
         idempotency_key:
           type: string
+        expected_cents:
+          type: integer
+          format: int64
+          minimum: 1
+          description: "The amount the Pay button showed, in cents, above zero. Required: an omitted, zero or negative value is a 400 before anything is claimed. The core quotes again at the tap and answers 409 (code quote_changed) before claiming anything if its quote differs, so a customer is never charged more than they were shown."
+    TenantPayConflict:
+      type: object
+      description: The 409 body of a payment create. code is quote_changed when the amount to pay is no longer the amount shown (nothing was claimed or charged; re-read and ask again); absent for the other 409s (a pending verdict, a payment in flight).
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          enum:
+            - quote_changed
     TenantProjectStatus:
       type: string
       description: A planning project's lane on the board (the procurement_projects CHECK set)

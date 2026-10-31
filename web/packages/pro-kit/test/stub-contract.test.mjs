@@ -181,6 +181,7 @@ async function ids() {
   return {
     order: orders[0].id,
     invoicePayable: invoices.find((i) => i.status === "FINALIZED").id,
+    payoff: invoices.find((i) => i.status === "FINALIZED").payoff_cents,
     quoteSent: quotes.find((q) => q.status === "SENT").id,
     quoteAccepted: quotes.find((q) => q.status === "ACCEPTED").id,
     project: detail.id,
@@ -228,7 +229,7 @@ test("every served operation answers with its contract shape and nothing the con
     tenantRemovePaymentMethod: ["owner", "DELETE", `${T}/payment-methods/${i.methodOther}`],
     tenantSetDefaultPaymentMethod: ["owner", "PUT", `${T}/payment-methods/${i.method}/default`],
     tenantListPayments: ["owner", "GET", `${T}/payments`],
-    tenantCreatePayment: ["owner", "POST", `${T}/payments`, { invoice_ids: [i.invoicePayable], payment_method_id: i.method }],
+    tenantCreatePayment: ["owner", "POST", `${T}/payments`, { expected_cents: i.payoff, invoice_ids: [i.invoicePayable], payment_method_id: i.method }],
     tenantListProcurementProjects: ["owner", "GET", `${T}/procurement/projects`],
     tenantCreateProcurementProject: ["owner", "POST", `${T}/procurement/projects`, { name: "Garden wall" }],
     tenantGetProcurementProject: ["owner", "GET", `${T}/procurement/projects/${i.project}`],
@@ -283,7 +284,7 @@ test("an invoice's payment history carries only what the contract declares, what
   };
   const invoices = (await call("owner", "GET", `${T}/invoices`)).json.items;
   await shape(invoices.find((v) => v.status === "PAID").id, "paid invoice");
-  const paid = await call("owner", "POST", `${T}/payments`, { invoice_ids: [i.invoicePayable], payment_method_id: i.method });
+  const paid = await call("owner", "POST", `${T}/payments`, { expected_cents: i.payoff, invoice_ids: [i.invoicePayable], payment_method_id: i.method });
   assert.equal(paid.status, 201);
   await shape(i.invoicePayable, "invoice paid in this test");
 });
@@ -409,13 +410,21 @@ test("the quote refusals use the core's words", async () => {
 test("the payment refusals use the core's words, and card data never rides a request", async () => {
   const i = await ids();
   const pay = (body) => () => call("owner", "POST", `${T}/payments`, body);
-  await refusal("no invoice", pay({ invoice_ids: [], payment_method_id: i.method }), 400, "at least one invoice is required");
-  await refusal("no funding", pay({ invoice_ids: [i.invoicePayable] }), 400, "a stored method or a tokenization nonce is required");
-  await refusal("the same invoice twice", pay({ invoice_ids: [i.invoicePayable, i.invoicePayable], payment_method_id: i.method }), 400, "an invoice may be selected only once");
-  await refusal("an invoice that is not payable", pay({ invoice_ids: ["8b0000-0000-4000-8000-000000009999"], payment_method_id: i.method }), 400,
+  await refusal("no invoice", pay({ expected_cents: i.payoff, invoice_ids: [], payment_method_id: i.method }), 400, "at least one invoice is required");
+  await refusal("no funding", pay({ expected_cents: i.payoff, invoice_ids: [i.invoicePayable] }), 400, "a stored method or a tokenization nonce is required");
+  await refusal("the same invoice twice", pay({ expected_cents: i.payoff, invoice_ids: [i.invoicePayable, i.invoicePayable], payment_method_id: i.method }), 400, "an invoice may be selected only once");
+  await refusal("an invoice that is not payable", pay({ expected_cents: i.payoff, invoice_ids: ["8b0000-0000-4000-8000-000000009999"], payment_method_id: i.method }), 400,
     'invoice "8b0000-0000-4000-8000-000000009999" is not payable; refresh and retry', 'invoice %q is not payable; refresh and retry');
-  await refusal("a declined card", pay({ invoice_ids: [i.invoicePayable], nonce: "stub-nonce-declined" }), 402, "payment declined");
-  await refusal("a pending charge", pay({ invoice_ids: [i.invoicePayable], nonce: "stub-nonce-pending" }), 409, "payment is pending, please retry");
+  await refusal("a declined card", pay({ expected_cents: i.payoff, invoice_ids: [i.invoicePayable], nonce: "stub-nonce-declined" }), 402, "payment declined");
+  await refusal("a pending charge", pay({ expected_cents: i.payoff, invoice_ids: [i.invoicePayable], nonce: "stub-nonce-pending" }), 409, "payment is pending, please retry");
+  await refusal("no shown amount", pay({ invoice_ids: [i.invoicePayable], payment_method_id: i.method }), 400,
+    "expected_cents is required: send the amount the Pay button showed, in cents, above zero");
+  await refusal("a zero shown amount", pay({ expected_cents: 0, invoice_ids: [i.invoicePayable], payment_method_id: i.method }), 400,
+    "expected_cents is required: send the amount the Pay button showed, in cents, above zero");
+  const stale = await call("owner", "POST", `${T}/payments`, { expected_cents: i.payoff + 1, invoice_ids: [i.invoicePayable], payment_method_id: i.method });
+  assert.equal(stale.status, 409);
+  assert.equal(stale.json.code, "quote_changed", "a changed amount carries its machine code");
+  assert.ok(coreSource.includes('CodeQuoteChanged = "quote_changed"'), "the code is the core's own");
   await refusal("a method without a nonce", () => call("owner", "POST", `${T}/payment-methods`, {}), 400, "a tokenization nonce is required");
   const view = (await call("owner", "GET", `${T}/payment-methods`)).json[0];
   assert.deepEqual(Object.keys(view).filter((k) => /number|pan|cvc|cvv|token|secret/i.test(k)), [], "a stored method exposes no card data");
@@ -499,10 +508,10 @@ test("paying an invoice settles it, records the payment and moves the balance", 
   const i = await ids();
   const before = (await call("owner", "GET", `${T}/billing/summary`)).json;
   const inv = (await call("owner", "GET", `${T}/invoices/${i.invoicePayable}`)).json;
-  const paid = await call("owner", "POST", `${T}/payments`, { invoice_ids: [i.invoicePayable], payment_method_id: i.method, idempotency_key: "k-1" });
+  const paid = await call("owner", "POST", `${T}/payments`, { expected_cents: i.payoff, invoice_ids: [i.invoicePayable], payment_method_id: i.method, idempotency_key: "k-1" });
   assert.equal(paid.status, 201);
   assert.equal(paid.json.amount_cents, inv.balance_cents);
-  const again = await call("owner", "POST", `${T}/payments`, { invoice_ids: [i.invoicePayable], payment_method_id: i.method, idempotency_key: "k-1" });
+  const again = await call("owner", "POST", `${T}/payments`, { expected_cents: i.payoff, invoice_ids: [i.invoicePayable], payment_method_id: i.method, idempotency_key: "k-1" });
   assert.equal(again.json.id, paid.json.id, "the same key replays the same payment");
   assert.equal((await call("owner", "GET", `${T}/invoices/${i.invoicePayable}`)).json.status, "PAID");
   const after = (await call("owner", "GET", `${T}/billing/summary`)).json;

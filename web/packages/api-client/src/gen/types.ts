@@ -8534,6 +8534,9 @@ export type TenantInvoice = {
   holdback_cents: number;
   total_cents: number;
   balance_cents: number;
+  payoff_cents?: number;
+  discount_cents?: number;
+  discount_by?: string;
 };
 export type TenantInvoiceLine = {
   line_no: number;
@@ -8762,6 +8765,11 @@ export type TenantPayRequest = {
   payment_method_id?: string;
   nonce?: string;
   idempotency_key?: string;
+  expected_cents: number;
+};
+export type TenantPayConflict = {
+  error: string;
+  code?: "quote_changed";
 };
 export type TenantProjectStatus = "PLANNING" | "QUOTING" | "ORDERED" | "FULFILLED" | "CANCELLED";
 export type TenantProject = {

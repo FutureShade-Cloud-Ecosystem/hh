@@ -29,6 +29,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -40,6 +42,24 @@ const (
 	IntentFailed    = "FAILED"
 	IntentAbandoned = "ABANDONED"
 )
+
+// ErrAmountChanged: the amount the customer was shown is not the amount the core quotes now. Nothing
+// was claimed and no money moved; the caller re-reads the quote and asks again.
+var ErrAmountChanged = errors.New("payments: the amount changed since it was shown")
+
+// CodeQuoteChanged is the machine code a changed-amount refusal carries on the wire, beside its words.
+// Clients match on it, never on the prose.
+const CodeQuoteChanged = "quote_changed"
+
+// RequireShownAmount is the rule every door that takes a customer's payment holds: the request names
+// the amount the Pay button showed, in cents, above zero. Without it the core could only charge the
+// re-quote, and a customer would pay an amount they never saw.
+func RequireShownAmount(expectedCents int64) error {
+	if expectedCents <= 0 {
+		return httpx.BadRequestf("expected_cents is required: send the amount the Pay button showed, in cents, above zero")
+	}
+	return nil
+}
 
 // ErrPaymentInFlight, a charge for this exact request is already at the processor and we do not
 // know its outcome. Maps to HTTP 409.
