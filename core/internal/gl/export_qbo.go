@@ -90,7 +90,9 @@ func renderQBOJournals(rows []ExportRow, packageAccount map[string]string) (stri
 // refusal that names an amount must name it, not leave an empty cell where a number belongs.
 func dollarsExact(cents int64) string {
 	if cents < 0 {
-		return "-" + dollarsExact(-cents)
+		// The magnitude as a uint64: -MinInt64 overflows int64 back to itself.
+		mag := uint64(-(cents + 1)) + 1
+		return fmt.Sprintf("-%d.%02d", mag/100, mag%100)
 	}
 	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
 }

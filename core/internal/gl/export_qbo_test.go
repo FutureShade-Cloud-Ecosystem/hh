@@ -7,6 +7,7 @@ package gl
 import (
 	"context"
 	"encoding/csv"
+	"math"
 	"strings"
 	"testing"
 
@@ -220,5 +221,16 @@ func TestExport_QBORefusesAnAccountWithNoMappingInWords(t *testing.T) {
 	}
 	if f.batchInserts != 0 {
 		t.Fatalf("a refused export must write nothing, but %d batches were recorded", f.batchInserts)
+	}
+}
+
+// dollarsExact on the smallest int64: negating it overflows back to itself, so a recursive
+// implementation never ends. It renders the true value instead.
+func TestDollarsExact_TheSmallestInt64Renders(t *testing.T) {
+	if got := dollarsExact(math.MinInt64); got != "-92233720368547758.08" {
+		t.Fatalf("dollarsExact(MinInt64) = %q, want -92233720368547758.08", got)
+	}
+	if got := dollarsExact(-5); got != "-0.05" || dollarsExact(0) != "0.00" || dollarsExact(12345) != "123.45" {
+		t.Fatalf("dollarsExact must keep its ordinary words, got %q %q %q", dollarsExact(-5), dollarsExact(0), dollarsExact(12345))
 	}
 }

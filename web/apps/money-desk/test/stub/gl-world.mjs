@@ -929,6 +929,7 @@ export function createGlWorld() {
       if (refused !== null) return refused;
       const year = Number(body.year ?? 0);
       const month = Number(body.month ?? 0);
+      const quarter = Number(body.quarter ?? 0);
       const branch = String(body.branch_id ?? "");
       if (branch !== "" && !UUID.test(branch)) return say(400, "invalid branch_id");
       if (!(year > 0)) return say(400, "gl: export requires a fiscal_year");
@@ -936,13 +937,14 @@ export function createGlWorld() {
       for (const j of [...world.journals].sort((a, b) => a.entry_no - b.entry_no)) {
         if (j.status !== "POSTED" || j.fiscal_year !== year) continue;
         if (month > 0 && monthOf(j) !== month) continue;
+        if (quarter > 0 && Math.ceil(monthOf(j) / 3) !== quarter) continue;
         if (branch !== "" && j.branch_id !== branch) continue;
         for (const l of j.lines) rows.push([j.entry_no, j.posted_at ?? "", l.account_code, l.account_name, l.debit_cents, l.credit_cents, j.memo]);
       }
       const dollars = (cents) => (cents === 0 ? "" : `${Math.trunc(cents / 100)}.${String(cents % 100).padStart(2, "0")}`);
       const csv = (v) => (/[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
       const content =
-        `# PARITY DRAFT, GP-format parity export; extract artifacts absent, pending cutover confirmation (Q-006). Not a filing.\n# fiscal_year=${year} month=${month} rows=${rows.length}\n` +
+        `# PARITY DRAFT, GP-format parity export; extract artifacts absent, pending cutover confirmation (Q-006). Not a filing.\n# fiscal_year=${year} month=${month} quarter=${quarter} rows=${rows.length}\n` +
         "entry_no,posted_at,account_code,account_name,debit,credit,memo\n" +
         rows.map((r) => `${r[0]},${r[1]},${r[2]},${csv(r[3])},${dollars(r[4])},${dollars(r[5])},${csv(r[6])}`).join("\n") +
         (rows.length > 0 ? "\n" : "");
