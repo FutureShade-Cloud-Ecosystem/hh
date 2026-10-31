@@ -29,6 +29,7 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bandIdentity } from "./band-identity.js";
 // The offline strip and the conflict cards ride the shell chrome package,
 // wired here through their properties (the injected seams): this app maps the
 // runner's state, the backend's ownership and the store's cards onto them.
@@ -551,15 +552,16 @@ export class YardPickApp extends HHElement {
   // the yard is typing into, so a re-render never eats a typed number.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
+    const identity = bandIdentity(servedConsoleConfig(), this.#org);
     setFieldFrame(this.renderRoot.querySelector("hh-field-frame"), {
-      org: this.#org,
+      org: identity.org,
       appName: "Yard Pick",
       surface: this.#surfaceWords(),
       roleLabel: this.#roleLabel,
       syncState: this.#syncState as ShellSyncState,
       theme: this.#theme,
       signedIn: this.#sessions.current !== null,
-      demo: true,
+      demo: identity.demo,
       current: "pick",
       bellAction: "open-changes",
       bellCount: this.#changesWaiting !== null && /^\d+$/.test(this.#changesWaiting) ? Number(this.#changesWaiting) : 0,
