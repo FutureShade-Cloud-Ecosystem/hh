@@ -318,6 +318,11 @@ func (r *Repository) ReleaseHoldback(ctx context.Context, in HoldbackReleaseInpu
 	defer func() { _ = tx.Rollback(ctx) }()
 	txCtx := customer.WithCallerTx(ctx, tx)
 
+	// The key's lock first, then the job's (always in this order): one key names one release, so two requests
+	// with the same key on two jobs run one after the other and the second finds the first's rows.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('holdback_release_key:' || $1::text, 0))`, in.IdempotencyKey); err != nil {
+		return HoldbackReleaseResult{}, fmt.Errorf("holdback release: lock the key: %w", err)
+	}
 	// The job's lock: two releases of one job run one after the other, and the second reads the first's work.
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('holdback_release:' || $1::text, 0))`, in.CustomerJobID); err != nil {
 		return HoldbackReleaseResult{}, fmt.Errorf("holdback release: lock the job: %w", err)
@@ -357,6 +362,7 @@ SELECT id::text, invoice_no::text, branch_id::text, holdback_cents
 		cents          int64
 	}
 	var invs []held
+	outside := 0
 	for rows.Next() {
 		var h held
 		if err := rows.Scan(&h.id, &h.no, &h.branch, &h.cents); err != nil {
@@ -364,6 +370,7 @@ SELECT id::text, invoice_no::text, branch_id::text, holdback_cents
 			return HoldbackReleaseResult{}, fmt.Errorf("holdback release: scan an invoice: %w", err)
 		}
 		if in.CanAccessBranch != nil && !in.CanAccessBranch(h.branch) {
+			outside++
 			continue
 		}
 		invs = append(invs, h)
@@ -373,6 +380,12 @@ SELECT id::text, invoice_no::text, branch_id::text, holdback_cents
 		return HoldbackReleaseResult{}, err
 	}
 
+	// A job is released whole or not at all: a caller who does not reach every branch the job's holdback
+	// sits at is told so, in words, and nothing is released (never "nothing held", never a part).
+	if outside > 0 {
+		return HoldbackReleaseResult{}, HoldbackReleaseRefused{Kind: RefusedOutsideBranches,
+			Msg: fmt.Sprintf("%d open invoice(s) on this job hold holdback at branches outside your reach, and a job's holdback is released whole; ask someone who reaches every branch the job's invoices sit at", outside)}
+	}
 	if len(invs) == 0 {
 		done, err := r.holdback.HasReleaseOnJob(txCtx, in.CustomerJobID)
 		if err != nil {

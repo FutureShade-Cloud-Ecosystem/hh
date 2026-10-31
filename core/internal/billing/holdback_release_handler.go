@@ -145,7 +145,7 @@ func (h *HoldbackReleaseHandler) writeErr(w http.ResponseWriter, r *http.Request
 	var bad httpx.BadRequestError
 	switch {
 	case errors.As(err, &refused):
-		if refused.Kind == RefusedNotController {
+		if refused.Kind == RefusedNotController || refused.Kind == RefusedOutsideBranches {
 			httpx.Error(w, http.StatusForbidden, refused.Msg)
 			return
 		}
