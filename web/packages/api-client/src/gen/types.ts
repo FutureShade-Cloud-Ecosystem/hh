@@ -679,6 +679,7 @@ export type BillingApplyPaymentInput = {
   invoice_ids: string[];
   idempotency_key: string;
   preview?: boolean;
+  late_discount_reason?: string;
 };
 export type BillingApplyPaymentLine = {
   invoice_id: string;
@@ -687,6 +688,7 @@ export type BillingApplyPaymentLine = {
   outcome: "CLOSES" | "PART" | "NONE";
   balance_after_cents: number;
   stays_open_cents: number;
+  discount_cents: number;
 };
 export type BillingApplyPaymentAnswer = {
   preview: boolean;
