@@ -245,6 +245,15 @@ func (w *InvoiceWriter) IssueCreditMemo(ctx context.Context, in CreditMemoInput)
 	if err != nil {
 		if isUniqueViolation(err) {
 			if existing, ok, ferr := w.findByKey(ctx, in.IdempotencyKey); ferr == nil && ok {
+				// The racing loser is answered with the winner's memo only when it is the same credit
+				// (customer, amount, job), as the non racing reuse checks; a different body is a conflict.
+				same, cerr := w.sameCreditBody(ctx, existing, in)
+				if cerr != nil {
+					return InvoiceDoc{}, cerr
+				}
+				if !same {
+					return InvoiceDoc{}, &creditMemoKeyConflict{msg: "this idempotency key already named a different credit; a key belongs to the credit that first used it"}
+				}
 				existing.Reused = true
 				return existing, nil
 			}
@@ -631,4 +640,22 @@ func creditMemoMemo(no, origNo, reason string) string {
 		s += " (" + reason + ")"
 	}
 	return s
+}
+
+// sameCreditBody reports whether the memo a key already named is the credit this request asks for: the
+// same customer, the same job and, when the request names an amount, the same amount. The job is read
+// back from the memo's own row because the key lookup does not carry it.
+func (w *InvoiceWriter) sameCreditBody(ctx context.Context, existing InvoiceDoc, in CreditMemoInput) (bool, error) {
+	var jobID string
+	if err := w.pool.QueryRow(ctx,
+		`SELECT COALESCE(job_id::text,'') FROM invoices WHERE id = $1::uuid`, existing.InvoiceID).Scan(&jobID); err != nil {
+		return false, fmt.Errorf("billing: read the job of the credit memo this key named: %w", err)
+	}
+	if existing.CustomerID != in.CustomerID || jobID != in.JobID {
+		return false, nil
+	}
+	if in.AmountCents != 0 && -existing.SubtotalCents != in.AmountCents {
+		return false, nil
+	}
+	return true, nil
 }
