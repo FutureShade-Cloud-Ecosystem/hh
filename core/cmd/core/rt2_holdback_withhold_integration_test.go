@@ -49,6 +49,10 @@ type rt2Leg struct {
 	base map[string]int64
 	// agingBase is the aging total before the leg writes anything.
 	agingBase int64
+	// The served mux and the staff bearer the leg's HTTP calls ride (the Controller's global authority).
+	mux   *http.ServeMux
+	token string
+	slug  string
 }
 
 // rt2Source answers one fixed billable order, so the withholding is the only thing under test.
@@ -120,7 +124,7 @@ func rt2Setup(t *testing.T, suffix string) *rt2Leg {
 	ops := wireOperations(mux, pool, sg.Guards, log, money, "rt2-fx-ticket", belt.outbox)
 	wireTops(mux, pool, sg.Guards, log, money, ops, config.Config{PaymentVaultKey: vaultKey}, mustRoleConfigForWire(), belt)
 
-	leg := &rt2Leg{t: t, pool: pool, money: money}
+	leg := &rt2Leg{t: t, pool: pool, money: money, mux: mux, token: sg.Harness.Minter.StaffToken(t, testkit.SubSalesManager), slug: slug}
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE loc_type = 'BRANCH' ORDER BY id LIMIT 1`).Scan(&leg.branch); err != nil {
 		t.Fatalf("the seeded branch: %v", err)
 	}
