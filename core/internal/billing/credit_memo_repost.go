@@ -71,9 +71,9 @@ type failedCreditMemo struct {
 	id, no, branchID string
 	// Magnitudes, POSITIVE. See the query: a credit memo's stored amounts are negative (billing flips
 	// the sign once, at the INSERT) and the journal takes positive magnitudes with the ROLES swapped.
-	arCents, revenueCents, taxCents int64
-	occurredAt                      time.Time
-	reversesSourceKind              string
+	arCents, revenueCents, taxCents, holdbackCents int64
+	occurredAt                                     time.Time
+	reversesSourceKind                             string
 }
 
 // RepostFailedCreditMemoJournals finds credit memos with no reversing journal and posts it.
@@ -121,6 +121,7 @@ func (w *InvoiceWriter) repostAll(ctx context.Context, pending []failedCreditMem
 			// run would land in the wrong period and re-open a month that was already closed.
 			OccurredAt:         m.occurredAt,
 			ARCents:            m.arCents,
+			HoldbackCents:      m.holdbackCents,
 			RevenueCents:       m.revenueCents,
 			TaxCents:           m.taxCents,
 			ReversesSourceKind: m.reversesSourceKind,
@@ -161,7 +162,7 @@ func creditMemoJournalKey(creditMemoID string) string {
 func (w *InvoiceWriter) findCreditMemosWithoutJournals(ctx context.Context, limit int) ([]failedCreditMemo, error) {
 	rows, err := w.pool.Query(ctx, `
 		SELECT i.id::text, i.invoice_no::text, i.branch_id::text,
-		       -i.total_cents, -i.subtotal_cents, -i.tax_cents,
+		       -i.total_cents, -i.subtotal_cents, -i.tax_cents, -i.holdback_cents,
 		       COALESCE(i.finalized_at, i.created_at), COALESCE(o.source_kind, '')
 		  FROM invoices i
 		  LEFT JOIN invoices o ON o.id = i.reverses_invoice_id
@@ -180,7 +181,7 @@ func (w *InvoiceWriter) findCreditMemosWithoutJournals(ctx context.Context, limi
 	var out []failedCreditMemo
 	for rows.Next() {
 		var m failedCreditMemo
-		if err := rows.Scan(&m.id, &m.no, &m.branchID, &m.arCents, &m.revenueCents, &m.taxCents, &m.occurredAt, &m.reversesSourceKind); err != nil {
+		if err := rows.Scan(&m.id, &m.no, &m.branchID, &m.arCents, &m.revenueCents, &m.taxCents, &m.holdbackCents, &m.occurredAt, &m.reversesSourceKind); err != nil {
 			return nil, fmt.Errorf("billing: scan credit memo without journal: %w", err)
 		}
 		// A memo with no money in it has no journal to post, there are no legs, and gl would refuse

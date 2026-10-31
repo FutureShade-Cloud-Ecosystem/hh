@@ -1041,15 +1041,16 @@ func (w *InvoiceWriter) ParkCreditMemoTx(ctx context.Context, tx pgx.Tx, in Cred
 	err = tx.QueryRow(ctx, `
 	INSERT INTO invoices (invoice_no, customer_id, order_id, job_id, branch_id, status, issue_date, due_date,
 	                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
-	                      doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id, org_id)
+	                      doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id, org_id, holdback_cents)
 	VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $12, $3, 'DRAFT', $4, $4,
 	        $5, $6, $7, 0, NULL,
 	        'CREDIT_MEMO', $8, $9, FALSE, $10,
-	        $11)
+	        $11, $13)
 	RETURNING id::text, invoice_no`,
 		customerID, nullUUID(in.OrderID), branchID, issueDate,
 		-plan.subtotal, -plan.tax, -total,
 		sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID), orgID, nullUUID(in.JobID),
+		-plan.holdback,
 	).Scan(&id, &no)
 	if err != nil {
 		return InvoiceDoc{}, CreditMemoJournal{}, fmt.Errorf("insert parked credit memo: %w", err)
@@ -1091,6 +1092,7 @@ func (w *InvoiceWriter) ParkCreditMemoTx(ctx context.Context, tx pgx.Tx, in Cred
 		ARCents:            total,
 		RevenueCents:       plan.subtotal,
 		TaxCents:           plan.tax,
+		HoldbackCents:      plan.holdback,
 		ReversesSourceKind: plan.origSourceKind,
 	}
 	return doc, journal, nil
@@ -1120,13 +1122,14 @@ func (w *InvoiceWriter) FinalizeParkedCreditMemoTx(ctx context.Context, tx pgx.T
 		sourceKind    string
 		orderID       string
 		currentStatus string
+		memoHold      int64
 	)
 	err := tx.QueryRow(ctx, `
 	SELECT invoice_no::text, -total_cents, -subtotal_cents, -tax_cents,
 	       customer_id::text, branch_id::text, COALESCE(reverses_invoice_id::text,''),
-	       source_kind, COALESCE(order_id::text,''), status
+	       source_kind, COALESCE(order_id::text,''), status, -holdback_cents
 	  FROM invoices WHERE id = $1 AND doc_type = 'CREDIT_MEMO'`, memoID).
-		Scan(&no, &total, &subtotal, &tax, &customerID, &branchID, &reverses, &sourceKind, &orderID, &currentStatus)
+		Scan(&no, &total, &subtotal, &tax, &customerID, &branchID, &reverses, &sourceKind, &orderID, &currentStatus, &memoHold)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return httpx.BadRequestf("no such credit memo to finalize")
@@ -1176,6 +1179,10 @@ func (w *InvoiceWriter) FinalizeParkedCreditMemoTx(ctx context.Context, tx pgx.T
 	UPDATE invoices SET status = 'FINALIZED', balance_cents = $2, finalized_at = now()
 	 WHERE id = $1 AND status = 'DRAFT'`, memoID, -total); err != nil {
 		return fmt.Errorf("billing: finalize parked credit memo: %w", err)
+	}
+	// The holdback part of the approved credit comes off the retention ledger on this transaction (RT-2).
+	if err := w.bookCreditReversal(ctx, tx, reverses, no, branchID, memoHold); err != nil {
+		return err
 	}
 	var open int64
 	if err := tx.QueryRow(ctx, `
