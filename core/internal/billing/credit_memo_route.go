@@ -1182,10 +1182,7 @@ func (w *InvoiceWriter) FinalizeParkedCreditMemoTx(ctx context.Context, tx pgx.T
 	}
 	// The holdback part of the approved credit comes off the invoice's own holdback and the retention
 	// ledger on this transaction (RT-2).
-	if err := lowerInvoiceHoldback(ctx, tx, reverses, memoHold); err != nil {
-		return err
-	}
-	if err := w.bookCreditReversal(ctx, tx, reverses, no, branchID, memoHold); err != nil {
+	if err := w.lowerHoldbackAndLedger(ctx, tx, reverses, no, branchID, memoHold); err != nil {
 		return err
 	}
 	var open int64

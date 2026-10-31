@@ -27,6 +27,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -120,20 +121,36 @@ func reversalHoldback(origHold, remHold, origSub, remSub, credited int64) int64 
 	return min(q, remHold)
 }
 
-// bookCreditReversal takes a memo's holdback part off the retention ledger on the memo's transaction.
-func (w *InvoiceWriter) bookCreditReversal(ctx context.Context, tx pgx.Tx, reversesInvoiceID, memoNo, branchID string, holdback int64) error {
-	if holdback <= 0 || reversesInvoiceID == "" || w.holdback == nil {
+// ErrNoHoldbackSeam is what a writer or repository with no holdback seam answers when asked to move an
+// invoice's holdback. The column and the retention ledger move in one call; with no seam the ledger half
+// cannot be written, so the column half is refused too (PR 762 probe D: a bare writer lowered the column
+// and booked no ledger row). Refusing at the call, and not requiring the seam at the constructor, keeps
+// every writer that never meets a holdback (a quote desk, a deposit door, a test) buildable bare.
+var ErrNoHoldbackSeam = errors.New("billing: no holdback seam is bound, so the invoice's holdback column and the retention ledger cannot move together; build the writer with WithHoldback")
+
+// lowerHoldbackAndLedger takes a credit memo's holdback part off the invoice it reverses: the column and
+// the retention ledger's negative row, in one call on the memo's own transaction. They never move apart.
+// Zero is a no-op; a part above zero with no seam bound is refused (ErrNoHoldbackSeam) before anything
+// is touched.
+func (w *InvoiceWriter) lowerHoldbackAndLedger(ctx context.Context, tx pgx.Tx, reversesInvoiceID, memoNo, branchID string, part int64) error {
+	if part <= 0 || reversesInvoiceID == "" {
 		return nil
 	}
+	if w.holdback == nil {
+		return ErrNoHoldbackSeam
+	}
+	if err := lowerInvoiceHoldback(ctx, tx, reversesInvoiceID, part); err != nil {
+		return err
+	}
 	if _, err := w.holdback.BookCreditReversal(customer.WithCallerTx(ctx, tx), lien.CreditReversal{
-		InvoiceID: reversesInvoiceID, MemoNo: memoNo, BranchID: branchID, AmountCents: holdback,
+		InvoiceID: reversesInvoiceID, MemoNo: memoNo, BranchID: branchID, AmountCents: part,
 	}); err != nil {
 		return fmt.Errorf("take the credit memo's holdback off the ledger: %w", err)
 	}
 	return nil
 }
 
-// lowerInvoiceHoldback takes a finalized credit memo's holdback part off the invoice it reverses, so the
+// lowerInvoiceHoldback is the column half of lowerHoldbackAndLedger and is called by nothing else. It takes a finalized credit memo's holdback part off the invoice it reverses, so the
 // invoice's holdback_cents is always what it still withholds and every reader of it (the payment doors,
 // the credit apply, the aging, the lien worklist) is right without knowing about memos. Zero is a no-op.
 // The caller holds the invoice's row lock (the plan read it FOR NO KEY UPDATE).

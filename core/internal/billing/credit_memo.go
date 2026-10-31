@@ -610,10 +610,7 @@ RETURNING id::text, invoice_no`,
 		}
 		// The holdback part comes off the invoice's own holdback and the retention ledger on this same
 		// transaction (RT-2).
-		if err := lowerInvoiceHoldback(ctx, tx, in.ReversesInvoiceID, plan.holdback); err != nil {
-			return err
-		}
-		if err := w.bookCreditReversal(ctx, tx, in.ReversesInvoiceID, no, branchID, plan.holdback); err != nil {
+		if err := w.lowerHoldbackAndLedger(ctx, tx, in.ReversesInvoiceID, no, branchID, plan.holdback); err != nil {
 			return err
 		}
 

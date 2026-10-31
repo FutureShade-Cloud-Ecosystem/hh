@@ -131,7 +131,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithApprovalStateChecker(jeStateAdapter{svc: approvals}).
 		WithBranchFacts(glBranchFacts{repo: branches.NewRepository(pool)})
 	gl.NewHandler(glSvc, log).WithZone(newDealerZone(pool)).WithLegacyImport(settings.NewDealerConfigReader(pool)).WithUserLinker(link).RegisterRoutes(r, g)
-	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc, journals: glRepo, memos: billing.NewInvoiceWriter(pool)})
+	approvals.WithJEDecider(newJEDeciderAdapter(pool, glSvc, glRepo))
 
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithZone(newDealerZone(pool)).WithAudit(auditSvc)

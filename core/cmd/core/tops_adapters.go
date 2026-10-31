@@ -389,6 +389,14 @@ func newInvoiceWriter(pool *pgxpool.Pool) *billing.InvoiceWriter {
 		WithHoldback(newHoldbackSeam(pool))
 }
 
+// newJEDeciderAdapter builds the approvals rail's journal decider (the rail's own decide path and the
+// sync scope's). Its memo writer is newInvoiceWriter's, holdback seam bound: approving a parked credit
+// memo lowers the invoice's holdback column and its retention ledger in one call, and a bare writer
+// would refuse (billing.ErrNoHoldbackSeam). Both production doors build it here so neither can drift.
+func newJEDeciderAdapter(pool *pgxpool.Pool, svc *gl.Service, journals *gl.Repository) jeDeciderAdapter {
+	return jeDeciderAdapter{svc: svc, journals: journals, memos: newInvoiceWriter(pool)}
+}
+
 // newHoldbackSeam builds the lien service the invoice writer withholds through (RT-2): the rule for a
 // job (RT-1) and the ledger row for each withholding. It carries no caller of its own; the writer
 // hands it the transaction it is writing on.

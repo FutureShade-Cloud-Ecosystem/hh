@@ -467,6 +467,9 @@ SELECT write_off_limit_cents
 	// nothing withheld is left behind on a settled invoice (RT-2).
 	writeOffID := uuid.NewString()
 	holdbackPart := min(max(invHoldback, 0), invBalance)
+	if err := r.requireHoldbackSeam(holdbackPart); err != nil {
+		return WriteOffResult{}, err
+	}
 	if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
 UPDATE invoices
    SET balance_cents = 0, status = 'PAID', holdback_cents = holdback_cents - $2::bigint,
@@ -595,6 +598,9 @@ SELECT invoice_no::text, balance_cents, branch_id::text, status, COALESCE(org_id
 	if priorStatus == "" {
 		priorStatus = "FINALIZED"
 	}
+	if err := r.requireHoldbackSeam(record.HoldbackCents); err != nil {
+		return WriteOffReversal{}, err
+	}
 	if _, err := tx.Exec(ctx, creditFeedSeqCTE+`
 UPDATE invoices
    SET balance_cents = $2::bigint, status = $3::text, holdback_cents = holdback_cents + $4::bigint,
@@ -702,11 +708,24 @@ type WriteOffView struct {
 	ReversedAt     string `json:"reversed_at,omitempty"`
 }
 
+// requireHoldbackSeam refuses, before the act touches the invoice's holdback column, a part above zero
+// with no seam bound: the column and the ledger's row move together or not at all (ErrNoHoldbackSeam).
+func (r *Repository) requireHoldbackSeam(part int64) error {
+	if part != 0 && r.holdback == nil {
+		return ErrNoHoldbackSeam
+	}
+	return nil
+}
+
 // moveHoldback books a write off's (or its reversal's) holdback part on the retention ledger, on the
-// act's own transaction. Zero, or no seam bound, moves nothing.
+// act's own transaction, right after the column moved in the same transaction. Zero moves nothing; a
+// part with no seam bound is refused.
 func (r *Repository) moveHoldback(ctx context.Context, tx pgx.Tx, invoiceID, branchID, reason string, cents int64) error {
-	if cents == 0 || r.holdback == nil {
+	if cents == 0 {
 		return nil
+	}
+	if err := r.requireHoldbackSeam(cents); err != nil {
+		return err
 	}
 	if _, err := r.holdback.BookHoldbackMove(customer.WithCallerTx(ctx, tx), lien.HoldbackMove{
 		InvoiceID: invoiceID, BranchID: branchID, Reason: reason, AmountCents: cents,

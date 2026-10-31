@@ -4,7 +4,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
@@ -99,6 +101,47 @@ func TestRT2Fix3_ABareWriterRefusesToLowerTheColumn(t *testing.T) {
 	_ = tx.Rollback(ctx)
 	if err == nil {
 		t.Fatal("a writer with no holdback seam finalized a credit that lowers an invoice's holdback")
+	}
+	eq(t, "the column", l.holdbackOf(doc.InvoiceID), int64(10_000))
+	eq(t, "the ledger", l.ledgerNet(), int64(10_000))
+}
+
+// The sync scope's decider (wire_operations) is the second production door: it is built by the same
+// constructor, so it carries the seam too.
+func TestRT2Fix3_TheSyncScopesDeciderCarriesTheSeamToo(t *testing.T) {
+	l := rt2Setup(t, "f3sync")
+	l.newJob(true)
+	l.plantApprovalUsers()
+	doc := l.invoice(100_000, 0)
+	parked := l.parkThroughTheRail(doc.InvoiceID, 50_000, "rt2f3-sync")
+
+	decider := newJEDeciderAdapter(l.pool, l.money.glSvc, gl.NewRepository(l.pool).WithZone(newDealerZone(l.pool)))
+	tx, err := l.pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := decider.ApproveJournalTx(context.Background(), tx, parked.JournalID, rt2f3Decider); err != nil {
+		_ = tx.Rollback(context.Background())
+		t.Fatalf("approve through the sync scope's decider: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	l.drain()
+	eq(t, "the column", l.holdbackOf(doc.InvoiceID), int64(5_000))
+	eq(t, "the ledger", l.ledgerNet(), int64(5_000))
+}
+
+// A write off through a repository with no seam refuses the same way and leaves the invoice as it was.
+func TestRT2Fix3_ABareRepositoryRefusesAWriteOfAnInvoiceThatWithholds(t *testing.T) {
+	l := rt2Setup(t, "f3wo")
+	l.newJob(true)
+	doc := l.invoice(100_000, 0)
+	_, err := billing.NewRepository(l.pool).WriteOffInvoice(context.Background(), billing.WriteOffInput{
+		InvoiceID: doc.InvoiceID, Reason: "rt2f3", IdempotencyKey: "rt2f3-wo", OrgID: rt2FixOrg, IsController: true,
+	}, time.Now())
+	if err == nil || !errors.Is(err, billing.ErrNoHoldbackSeam) {
+		t.Fatalf("a bare repository's write off answered %v, want ErrNoHoldbackSeam", err)
 	}
 	eq(t, "the column", l.holdbackOf(doc.InvoiceID), int64(10_000))
 	eq(t, "the ledger", l.ledgerNet(), int64(10_000))
