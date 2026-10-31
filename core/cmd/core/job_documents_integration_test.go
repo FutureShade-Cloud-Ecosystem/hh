@@ -142,9 +142,31 @@ func (e *ja2Env) plantCustomer(creditLimit int64, tag string) string {
 		VALUES ($1, $2, 'CONTRACTOR', $3, 30) RETURNING id::text`, tag, "JA2 Yard "+tag, creditLimit).Scan(&id); err != nil {
 		e.t.Fatalf("plant the customer %s: %v", tag, err)
 	}
+	// The leg leaves nothing behind (the review of PR 747, P3): every document it raised for the
+	// customer, then its jobs, then the customer, in the order the foreign keys allow. A delete that
+	// fails is an error, not a leftover for the next package on this database.
 	e.t.Cleanup(func() {
 		c := context.Background()
-		_, _ = e.pool.Exec(c, `DELETE FROM customers WHERE id = $1`, id)
+		for _, stmt := range []string{
+			`DELETE FROM customer_transactions WHERE customer_id = $1`,
+			`DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1)`,
+			`DELETE FROM payments WHERE customer_id = $1`,
+			`DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1)`,
+			`DELETE FROM invoices WHERE customer_id = $1`,
+			`DELETE FROM order_line_tax_basis WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)`,
+			`DELETE FROM tax_decision_snapshot WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)`,
+			`DELETE FROM quote_accept_provenance WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)`,
+			`DELETE FROM order_lines WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)`,
+			`DELETE FROM orders WHERE customer_id = $1`,
+			`DELETE FROM quote_lines WHERE quote_id IN (SELECT id FROM quotes WHERE customer_id = $1)`,
+			`DELETE FROM quotes WHERE customer_id = $1`,
+			`DELETE FROM customer_jobs WHERE customer_id = $1`,
+			`DELETE FROM customers WHERE id = $1`,
+		} {
+			if _, err := e.pool.Exec(c, stmt, id); err != nil {
+				e.t.Errorf("clean up %q: %v", stmt, err)
+			}
+		}
 	})
 	return id
 }

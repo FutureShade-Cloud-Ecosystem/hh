@@ -106,7 +106,9 @@ func TestIntegration_TermsForJob_RidesTheCallersTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open the pool of one: %v", err)
 	}
-	defer pool.Close()
+	// t.Cleanup, not defer: the customer's cleanup (registered below, so run first) needs the pool, and a
+	// deferred Close runs before any t.Cleanup, which left the customer and its job behind (PR 747, P3).
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	repo := NewRepository(pool)
 	svc := NewService(repo).WithWriter(repo).WithJobs(repo)

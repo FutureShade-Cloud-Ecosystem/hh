@@ -83,9 +83,24 @@ func memoJobPlant(t *testing.T, pool *pgxpool.Pool) memoJobEnv {
 	e.other = plant(other.CustomerID, trentonBranch, "J-MJ-OTHER").JobID
 	t.Cleanup(func() {
 		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1`, e.customer)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, e.customer)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, other.CustomerID)
+		// The leg leaves nothing behind (the review of PR 747, P3): the memos and their lines, then the
+		// jobs, then the customers, and a delete that fails is an error, not a leftover for the next package.
+		for _, id := range []string{e.customer, other.CustomerID} {
+			for _, stmt := range []string{
+				`DELETE FROM customer_transactions WHERE customer_id = $1`,
+				`DELETE FROM credit_application_keys WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1)`,
+				`DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1)`,
+				// A memo's reversal points at its invoice, so the memos go before the invoices.
+				`DELETE FROM invoices WHERE customer_id = $1 AND reverses_invoice_id IS NOT NULL`,
+				`DELETE FROM invoices WHERE customer_id = $1`,
+				`DELETE FROM customer_jobs WHERE customer_id = $1`,
+				`DELETE FROM customers WHERE id = $1`,
+			} {
+				if _, err := pool.Exec(c, stmt, id); err != nil {
+					t.Errorf("clean up %q: %v", stmt, err)
+				}
+			}
+		}
 	})
 	return e
 }

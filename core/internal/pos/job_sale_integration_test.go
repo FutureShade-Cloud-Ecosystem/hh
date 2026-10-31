@@ -97,14 +97,28 @@ func plantJobSaleWorld(t *testing.T, pool *pgxpool.Pool, callerID string) *jobSa
 	w.otherJob = plant(w.otherCust, w.branchID, "J-JS-OTHER", nil)
 	seven := 7
 	w.termsJobID = plant(w.customer, w.branchID, "J-JS-TERMS", &seven)
+	// The leg leaves nothing behind (the review of PR 747, P3): the ring's orders, lines, invoices and
+	// sale rows, then the jobs, then the customers, in the order the foreign keys allow, and a delete
+	// that fails is an error, not a silent leftover for the next package on this database.
 	t.Cleanup(func() {
 		c := context.Background()
 		for _, id := range []string{w.customer, w.otherCust} {
-			_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1`, id)
-			_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1`, id)
-			_, _ = pool.Exec(c, `DELETE FROM orders WHERE customer_id = $1`, id)
-			_, _ = pool.Exec(c, `DELETE FROM pos_sale WHERE customer_id = $1`, id)
-			_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1`, id)
+			for _, stmt := range []string{
+				`DELETE FROM customer_transactions WHERE customer_id = $1`,
+				`DELETE FROM pos_sale WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)`,
+				`DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1)`,
+				`DELETE FROM invoices WHERE customer_id = $1`,
+				`DELETE FROM order_line_tax_basis WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)`,
+				`DELETE FROM tax_decision_snapshot WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)`,
+				`DELETE FROM order_lines WHERE order_id IN (SELECT id FROM orders WHERE customer_id = $1)`,
+				`DELETE FROM orders WHERE customer_id = $1`,
+				`DELETE FROM customer_jobs WHERE customer_id = $1`,
+				`DELETE FROM customers WHERE id = $1`,
+			} {
+				if _, err := pool.Exec(c, stmt, id); err != nil {
+					t.Errorf("clean up %q: %v", stmt, err)
+				}
+			}
 		}
 	})
 	return w
