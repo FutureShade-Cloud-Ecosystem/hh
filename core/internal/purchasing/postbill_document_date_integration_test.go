@@ -95,7 +95,10 @@ func TestIntegration_PostBillDocumentDateAgreesWithTheITCLine(t *testing.T) {
 		t.Fatalf("load the dealer zone: %v", err)
 	}
 	now := time.Now().In(zone)
-	billY, billM := now.AddDate(0, -1, 0).Year(), int(now.AddDate(0, -1, 0).Month())
+	// Last month from the first of this month, never from today's day of month, which on the 31st after a
+	// 30 day month normalizes into the current month.
+	lastMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, zone).AddDate(0, -1, 0)
+	billY, billM := lastMonth.Year(), int(lastMonth.Month())
 	billDate := fmt.Sprintf("%04d-%02d-15", billY, billM)
 	fw11pdEnsurePeriod(t, h, billY, billM)
 	fw11pdEnsurePeriod(t, h, now.Year(), int(now.Month()))

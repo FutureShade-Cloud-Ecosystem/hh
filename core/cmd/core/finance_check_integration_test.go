@@ -213,7 +213,10 @@ func TestIntegration_FinanceCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the dealer zone: %v", err)
 	}
-	closed := time.Now().In(zone).AddDate(0, -1, 0)
+	// The month before steps back from the first of this month, never from today's day of month, which on
+	// the 31st after a 30 day month normalizes into the current month.
+	nowLocal := time.Now().In(zone)
+	closed := time.Date(nowLocal.Year(), nowLocal.Month(), 1, 0, 0, 0, 0, zone).AddDate(0, -1, 0)
 	if _, err := pool.Exec(ctx, `UPDATE fiscal_periods SET status='CLOSED' WHERE year=$1 AND month=$2`,
 		closed.Year(), int(closed.Month())); err != nil {
 		t.Fatalf("closing a period for the leg: %v", err)
