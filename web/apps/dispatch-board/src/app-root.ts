@@ -314,9 +314,25 @@ export class DispatchBoardApp extends HHElement {
     return html`<div class="mob-tools"><button type="button" class="theme-btn" data-action="feedback">Feedback</button><button type="button" class="theme-btn" data-action="theme">${label}</button></div>`;
   }
 
+  // The app header's demo banner belongs to a demo page only (UX-127): a dealer's own box, served a
+  // console config, renders the header without the demo attribute. Two whole templates rather than a
+  // bound boolean, because the template position gate allows no boolean binding but ?disabled.
+  #header(signedIn: boolean): TemplateResult {
+    const tools = this.renderThemeControl();
+    const demo = servedConsoleConfig() === null;
+    if (signedIn) {
+      return demo
+        ? html`<hos-app-header signed-in demo compact product-name="Dispatch">${tools}</hos-app-header>`
+        : html`<hos-app-header signed-in compact product-name="Dispatch">${tools}</hos-app-header>`;
+    }
+    return demo
+      ? html`<hos-app-header demo compact product-name="Dispatch">${tools}</hos-app-header>`
+      : html`<hos-app-header compact product-name="Dispatch">${tools}</hos-app-header>`;
+  }
+
   private renderSignedIn(): TemplateResult {
     return html`
-      <hos-app-header signed-in demo compact product-name="Dispatch">${this.renderThemeControl()}</hos-app-header>
+      ${this.#header(true)}
       <main class="desk">
         ${this.#narrow ? this.#mobileTools() : html``}
         ${this.#desk.render()}
@@ -329,7 +345,7 @@ export class DispatchBoardApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo compact product-name="Dispatch">${this.renderThemeControl()}</hos-app-header>
+      ${this.#header(false)}
       <main class="desk">
         ${this.#narrow ? this.#mobileTools() : html``}
         <h1>Dispatch and Load Building</h1>
