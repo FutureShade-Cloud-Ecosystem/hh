@@ -372,6 +372,9 @@ const styles = css`
     color: var(--hh-accent-text);
     border-color: var(--hh-accent-text);
   }
+  .icon-btn[aria-pressed='true'] svg path:last-child {
+    fill: currentColor;
+  }
   /* A pinned icon button that is refused is a disabled control, and the
      pressed rule above outranks the primitive's own disabled rule. The pair
      is restated in the grey triple, so the pin says nothing in brand
@@ -380,6 +383,7 @@ const styles = css`
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
     border-color: var(--hh-disabled-line);
+    box-shadow: inset 0 0 0 2px var(--hh-disabled-ink);
   }
   .badge {
     position: absolute;

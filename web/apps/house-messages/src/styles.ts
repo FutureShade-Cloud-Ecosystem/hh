@@ -217,10 +217,16 @@ export const messagesStyles = css`
      the chosen rule above outranks the primitive's own disabled rule: the
      block would keep a solid ink fill, which is the loudest thing on the
      sheet. The pair is restated in the grey triple. */
+  .seg .picked,
+  .switch .picked {
+    margin-left: 5px;
+    font-weight: 700;
+  }
   .seg[aria-pressed="true"]:disabled {
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
     border-color: var(--hh-disabled-line);
+    box-shadow: inset 0 0 0 1px var(--hh-disabled-ink);
   }
   .toggle-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); }
   .toggle-row .grow { flex: 1 1 220px; min-width: 0; }
@@ -230,6 +236,7 @@ export const messagesStyles = css`
     background: var(--hh-disabled-fill);
     color: var(--hh-disabled-ink);
     border-color: var(--hh-disabled-line);
+    box-shadow: inset 0 0 0 1px var(--hh-disabled-ink);
   }
 
   .theme-btn { font: inherit; font-size: 13px; padding: 7px 12px; min-height: 0; border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid var(--hh-control-line); cursor: pointer; }
