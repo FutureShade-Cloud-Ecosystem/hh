@@ -87,6 +87,28 @@ type CreditGate interface {
 	Check(ctx context.Context, customerID string, orderTotalCents, openBalanceCents, creditLimitCents int64, termsAreCredit bool, branchID string, hasApprovedOverride bool) *identity.ActionBlocked
 }
 
+// SaleJob is what the counter needs of a job once it may carry the sale: whether the job carries
+// its own payment terms (JA-2), so the ring's invoice is dated by them instead of the customer's.
+type SaleJob struct {
+	// TermsDays is the job's OWN payment terms, nil when the job shares the customer's.
+	TermsDays *int
+}
+
+// JobFence is the customer module's job read a new counter document is opened against (JA-2).
+// The job row is the customer module's own, so the fence is asked through this narrow seam and
+// this module never learns how the rules are decided: another customer's job, a CLOSED job and a
+// job outside the caller's reach are refused there, in words. The answer carries the job's own
+// terms so the ring dates its invoice by them in the same breath.
+//
+// nil until the composition root binds it, and nil REFUSES a named job in words, the JA-1 rule:
+// a door that cannot check a job is a door that takes none.
+type JobFence interface {
+	JobForNewDocument(ctx context.Context, customerID, jobID string) (SaleJob, error)
+}
+
+// WithJobFence binds the job fence. A service without it takes no job at the counter.
+func (s *Service) WithJobFence(f JobFence) *Service { s.jobFence = f; return s }
+
 // IdentityCreditGate wraps identity.CheckCredit so the credit decision stays owned by A-20.
 type IdentityCreditGate struct{}
 
@@ -406,6 +428,9 @@ type Service struct {
 	// approval path refuses operationally when a credential arrives while
 	// the resolver is absent, never commits on one.
 	approver ApproverSource
+	// jobFence is the customer module's job read a counter document is opened against (JA-2).
+	// Nil refuses a named job in words, never waves one through.
+	jobFence JobFence
 	// userLink resolves the ERP users.id a platform user id links to, the
 	// B4 linkage the composition root supplies. The committed decision uses
 	// it to name the approver in one identifier space with the clerk
@@ -628,15 +653,19 @@ type salePlan struct {
 	poJobRef         string
 	jobAddress       string
 	jobReference     string
-	salespersonName  string
-	customerID       string
-	cust             customerRec
-	captures         []captureLeg
-	capturedCents    int64
-	fullyPaid        bool
-	applied          int64 // the swap credit spent on this order (10.5), 0 on an ordinary sale
-	actor            string
-	ring             *cardRing
+	// jobID is the fenced job account the sale is opened on (JA-2), "" when none; jobTerms is
+	// that job's OWN payment terms, nil when the job shares the customer's.
+	jobID           string
+	jobTerms        *int
+	salespersonName string
+	customerID      string
+	cust            customerRec
+	captures        []captureLeg
+	capturedCents   int64
+	fullyPaid       bool
+	applied         int64 // the swap credit spent on this order (10.5), 0 on an ordinary sale
+	actor           string
+	ring            *cardRing
 	// zone is the dealer's business day zone, resolved BEFORE any card is captured: a failed zone
 	// read refuses the ring while no money has moved, never after a capture.
 	zone houseday.Zone
@@ -845,6 +874,23 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	cust, err := s.customerFor(ctx, caller, customerID)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// 2b. JA-2: the job account the sale is opened on, fenced before the ring opens. The three
+	// refusals (another customer's job, a closed job, a job outside the caller's reach) are the
+	// customer module's own words; the job's own terms come back with them so the ring's invoice
+	// is dated by them (step 12).
+	jobID := strings.TrimSpace(in.JobID)
+	var jobTerms *int
+	if jobID != "" {
+		if s.jobFence == nil {
+			return nil, nil, clientErr(http.StatusServiceUnavailable, "pos: the job fence is not wired, so no sale can name a job")
+		}
+		job, err := s.jobFence.JobForNewDocument(ctx, customerID, jobID)
+		if err != nil {
+			return nil, nil, err
+		}
+		jobTerms = job.TermsDays
 	}
 
 	// 3 and 4. Price every line and assess the totals through the shared
@@ -1078,6 +1124,7 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 		deposit: deposit, supplierDeposit: supplierDeposit, subtotal: subtotal, tax: tax, total: total,
 		lines: lines, priced: priced, taxReason: taxReason, poJobRef: poJobRef, jobAddress: jobAddress,
 		jobReference: jobReference, salespersonName: salespersonName, customerID: customerID, cust: cust,
+		jobID: jobID, jobTerms: jobTerms,
 		captures: captures, capturedCents: capturedCents, fullyPaid: fullyPaid, applied: applied, actor: actor, ring: ring,
 		zone: zone,
 	}, nil, nil
@@ -1092,6 +1139,7 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	lines, priced, taxReason := p.lines, p.priced, p.taxReason
 	poJobRef, jobAddress, jobReference, salespersonName := p.poJobRef, p.jobAddress, p.jobReference, p.salespersonName
 	customerID, cust, captures, capturedCents, fullyPaid, actor := p.customerID, p.cust, p.captures, p.capturedCents, p.fullyPaid, p.actor
+	jobID, jobTerms := p.jobID, p.jobTerms
 	applied := p.applied
 	// The sale's own instant, read once so every event this sale emits carries the same date (the
 	// order's date and the relief's assessment instant are the same moment, the ring).
@@ -1151,6 +1199,7 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 		SalespersonID: in.SalespersonID, // DIB-488 rev 6 (0168)
 		JobAddress:    jobAddress,       // DIB-488 rev 8 (0170)
 		JobReference:  jobReference,     // DIB-488 rev 8 (0170)
+		JobID:         jobID,            // wave 3 JA-2, the job account the sale is opened on
 	})
 	if err != nil {
 		return err
@@ -1281,7 +1330,13 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 			invStatus = "PARTIALLY_PAID"
 		}
 		if !codSale {
-			dueDate = p.zone.AddDays(s.now, cust.PaymentTermsDays)
+			// JA-2: an invoice on a job that carries its own terms is due by THOSE terms on the
+			// house day; a job that carries none is dated by the customer's, exactly as before.
+			termsDays := cust.PaymentTermsDays
+			if jobTerms != nil {
+				termsDays = *jobTerms
+			}
+			dueDate = p.zone.AddDays(s.now, termsDays)
 		}
 	}
 	// Sub item 9.5: a supplier's demanded deposit rides the sale as its
@@ -1296,7 +1351,7 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 		supplierDepositInvoiceID, supplierDepositInvoiceNo, err = s.store.InsertInvoice(ctx, tx, invoiceRow{
 			CustomerID: customerID, OrderID: orderID, BranchID: in.BranchID, Status: "FINALIZED",
 			IssueDate: issueDate, DueDate: dueDate, SubtotalCents: supplierDeposit, TotalCents: supplierDeposit,
-			BalanceCents: supplierDeposit, CreatedBy: actor, SourceKind: SourceSupplierDeposit,
+			BalanceCents: supplierDeposit, CreatedBy: actor, SourceKind: SourceSupplierDeposit, JobID: jobID,
 		})
 		if err != nil {
 			return err
@@ -1337,6 +1392,7 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 		TotalCents:    invTotal,
 		BalanceCents:  balance,
 		CreatedBy:     actor,
+		JobID:         jobID,
 	})
 	if err != nil {
 		return err

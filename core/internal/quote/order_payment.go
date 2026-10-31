@@ -28,6 +28,9 @@ type OrderPaymentInput struct {
 	// WILL_CALL), graded by the same normalizer the plain convert uses. Empty is unspecified, and the
 	// order takes the column default as it always did.
 	Fulfillment string
+	// JobID is the job the action's conversion opens its order on (JA-2). Empty inherits the
+	// quote's own job; a named job is fenced with the counter caller's reach.
+	JobID string
 }
 
 // OrderPaymentResult is what the till's receipt needs.
@@ -287,8 +290,8 @@ func (s *StaffService) takeOrderPaymentTx(ctx context.Context, tx pgx.Tx, ps ord
 		// The conversion on this transaction, through the one conversion path, with the option that
 		// tells the credit gate this order is paid at the counter in this same action. The conversion
 		// re-asserts the total under its own lock.
-		res, err := runConvert(withTx(ctx, tx), s.convertStore(), s.audit, pf.CustomerID, quoteID, caller.UserID,
-			ConvertOptions{Fulfillment: in.Fulfillment, paidAtCounter: true, paidTotalCents: pf.TotalCents})
+		res, err := runConvert(withTx(ctx, tx), s.convertStore(), s.audit, s.jobFence, pf.CustomerID, quoteID, caller.UserID,
+			ConvertOptions{Fulfillment: in.Fulfillment, JobID: in.JobID, paidAtCounter: true, paidTotalCents: pf.TotalCents})
 		if err != nil {
 			return OrderPaymentResult{}, err
 		}

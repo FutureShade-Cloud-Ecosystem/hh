@@ -84,6 +84,11 @@ const (
 	SourceOrder          = "ORDER"
 	SourceMultiShip      = "MULTISHIP"
 	SourceWarrantyCredit = "WARRANTY_CREDIT"
+	// SourceFinanceCharge marks the invoice the monthly finance charge run raises (FC-1): a real
+	// invoice, FINALIZED at its charge amount, whose journal posts finance charge income rather
+	// than revenue. The marker is also the run's own exclusion: an earlier charge document is never
+	// itself charged.
+	SourceFinanceCharge = "FINANCE_CHARGE"
 )
 
 // SourceSupplierDeposit marks the deposit document a POS special order ring
@@ -219,6 +224,10 @@ type OrderInvoiceFacts struct {
 	OrderNo    string
 	CustomerID string
 	BranchID   string
+	// JobID is the job the order was opened on (JA-2), "" when it names none. The order's job
+	// reaches its invoice: the writer carries it onto the document and dates the document by the
+	// job's own terms when the job carries any (termsFor below).
+	JobID string
 	// TermsDays is the customer's payment terms, resolved by the caller (the credit fact belongs to
 	// the customer module; see Service.AvailableCreditCents for the same ownership rule). 0 is the
 	// customer's own answer, Cash On Demand; a NEGATIVE value is the caller's "none resolved" and
@@ -241,6 +250,10 @@ type OrderInvoiceFacts struct {
 	// RaisedAtCounter marks the counter's agreed invoice: the header and the finalized event carry
 	// EventSourceCounter. False for every other caller.
 	RaisedAtCounter bool
+	// Memo is words the AR subledger row carries beside the invoice number (the finance charge names
+	// the month its document covers, so a clerk reading the ledger sees why the balance moved
+	// without opening the document). Empty for every producer but the finance charge run.
+	Memo string
 }
 
 // OrderInvoiceLine is one billable line, in the shape invoice_lines stores. Quantities are DECIMAL
@@ -286,6 +299,9 @@ type InvoiceDoc struct {
 	// -- credit-memo only (see credit_memo.go) --
 	// ReversesInvoiceID is the document this memo reverses, when there is one.
 	ReversesInvoiceID string `json:"reverses_invoice_id,omitempty"`
+	// jobID is the job the stored memo carries, read back by the idempotency lookup so a key reused with
+	// a different job is a conflict, not a replay (JA-2). Not on the wire.
+	jobID string
 	// GLJournalID is the reversing entry, when the poster seam is bound and accepted it.
 	GLJournalID string `json:"gl_journal_id,omitempty"`
 	// GLJournalError is set when the memo exists but its journal did not post. Surfaced rather than
@@ -589,8 +605,12 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 	var docTerms customer.Terms
 	if w.terms != nil {
 		// The read rides the caller's transaction when there is one (QD5's one transaction): on a
-		// pool of one a second connection never comes.
-		t, err := w.terms.TermsFor(customer.WithCallerTx(ctx, ctxTx), f.CustomerID)
+		// pool of one a second connection never comes. A document on a JOB asks the seam's job half
+		// (JA-2): the job's own terms when it carries any, the customer's when it does not. The
+		// caller's days are overridden either way, which is why a job's terms may only ever arrive
+		// through this seam and never beside it (S2's P3-3 on PR 722).
+		tctx := customer.WithCallerTx(ctx, ctxTx)
+		t, err := w.termsFor(tctx, f)
 		if err != nil {
 			return InvoiceDoc{}, err
 		}
@@ -602,6 +622,14 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 	// yard has not reached, so an evening invoice would be dated tomorrow and age a day early from
 	// the moment it is written. The due date counts the terms from the SAME day the document is
 	// issued, so the two dates can never name different "todays".
+	// A finance charge document is a late fee: due on issue, with no early payment discount. The
+	// customer's own terms (2/10 net 30, say) belong to the sale, not to the fee for paying it late,
+	// so the document carries the master's "Due on receipt" term (RECEIPT, zero days, no discount
+	// window) whatever the customer is sold on.
+	if sourceKind == SourceFinanceCharge {
+		terms = 0
+		docTerms = customer.Terms{Code: customer.TermsReceipt, Name: "Due on receipt"}
+	}
 	zone, err := houseday.ResolveTx(ctx, w.zone, ctxTx)
 	if err != nil {
 		return InvoiceDoc{}, err
@@ -673,19 +701,19 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 		// FINALIZED, not DRAFT. The order was delivered; the document is real the moment it exists,
 		// and a DRAFT invoice is a promise to remember to finalize it that nobody keeps.
 		err := tx.QueryRow(ctx, invoiceWriterSeqCTE+`
-INSERT INTO invoices (id, invoice_no, customer_id, order_id, branch_id, status, issue_date, due_date,
+INSERT INTO invoices (id, invoice_no, customer_id, order_id, job_id, branch_id, status, issue_date, due_date,
                       discount_date, terms_code,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
                       doc_type, source_kind, idempotency_key, closes_order, org_id, seq, metadata)
 VALUES (COALESCE(NULLIF($1,'')::uuid, gen_random_uuid()), '#INV-' || nextval('invoice_no_seq'),
-        $2, $3, $4, 'FINALIZED', $5, $6, $14, $15,
+        $2, $3, $16, $4, 'FINALIZED', $5, $6, $14, $15,
         $7, $8, $9, $9, now(), 'INVOICE', $10, $11, $12,
         (SELECT org_id FROM locations WHERE id = $4::uuid),
         (SELECT next_value FROM iseq), $13::jsonb)
 RETURNING id::text, invoice_no`,
 			docID, f.CustomerID, nullUUID(f.OrderID), f.BranchID, issueDate, dueDate,
 			subtotal, quote.TaxCents, total, sourceKind, idemKey, f.ClosesOrder, headerMetadata(f),
-			discountDate, termsCode,
+			discountDate, termsCode, nullUUID(f.JobID),
 		).Scan(&invoiceID, &invoiceNo)
 		if err != nil {
 			return fmt.Errorf("insert invoice: %w", err)
@@ -764,6 +792,19 @@ VALUES ($1, 'INVOICE', $2, $3, 'invoice', $4, $5, $6, clock_timestamp())`,
 		return InvoiceDoc{}, err
 	}
 	return doc, nil
+}
+
+// termsFor is the terms read the writer dates by: the job's own through the seam's job half when
+// the facts carry a job and the bound seam knows jobs, the customer's own otherwise. A seam that
+// predates JA-2 (a stub) still dates a job's document by the customer's terms, exactly as it did
+// before the job half existed.
+func (w *InvoiceWriter) termsFor(ctx context.Context, f OrderInvoiceFacts) (customer.Terms, error) {
+	if f.JobID != "" {
+		if jr, ok := w.terms.(JobTermsReader); ok {
+			return jr.TermsForJob(ctx, f.CustomerID, f.JobID)
+		}
+	}
+	return w.terms.TermsFor(ctx, f.CustomerID)
 }
 
 // headerMetadata is the invoice header's metadata: empty for every producer but the counter's agreed
@@ -1085,6 +1126,9 @@ func (w *InvoiceWriter) invoiceOrderAtAgreed(ctx context.Context, ctxTx pgx.Tx, 
 // invoiceMemo names the document on the subledger row so an AR clerk reading the ledger sees WHY the
 // balance moved without opening the invoice.
 func invoiceMemo(f OrderInvoiceFacts, invoiceNo string) string {
+	if f.Memo != "" {
+		return invoiceNo + ", " + f.Memo
+	}
 	if f.OrderNo != "" {
 		if len(f.GroupIDs) > 0 && !f.ClosesOrder {
 			return fmt.Sprintf("%s, progress invoice for order %s (%d shipment group(s))", invoiceNo, f.OrderNo, len(f.GroupIDs))
