@@ -412,3 +412,25 @@ func TestIntegration_CreditMemoJob_TheKeyBelongsToTheJobToo(t *testing.T) {
 		t.Fatalf("the key reused with a different job answered %v, want the key conflict", err)
 	}
 }
+
+// TestIntegration_CreditMemoJob_AJobelessRetryReplays (the delta read of PR 747, P3-1): an account
+// credit with no job, asked twice on one house day with no caller key, is one credit.
+func TestIntegration_CreditMemoJob_AJobelessRetryReplays(t *testing.T) {
+	pool := intPool(t)
+	e := memoJobPlant(t, pool)
+	svc, ctx := memoJobSvc(t, pool, e)
+	ask := func() CreditMemoRouteResult {
+		r, err := svc.Issue(ctx, CreditMemoRouteRequest{
+			CustomerID: e.customer, BranchID: trentonBranch, AmountCents: 4_100,
+			Reason: "Jobless retry",
+		}, cmTrentonOnlyCaller())
+		if err != nil {
+			t.Fatalf("issue a jobless credit: %v", err)
+		}
+		return r
+	}
+	first, again := ask(), ask()
+	if first.CreditMemoID != again.CreditMemoID {
+		t.Fatalf("a jobless retry raised two credits: %q and %q", first.CreditMemoID, again.CreditMemoID)
+	}
+}

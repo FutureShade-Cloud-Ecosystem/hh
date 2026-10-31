@@ -812,10 +812,16 @@ func (s *CreditMemoService) creditMemoKey(ctx context.Context, req CreditMemoRou
 		return k
 	}
 	day := s.houseDay(ctx)
-	seed := strings.Join([]string{
+	parts := []string{
 		day, req.BranchID, req.CustomerID, strings.TrimSpace(req.InvoiceID),
-		fmt.Sprintf("%d", req.AmountCents), reason, jobID,
-	}, "|")
+		fmt.Sprintf("%d", req.AmountCents), reason,
+	}
+	// The job joins the seed only when there is one, so a jobless credit derives exactly the key it
+	// derived before JA-2 and a retry across the deploy on the same house day still replays.
+	if jobID != "" {
+		parts = append(parts, jobID)
+	}
+	seed := strings.Join(parts, "|")
 	sum := sha256.Sum256([]byte(seed))
 	return "credit-memo:" + hex.EncodeToString(sum[:])
 }
