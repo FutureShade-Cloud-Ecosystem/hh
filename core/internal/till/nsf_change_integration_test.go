@@ -37,6 +37,10 @@ func TestNSFChange_FaceChequeBounceCountersTheChange(t *testing.T) {
 	if r.n1100 != r.fee {
 		t.Errorf("1100 nets %d over the payment journals, want the NSF fee only (%d)", r.n1100, r.fee)
 	}
+	// P3-2: the register's discount figure was 2000 with the cheque and nets to 0 once it bounced.
+	if r.registerBefore != 2000 || r.registerAfter != 0 {
+		t.Errorf("the register's discount figure reads %d after the apply and %d after the bounce, want 2000 then 0", r.registerBefore, r.registerAfter)
+	}
 }
 
 // Part of the change was applied to another invoice before the bounce: the bounce takes the
@@ -66,7 +70,10 @@ func TestNSFChange_PartlyAppliedChangeIsOwedBack(t *testing.T) {
 
 type nsfChangeOut struct {
 	change, bal, otherBal, n5450, n1100, aged, fee int64
-	st, otherSt                                    string
+	// registerBefore and registerAfter are the register's early payment discount figure for the
+	// discounted invoice after the apply and after the bounce (P3-2: it must net back to 0).
+	registerBefore, registerAfter int64
+	st, otherSt                   string
 }
 
 // runNSFChangeLeg seeds a customer with a 2/10 invoice of 100000 (inside the window) and, when
@@ -168,9 +175,19 @@ func runNSFChangeLeg(t *testing.T, creditToOther int64) nsfChangeOut {
 			t.Fatalf("apply part of the change to the other invoice: %v", err)
 		}
 	}
+	var out nsfChangeOut
+	registerFigure := func() int64 {
+		n, err := billing.NewRepository(pool).DiscountCents(ctx, invoiceID)
+		if err != nil {
+			t.Fatalf("the register's discount figure: %v", err)
+		}
+		return n
+	}
+	out.registerBefore = registerFigure()
 	if _, err := svc.MarkNSF(cctx, NSFInput{PaymentID: ans.PaymentID, Reason: "cheque returned NSF"}); err != nil {
 		t.Fatalf("MarkNSF: %v", err)
 	}
+	out.registerAfter = registerFigure()
 
 	glSvc := gl.NewService(gl.NewRepository(pool)).WithPaymentReader(NewRepository(pool))
 	d := notify.NewDispatcher(notify.NewPgOutboxStore(pool), slog.Default())
@@ -186,7 +203,6 @@ func runNSFChangeLeg(t *testing.T, creditToOther int64) nsfChangeOut {
 		}
 	}
 
-	var out nsfChangeOut
 	read := func(id string) (int64, string) {
 		var b int64
 		var s string
@@ -285,5 +301,71 @@ func TestNSFStatusRule_BounceReadsPartiallyPaidBelowTotal(t *testing.T) {
 	}
 	if bal != 95000 || st != "PARTIALLY_PAID" {
 		t.Errorf("after the bounce the invoice reads %d %s, want 95000 PARTIALLY_PAID", bal, st)
+	}
+}
+
+// TM-2 fix round 2, P3-2: the register's discount figure nets to 0 on a reversed receipt, through
+// the real reversal. (The bounced receipt is proved in the face cheque leg above.)
+func TestRegisterDiscountFigure_NetsToZeroOnAReversedReceipt(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	branchID, userID := seedBranchUser(t, pool)
+	tag := "RGDR-" + time.Now().Format("150405.000000")
+	var customerID, invoiceID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO customers (account_no, name, customer_type, home_branch_id, credit_limit_cents)
+		 VALUES ($1, $2, 'CONTRACTOR', $3::uuid, 1000000) RETURNING id::text`,
+		tag, tag, branchID).Scan(&customerID); err != nil {
+		t.Fatalf("seed customer: %v", err)
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		for _, q := range []string{
+			`DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`,
+			`DELETE FROM customer_transactions WHERE customer_id = $1::uuid`,
+			`DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`,
+			`UPDATE payments SET reversed_by_payment_id = NULL, reverses_payment_id = NULL WHERE customer_id = $1::uuid`,
+			`DELETE FROM payments WHERE customer_id = $1::uuid`,
+			`DELETE FROM invoices WHERE customer_id = $1::uuid`,
+			`DELETE FROM customers WHERE id = $1::uuid`,
+		} {
+			if _, err := pool.Exec(c, q, customerID); err != nil {
+				t.Errorf("cleanup failed on %q: %v", q, err)
+			}
+		}
+	})
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, discount_date, terms_code,
+		                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+		 VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED',
+		         (now() AT TIME ZONE 'America/Toronto')::date - 2, (now() AT TIME ZONE 'America/Toronto')::date + 28,
+		         (now() AT TIME ZONE 'America/Toronto')::date + 8, '2-10-NET30',
+		         100000, 0, 100000, 100000, now(), 'INVOICE') RETURNING id::text`,
+		tag+"-I", customerID, branchID).Scan(&invoiceID); err != nil {
+		t.Fatalf("seed invoice: %v", err)
+	}
+	repo := payments.NewRepository(pool).WithDiscountTerms(nsfDiscountTerms{})
+	ans, err := repo.ApplyReceived(ctx, payments.ApplyRequest{
+		CustomerID: customerID, Method: "CHEQUE", Reference: "CHQ RGDR", IdempotencyKey: tag,
+		InvoiceIDs: []string{invoiceID}, AmountCents: 98000, ReceivedBy: userID,
+	})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	figure := func() int64 {
+		n, err := billing.NewRepository(pool).DiscountCents(ctx, invoiceID)
+		if err != nil {
+			t.Fatalf("the register's discount figure: %v", err)
+		}
+		return n
+	}
+	if got := figure(); got != 2000 {
+		t.Fatalf("the register's discount figure reads %d after the apply, want 2000", got)
+	}
+	if _, err := repo.ReversePayment(ctx, payments.ReverseInput{PaymentID: ans.PaymentID, Reason: "reversed", IsManager: true}, time.Now()); err != nil {
+		t.Fatalf("reverse: %v", err)
+	}
+	if got := figure(); got != 0 {
+		t.Errorf("the register's discount figure reads %d after the reversal, want 0", got)
 	}
 }
