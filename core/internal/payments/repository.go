@@ -880,7 +880,12 @@ func (r *Repository) PayWithStamps(ctx context.Context, customerID, method, gate
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	total, branchID, change, err := r.lockAndTotal(ctx, tx, customerID, allocs, nil)
+	// THE PORTAL'S RULE (TM-2 fix round 2, P2-1, the lead's choice (b)): the portal settles at face,
+	// with no early payment discount and no change on account. The card was charged the face and
+	// the screen shows the face, so a discount parked as a credit the customer cannot see would be
+	// a confident wrong number. The money desk and the per invoice door keep the one discount rule.
+	// Follow on: plan row TM-2b, the portal charges the discounted payoff and shows the discount.
+	total, branchID, change, err := r.lockAndTotal(ctx, tx, customerID, allocs, nil, false)
 	if err != nil {
 		return Payment{}, err
 	}
@@ -1136,7 +1141,11 @@ func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) erro
 // that the key share blocks closes a cycle (the return's refund rail then waits on the counter). With
 // NO KEY UPDATE the settle never waits on the return's share at all: no writer deletes invoices or
 // changes their keys, so the share is never something the settle needs to hold back.
-func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Allocation, dctx *discountContext) (int64, string, int64, error) {
+//
+// takeDiscount is the door's rule (TM-2 fix round 2, P2-1): the money desk and the per invoice door
+// pass true; the portal settle (PayWithStamps) passes false and settles at face, with no discount
+// and no change. The portal rule is recorded there, with its follow on (plan row TM-2b).
+func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID string, allocs []Allocation, dctx *discountContext, takeDiscount bool) (int64, string, int64, error) {
 	if _, err := tx.Exec(ctx, lockPaymentsSequenceSQL); err != nil {
 		return 0, "", 0, fmt.Errorf("pay: lock payments sequence: %w", err)
 	}
@@ -1205,6 +1214,9 @@ func (r *Repository) lockAndTotal(ctx context.Context, tx pgx.Tx, customerID str
 		if branchID == "" {
 			branchID = invBranch
 		}
+	}
+	if !takeDiscount {
+		return total, branchID, 0, nil
 	}
 	// The early payment discount (TM-2), derived here for every caller of the one settle: the per
 	// invoice door and the portal settle bring no walk of their own, so the discount they take is

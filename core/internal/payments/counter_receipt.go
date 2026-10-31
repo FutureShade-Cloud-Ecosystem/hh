@@ -203,7 +203,7 @@ func validateReceipt(in ReceiptRequest) error {
 // clock; nil makes the settle resolve its own from the rows it locks (the per invoice and portal
 // doors).
 func (r *Repository) settleReceipt(ctx context.Context, tx pgx.Tx, in ReceiptRequest, dctx *discountContext) (p Payment, claimed bool, err error) {
-	total, invBranch, clamped, err := r.lockAndTotal(ctx, tx, in.CustomerID, in.Allocations, dctx)
+	total, invBranch, clamped, err := r.lockAndTotal(ctx, tx, in.CustomerID, in.Allocations, dctx, true)
 	if err != nil {
 		return Payment{}, false, err
 	}

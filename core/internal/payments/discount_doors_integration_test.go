@@ -37,33 +37,40 @@ func (w *applyWorld) doorOutcome(t *testing.T, invoiceID, paymentID string) (bal
 }
 
 // TestDiscountDoors_FaceInsideTheWindowIsTheSameAtEveryDoor: a customer sends the invoice's face
-// (100000) inside the 2/10 window. Every door answers the same: the invoice closes at the
-// discounted payoff (98000 money, 2000 discount) and the 2000 over the payoff stays with the
-// dealer as change on account. The payment row carries the whole 100000 that arrived.
+// (100000) inside the 2/10 window. The doors keep two rules, stated plainly:
+//
+//   - the money desk and the per invoice door take the discount: the invoice closes at the
+//     discounted payoff (98000 money, 2000 discount) and the 2000 over the payoff stays with the
+//     dealer as change on account. The payment row carries the whole 100000 that arrived;
+//   - the portal takes NO discount for now (TM-2 fix round 2, P2-1, the lead's choice (b)): the
+//     card is charged the face, the invoice closes at face with discount 0 and no change is made.
+//     The follow on is plan row TM-2b (the portal charges the discounted payoff and shows it).
 func TestDiscountDoors_FaceInsideTheWindowIsTheSameAtEveryDoor(t *testing.T) {
 	ctx := context.Background()
 	w := newApplyWorld(t).bindTerms()
 
 	type door struct {
 		name string
-		run  func(inv, key string) (paymentID string, err error)
+		// atFace is true for the portal: it settles at face with no discount and no change.
+		atFace bool
+		run    func(inv, key string) (paymentID string, err error)
 	}
 	doors := []door{
-		{"money desk (ApplyReceived)", func(inv, key string) (string, error) {
+		{"money desk (ApplyReceived)", false, func(inv, key string) (string, error) {
 			ans, err := w.repo.ApplyReceived(ctx, ApplyRequest{
 				CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ D1",
 				IdempotencyKey: key, InvoiceIDs: []string{inv}, AmountCents: 100000,
 			})
 			return ans.PaymentID, err
 		}},
-		{"per invoice door (RecordReceipt)", func(inv, key string) (string, error) {
+		{"per invoice door (RecordReceipt)", false, func(inv, key string) (string, error) {
 			out, err := w.repo.RecordReceipt(ctx, ReceiptRequest{
 				CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ D2", IdempotencyKey: key,
 				Allocations: []Allocation{{InvoiceID: inv, AmountCents: 100000}},
 			})
 			return out.Payment.ID, err
 		}},
-		{"portal (Pay)", func(inv, key string) (string, error) {
+		{"portal (Pay)", true, func(inv, key string) (string, error) {
 			p, err := w.repo.Pay(ctx, w.customerID, "CARD", "gw-"+key, []Allocation{{InvoiceID: inv, AmountCents: 100000}})
 			return p.ID, err
 		}},
@@ -75,6 +82,13 @@ func TestDiscountDoors_FaceInsideTheWindowIsTheSameAtEveryDoor(t *testing.T) {
 			t.Fatalf("%s: %v", d.name, err)
 		}
 		bal, st, disc, amt, onAcct := w.doorOutcome(t, inv, pid)
+		if d.atFace {
+			if bal != 0 || st != "PAID" || disc != 0 || amt != 100000 || onAcct != 0 {
+				t.Errorf("%s: want balance 0 PAID at face, discount 0, payment 100000, change 0; got balance %d %s, discount %d, payment %d, change %d",
+					d.name, bal, st, disc, amt, onAcct)
+			}
+			continue
+		}
 		if bal != 0 || st != "PAID" || disc != 2000 || amt != 100000 || onAcct != 2000 {
 			t.Errorf("%s: want balance 0 PAID, discount 2000, payment 100000, change 2000; got balance %d %s, discount %d, payment %d, change %d",
 				d.name, bal, st, disc, amt, onAcct)
