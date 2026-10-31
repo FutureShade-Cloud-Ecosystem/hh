@@ -578,12 +578,8 @@ func (s *CreditMemoService) Issue(ctx context.Context, req CreditMemoRouteReques
 		return CreditMemoRouteResult{}, err
 	}
 	if found {
-		if existing.CustomerID != customerID ||
-			existing.BranchID != branchID ||
-			existing.ReversesInvoiceID != in.ReversesInvoiceID ||
-			existing.jobID != in.JobID ||
-			(req.AmountCents != 0 && -existing.SubtotalCents != req.AmountCents) {
-			return CreditMemoRouteResult{}, &creditMemoKeyConflict{msg: "this idempotency key already named a different credit; a key belongs to the credit that first used it"}
+		if !sameCreditBody(existing, in) {
+			return CreditMemoRouteResult{}, errCreditKeyConflict()
 		}
 		return s.reusedResult(existing, revenue, reason), nil
 	}

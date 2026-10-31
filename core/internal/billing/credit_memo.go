@@ -228,12 +228,8 @@ func (w *InvoiceWriter) IssueCreditMemo(ctx context.Context, in CreditMemoInput)
 	} else if ok {
 		// The fast path answers with the memo the key named only when it is the same credit; a racing loser whose
 		// pre check ran before the winner committed lands here, and must get the same 409 as the fallback below.
-		same, cerr := w.sameCreditBody(ctx, doc, in)
-		if cerr != nil {
+		if cerr := w.checkCreditBody(ctx, doc, in); cerr != nil {
 			return InvoiceDoc{}, cerr
-		}
-		if !same {
-			return InvoiceDoc{}, &creditMemoKeyConflict{msg: "this idempotency key already named a different credit; a key belongs to the credit that first used it"}
 		}
 		doc.Reused = true
 		return doc, nil
@@ -254,14 +250,10 @@ func (w *InvoiceWriter) IssueCreditMemo(ctx context.Context, in CreditMemoInput)
 	if err != nil {
 		if isUniqueViolation(err) {
 			if existing, ok, ferr := w.findByKey(ctx, in.IdempotencyKey); ferr == nil && ok {
-				// The racing loser is answered with the winner's memo only when it is the same credit
-				// (customer, amount, job), as the non racing reuse checks; a different body is a conflict.
-				same, cerr := w.sameCreditBody(ctx, existing, in)
-				if cerr != nil {
+				// The racing loser is answered with the winner's memo only when it is the same credit, as the
+				// non racing reuse checks; a different body is a conflict.
+				if cerr := w.checkCreditBody(ctx, existing, in); cerr != nil {
 					return InvoiceDoc{}, cerr
-				}
-				if !same {
-					return InvoiceDoc{}, &creditMemoKeyConflict{msg: "this idempotency key already named a different credit; a key belongs to the credit that first used it"}
 				}
 				existing.Reused = true
 				return existing, nil
@@ -651,20 +643,38 @@ func creditMemoMemo(no, origNo, reason string) string {
 	return s
 }
 
-// sameCreditBody reports whether the memo a key already named is the credit this request asks for: the
-// same customer, the same job and, when the request names an amount, the same amount. The job is read
-// back from the memo's own row because the key lookup does not carry it.
-func (w *InvoiceWriter) sameCreditBody(ctx context.Context, existing InvoiceDoc, in CreditMemoInput) (bool, error) {
-	var jobID string
+// sameCreditBody is the one body check for a credit memo key: whether the memo the key already named is the credit
+// this request asks for. The customer, the branch, the reversed invoice and the job must match and, when the
+// request names an amount (zero means the whole of what is left), so must the amount. The route's pre check, the
+// writer's fast path and the unique violation fallback all call it. The existing document must carry
+// ReversesInvoiceID and jobID (creditMemoByKey does; loadCreditBody fills them for a plain key lookup).
+func sameCreditBody(existing InvoiceDoc, in CreditMemoInput) bool {
+	if existing.CustomerID != in.CustomerID ||
+		existing.BranchID != in.BranchID ||
+		existing.ReversesInvoiceID != in.ReversesInvoiceID ||
+		existing.jobID != in.JobID {
+		return false
+	}
+	return in.AmountCents == 0 || -existing.SubtotalCents == in.AmountCents
+}
+
+// checkCreditBody answers nil when the memo a key named is this request's credit, and the key conflict when it is
+// not. The reversed invoice and the job are read back from the memo's own row because the key lookup does not
+// carry them.
+func (w *InvoiceWriter) checkCreditBody(ctx context.Context, existing InvoiceDoc, in CreditMemoInput) error {
+	var reverses, jobID string
 	if err := w.pool.QueryRow(ctx,
-		`SELECT COALESCE(job_id::text,'') FROM invoices WHERE id = $1::uuid`, existing.InvoiceID).Scan(&jobID); err != nil {
-		return false, fmt.Errorf("billing: read the job of the credit memo this key named: %w", err)
+		`SELECT COALESCE(reverses_invoice_id::text,''), COALESCE(job_id::text,'') FROM invoices WHERE id = $1::uuid`,
+		existing.InvoiceID).Scan(&reverses, &jobID); err != nil {
+		return fmt.Errorf("billing: read the body of the credit memo this key named: %w", err)
 	}
-	if existing.CustomerID != in.CustomerID || jobID != in.JobID {
-		return false, nil
+	existing.ReversesInvoiceID, existing.jobID = reverses, jobID
+	if !sameCreditBody(existing, in) {
+		return errCreditKeyConflict()
 	}
-	if in.AmountCents != 0 && -existing.SubtotalCents != in.AmountCents {
-		return false, nil
-	}
-	return true, nil
+	return nil
+}
+
+func errCreditKeyConflict() error {
+	return &creditMemoKeyConflict{msg: "this idempotency key already named a different credit; a key belongs to the credit that first used it"}
 }
