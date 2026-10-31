@@ -121,6 +121,7 @@ type Service struct {
 	standard StandardRateReader // the dealer's standard tax rate; nil is the Ontario 13 percent
 	cosigner CoSignerResolver   // resolves the four-eyes co-signer's authority server-side (never body-asserted)
 	audit    audit.Recorder
+	custJobs CustomerJobs // the customer module's job facts (the holdback rule, the link)
 	log      *slog.Logger
 	now      func() time.Time
 	// callerFrom resolves the guard-stamped acting StaffContext (the dual-gate release check). Never a

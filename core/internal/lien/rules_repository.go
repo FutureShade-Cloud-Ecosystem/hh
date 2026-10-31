@@ -1,0 +1,94 @@
+package lien
+
+// rules_repository.go, the pgx access layer of the holdback rule tables (migration 0471):
+// holdback_province_rules, holdback_dealer_rule, holdback_job_overrides, and the lien_jobs link column.
+//
+// EVERY READ AND WRITE HERE RIDES A CALLER'S TRANSACTION when one is carried on the context
+// (customer.WithCallerTx): RT-2 asks for the rule inside an invoice's write, and a second pool
+// connection asked for there is the pool cycle the till hold read closed.
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+)
+
+// querier is what a pool and a transaction both are.
+type querier interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func (r *Repository) q(ctx context.Context) (querier, error) {
+	if tx := customer.CallerTx(ctx); tx != nil {
+		return tx, nil
+	}
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	return r.pool, nil
+}
+
+// DealerRule is the dealer's own holdback rule: its province, and an optional percent that overrides
+// the province's. A nil percent is no override, never zero percent.
+type DealerRule struct {
+	Province       string `json:"province"`
+	HoldbackPctBps *int   `json:"holdback_pct_bps"`
+}
+
+func (r *Repository) DealerRule(ctx context.Context) (DealerRule, error) {
+	q, err := r.q(ctx)
+	if err != nil {
+		return DealerRule{}, err
+	}
+	var d DealerRule
+	if err := q.QueryRow(ctx, `SELECT province, holdback_pct_bps FROM holdback_dealer_rule WHERE singleton`).
+		Scan(&d.Province, &d.HoldbackPctBps); err != nil {
+		return DealerRule{}, fmt.Errorf("lien: read the dealer holdback rule: %w", err)
+	}
+	return d, nil
+}
+
+func (r *Repository) SetDealerOverride(ctx context.Context, pct *int, setBy string) (DealerRule, error) {
+	q, err := r.q(ctx)
+	if err != nil {
+		return DealerRule{}, err
+	}
+	var d DealerRule
+	if err := q.QueryRow(ctx,
+		`UPDATE holdback_dealer_rule SET holdback_pct_bps = $1, set_by = $2, updated_at = now()
+		 WHERE singleton RETURNING province, holdback_pct_bps`, pct, nullUUID(setBy)).
+		Scan(&d.Province, &d.HoldbackPctBps); err != nil {
+		return DealerRule{}, fmt.Errorf("lien: set the dealer holdback override: %w", err)
+	}
+	return d, nil
+}
+
+// SetJobOverride stores (pct set) or removes (pct nil) a job's override. branchID is the job's branch.
+func (r *Repository) SetJobOverride(ctx context.Context, customerJobID, branchID string, pct *int, setBy string) error {
+	q, err := r.q(ctx)
+	if err != nil {
+		return err
+	}
+	if pct == nil {
+		if _, err := q.Exec(ctx, `DELETE FROM holdback_job_overrides WHERE customer_job_id = $1`, customerJobID); err != nil {
+			return fmt.Errorf("lien: clear the job holdback override: %w", err)
+		}
+		return nil
+	}
+	if _, err := q.Exec(ctx,
+		`INSERT INTO holdback_job_overrides (customer_job_id, branch_id, holdback_pct_bps, set_by)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (customer_job_id) DO UPDATE
+		   SET holdback_pct_bps = EXCLUDED.holdback_pct_bps, branch_id = EXCLUDED.branch_id,
+		       set_by = EXCLUDED.set_by, set_at = now()`,
+		customerJobID, branchID, *pct, nullUUID(setBy)); err != nil {
+		return fmt.Errorf("lien: set the job holdback override: %w", err)
+	}
+	return nil
+}
+
