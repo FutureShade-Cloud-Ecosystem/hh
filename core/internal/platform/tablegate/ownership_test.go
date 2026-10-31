@@ -316,6 +316,7 @@ var migrationTopics = map[string]string{
 	"0460_customer_jobs":                   "customer",
 	"0466_payment_terms":                   "customer",
 	"0461_credit_change_requests":          "billing",
+	"0471_holdback_rules":                  "lien",
 	"0473_finance_charge_runs":             "billing",
 }
 
@@ -465,7 +466,10 @@ var ownedObjects = map[string]string{
 	"gl_tieout_state":                       "gl",                // 0032_gl_module
 	"gl_year_end_closes":                    "gl",                // 0452_gl_year_end_closes
 	"hhpro_contractor_role_map":             "identity",          // 0215_identity_audit
+	"holdback_dealer_rule":                  "lien",              // 0471_holdback_rules
+	"holdback_job_overrides":                "lien",              // 0471_holdback_rules
 	"holdback_ledger":                       "lien",              // 0038_lien_holdback_compliance
+	"holdback_province_rules":               "lien",              // 0471_holdback_rules
 	"inventory_recon_runs":                  "invcount",          // 0040_inventory_counts
 	"invoice_lines":                         "billing",           // 0009_invoices_ar
 	"invoices":                              "billing",           // 0009_invoices_ar
