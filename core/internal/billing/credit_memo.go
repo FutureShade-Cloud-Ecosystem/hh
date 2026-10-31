@@ -98,6 +98,9 @@ type CreditMemoJournal struct {
 	ARCents      int64
 	RevenueCents int64
 	TaxCents     int64
+	// HoldbackCents is the part of ARCents that came out of the invoice's holdback (1150), not out of
+	// the net the customer owed (1100): positive, and never more than ARCents (RT-2).
+	HoldbackCents int64
 	// ReversesSourceKind is the source kind of the invoice the memo reverses ("" for a standalone
 	// credit). A memo against a FINANCE_CHARGE document debits finance charge income, never sales
 	// revenue, because that is the account the charge credited. Every other kind is unchanged.
@@ -109,6 +112,9 @@ const (
 	RoleAR      = "ar"
 	RoleRevenue = "revenue"
 	RoleTax     = "tax"
+	// RoleHoldback is the holdback receivable (posting rule invoice.finalized/holdback, 1150): the
+	// invoice debited it for the part it withheld, so the credit takes that part back from it.
+	RoleHoldback = "holdback"
 	// RoleFinanceCharge is the income role a finance charge document credited (posting rule
 	// invoice.finalized/finance_charge, account 4220); its reversal debits the same role.
 	RoleFinanceCharge = "finance_charge"
@@ -174,7 +180,14 @@ func (j CreditMemoJournal) ReversingLegsFor(taxWord string) []JournalLeg {
 	if j.TaxCents != 0 {
 		legs = append(legs, JournalLeg{Role: RoleTax, DebitCents: j.TaxCents, Memo: taxWord + " reversed"})
 	}
-	legs = append(legs, JournalLeg{Role: RoleAR, CreditCents: j.ARCents, Memo: "AR credited"})
+	// The credit comes off the net the customer owed (1100) and off the holdback (1150), in the parts the
+	// invoice booked them: a leg with no amount is not a leg (gl_journal_lines' CHECK).
+	if net := j.ARCents - j.HoldbackCents; net > 0 {
+		legs = append(legs, JournalLeg{Role: RoleAR, CreditCents: net, Memo: "AR credited"})
+	}
+	if j.HoldbackCents > 0 {
+		legs = append(legs, JournalLeg{Role: RoleHoldback, CreditCents: j.HoldbackCents, Memo: "holdback credited"})
+	}
 	return legs
 }
 
@@ -272,6 +285,7 @@ func (w *InvoiceWriter) IssueCreditMemo(ctx context.Context, in CreditMemoInput)
 			ARCents:            plan.subtotal + plan.tax,
 			RevenueCents:       plan.subtotal,
 			TaxCents:           plan.tax,
+			HoldbackCents:      plan.holdback,
 			ReversesSourceKind: plan.origSourceKind,
 		})
 		if perr != nil {
@@ -292,6 +306,9 @@ type creditPlan struct {
 	tax      int64
 	lines    []OrderInvoiceLine // positive magnitudes; negated at insert
 	origNo   string
+	// holdback is the part of the reversed invoice's holdback this memo takes back, positive (RT-2); zero
+	// for an accommodation and for an invoice that withheld nothing.
+	holdback int64
 	// origSourceKind is the reversed invoice's source kind, carried to the memo's journal.
 	origSourceKind string
 	// THE ROOM: what the invoice has left to credit, before tax and with it (SF-2e). A credit
@@ -360,14 +377,15 @@ func (w *InvoiceWriter) planReversal(ctx context.Context, q planQuerier, in Cred
 	var (
 		p                         creditPlan
 		origSub, origTax, origTot int64
+		origHold                  int64
 		docType, sourceKind       string
 		customerID, brnch         string
 	)
 	err := q.QueryRow(ctx, `
 SELECT invoice_no::text, doc_type, source_kind, customer_id::text, branch_id::text,
-       subtotal_cents, tax_cents, total_cents
+       subtotal_cents, tax_cents, total_cents, holdback_cents
   FROM invoices WHERE id = $1`, in.ReversesInvoiceID).
-		Scan(&p.origNo, &docType, &sourceKind, &customerID, &brnch, &origSub, &origTax, &origTot)
+		Scan(&p.origNo, &docType, &sourceKind, &customerID, &brnch, &origSub, &origTax, &origTot, &origHold)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return creditPlan{}, httpx.BadRequestf("no such invoice to reverse")
@@ -391,13 +409,18 @@ SELECT invoice_no::text, doc_type, source_kind, customer_id::text, branch_id::te
 	}
 
 	// What earlier memos already took. Memos hold negative figures; the sums are read positive.
-	var prevSub, prevTax int64
+	var prevSub, prevTax, prevHold, takenHold int64
 	if err := q.QueryRow(ctx, `
-SELECT COALESCE(-SUM(subtotal_cents), 0), COALESCE(-SUM(tax_cents), 0)
+SELECT COALESCE(-SUM(subtotal_cents), 0), COALESCE(-SUM(tax_cents), 0), COALESCE(-SUM(holdback_cents), 0),
+       COALESCE(-SUM(holdback_cents) FILTER (WHERE status <> 'DRAFT'), 0)
   FROM invoices WHERE reverses_invoice_id = $1::uuid AND doc_type = 'CREDIT_MEMO' AND status <> 'VOID'`,
-		in.ReversesInvoiceID).Scan(&prevSub, &prevTax); err != nil {
+		in.ReversesInvoiceID).Scan(&prevSub, &prevTax, &prevHold, &takenHold); err != nil {
 		return creditPlan{}, fmt.Errorf("billing: read what is already credited: %w", err)
 	}
+	// The invoice's own holdback_cents is what it still withholds: a finalized memo lowered it by the
+	// part it took. The holdback the invoice was written with is that plus what finalized memos took;
+	// a parked memo holds its part in reserve without having lowered the column.
+	origHold += takenHold
 	remSub, remTax := origSub-prevSub, origTax-prevTax
 	if remSub <= 0 {
 		return creditPlan{}, httpx.BadRequestf("invoice %s has nothing left to credit: it has already been credited in full", p.origNo)
@@ -420,6 +443,7 @@ SELECT COALESCE(-SUM(subtotal_cents), 0), COALESCE(-SUM(tax_cents), 0)
 			desc = "Partial credit against " + p.origNo
 		}
 		p.subtotal, p.tax = in.AmountCents, tax
+		p.holdback = reversalHoldback(origHold, origHold-prevHold, origSub, remSub, p.subtotal)
 		p.lines = []OrderInvoiceLine{{
 			LineNo: 1, Description: desc, QtyEntered: "1", UOMEntered: "EA", QtyBase: "1",
 			UnitPriceCents: in.AmountCents, PriceUOM: "EA", LineTotalCents: in.AmountCents,
@@ -434,6 +458,7 @@ SELECT COALESCE(-SUM(subtotal_cents), 0), COALESCE(-SUM(tax_cents), 0)
 			desc = "Credit against " + p.origNo + ", what was left"
 		}
 		p.subtotal, p.tax = remSub, remTax
+		p.holdback = reversalHoldback(origHold, origHold-prevHold, origSub, remSub, p.subtotal)
 		p.lines = []OrderInvoiceLine{{
 			LineNo: 1, Description: desc, QtyEntered: "1", UOMEntered: "EA", QtyBase: "1",
 			UnitPriceCents: remSub, PriceUOM: "EA", LineTotalCents: remSub,
@@ -471,6 +496,7 @@ SELECT line_no, COALESCE(order_line_id::text,''), COALESCE(product_id::text,''),
 		}}
 	}
 	p.subtotal, p.tax = origSub, origTax
+	p.holdback = reversalHoldback(origHold, origHold-prevHold, origSub, remSub, p.subtotal)
 	return p, nil
 }
 
@@ -569,17 +595,23 @@ func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput
 		err := tx.QueryRow(ctx, `
 INSERT INTO invoices (invoice_no, customer_id, order_id, job_id, branch_id, status, issue_date, due_date,
                       subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
-                      doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id, org_id)
+                      doc_type, source_kind, idempotency_key, closes_order, reverses_invoice_id, org_id, holdback_cents)
 VALUES ('#CM-' || nextval('invoice_no_seq'), $1, $2, $12, $3, 'FINALIZED', $4, $4,
         $5, $6, $7, $7, now(), 'CREDIT_MEMO', $8, $9, FALSE, $10,
-        $11)
+        $11, $13)
 RETURNING id::text, invoice_no`,
 			customerID, nullUUID(in.OrderID), branchID, issueDate,
 			-plan.subtotal, -plan.tax, -total,
 			sourceKind, in.IdempotencyKey, nullUUID(in.ReversesInvoiceID), orgID, nullUUID(in.JobID),
+			-plan.holdback,
 		).Scan(&id, &no)
 		if err != nil {
 			return fmt.Errorf("insert credit memo: %w", err)
+		}
+		// The holdback part comes off the invoice's own holdback and the retention ledger on this same
+		// transaction (RT-2).
+		if err := w.lowerHoldbackAndLedger(ctx, tx, in.ReversesInvoiceID, no, branchID, plan.holdback); err != nil {
+			return err
 		}
 
 		for i, l := range plan.lines {
@@ -598,7 +630,7 @@ VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8::numeric, $9, $10, $11, $12)`,
 
 		var open int64
 		if err := tx.QueryRow(ctx,
-			`SELECT COALESCE(SUM(balance_cents),0) FROM invoices
+			`SELECT COALESCE(SUM(balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0))),0) FROM invoices
 			  WHERE customer_id = $1 AND status IN ('FINALIZED','PARTIALLY_PAID')`,
 			customerID).Scan(&open); err != nil {
 			return fmt.Errorf("read open balance: %w", err)

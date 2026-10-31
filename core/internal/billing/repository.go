@@ -21,6 +21,8 @@ const invoiceColumns = `id::text, invoice_no::text, customer_id::text, order_id:
 // Repository owns reads of invoices + invoice_lines + customer_transactions (pgx).
 type Repository struct {
 	pool *pgxpool.Pool // nil in scaffold/tests
+	// holdback is the retention ledger seam (holdback.go); nil = a write off moves no ledger row.
+	holdback Withholder
 	// holdOrders and holdCustomers are the pay before release hold's seams to
 	// the order and customer modules (pick_hold.go), bound at the composition
 	// root.
@@ -30,6 +32,10 @@ type Repository struct {
 	// the aging, register and statement reads bind is the dealer's own calendar day.
 	zone houseday.Source
 }
+
+// WithHoldback binds the holdback seam the write off books its retention moves through (RT-2). Unbound,
+// a write off moves no ledger row.
+func (r *Repository) WithHoldback(h Withholder) *Repository { r.holdback = h; return r }
 
 // WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
 func (r *Repository) WithZone(src houseday.Source) *Repository { r.zone = src; return r }
@@ -175,7 +181,7 @@ func (r *Repository) OpenBalanceCents(ctx context.Context, customerID string) (i
 	}
 	var sum int64
 	err := r.pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(balance_cents),0) FROM invoices
+		`SELECT COALESCE(SUM(balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0))),0) FROM invoices
 		 WHERE customer_id = $1 AND status IN ('FINALIZED','PARTIALLY_PAID')`, customerID).Scan(&sum)
 	if err != nil {
 		return 0, fmt.Errorf("open balance for %q: %w", customerID, err)

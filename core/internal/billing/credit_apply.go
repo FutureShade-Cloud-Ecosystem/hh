@@ -800,7 +800,7 @@ UPDATE credit_application_keys
 func customerRunningAR(ctx context.Context, tx pgx.Tx, customerID string) (int64, error) {
 	var running int64
 	err := tx.QueryRow(ctx, `
-SELECT (SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
+SELECT (SELECT COALESCE(SUM(balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0))), 0) FROM invoices
          WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents <> 0)
      + (SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
          WHERE customer_id = $1::uuid AND COALESCE(source_type, '') <> 'invoice'

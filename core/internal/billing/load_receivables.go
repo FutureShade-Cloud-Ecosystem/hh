@@ -492,7 +492,7 @@ func workedInHH() *load.Refusal {
 func customerOpenBalance(ctx context.Context, tx pgx.Tx, orgID, customerID string) (int64, error) {
 	var open int64
 	if err := tx.QueryRow(ctx,
-		`SELECT COALESCE(SUM(balance_cents),0) FROM invoices
+		`SELECT COALESCE(SUM(balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0))),0) FROM invoices
 		  WHERE customer_id = $1::uuid AND org_id = $2::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`,
 		customerID, orgID).Scan(&open); err != nil {
 		return 0, fmt.Errorf("billing: read open balance: %w", err)

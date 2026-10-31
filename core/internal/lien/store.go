@@ -19,7 +19,13 @@ type lienStore interface {
 	// RetentionInvoiceIDs returns the invoice ids already booked as RETENTION for a job (the idempotent-sync
 	// guard, a second sync skips these).
 	RetentionInvoiceIDs(ctx context.Context, jobID string) (map[string]bool, error)
+	// HeldInvoiceIDs returns the invoice ids whose retention ANY lien job's ledger already holds, so a
+	// sync never books another job's invoice a second time.
+	HeldInvoiceIDs(ctx context.Context) (map[string]bool, error)
 	InsertHoldbackEntry(ctx context.Context, e HoldbackEntry) (string, error)
+	// InsertRetentionOnce books an invoice's positive RETENTION unless one is held, safe under concurrent
+	// callers; it answers the rows written.
+	InsertRetentionOnce(ctx context.Context, e HoldbackEntry) (int64, error)
 	HoldbackEntriesForJob(ctx context.Context, jobID string) ([]HoldbackEntry, error)
 	// HoldbackLedger returns every RETENTION/RELEASE row for a branch ("" = all) for the aging + triage roll-up.
 	HoldbackLedger(ctx context.Context, branchID string) ([]HoldbackEntry, error)

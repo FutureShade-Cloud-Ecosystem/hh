@@ -213,7 +213,6 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	lienJobsRepo := customer.NewRepository(pool)
 	lienSvc := lien.NewService(lien.NewRepository(pool)).
 		WithCustomerJobs(lien.NewCustomerJobs(customer.NewService(lienJobsRepo).WithJobs(lienJobsRepo))).
-		WithStandardRate(newTaxEngine(pool)). // the HST on holdback gross up reads the dealer's standard rate
 		WithOrderHoldback(orderRepo).
 		WithGLPoster(lienGLPoster{svc: spine.glSvc}).
 		WithCoSigner(identity.NewApprovalRepository(pool)).
@@ -638,7 +637,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// memo's park is voided on the withdrawal's own transaction, the same adapter the rail's decide
 	// path bridges through.
 	if err := syncEngine.RegisterScope("approvals", identity.NewApprovalsSyncStore(pool, link).
-		WithJEDecider(jeDeciderAdapter{svc: spine.glSvc, journals: gl.NewRepository(pool).WithZone(newDealerZone(pool)), memos: billing.NewInvoiceWriter(pool)})); err != nil {
+		WithJEDecider(newJEDeciderAdapter(pool, spine.glSvc, gl.NewRepository(pool).WithZone(newDealerZone(pool))))); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	syncStaffRoles, syncPortalRoles := syncFenceSeams(pool)

@@ -247,7 +247,7 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 	if writeClosed || writeCredit {
 		if err := tx.QueryRow(ctx, `
 			SELECT
-			  (SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
+			  (SELECT COALESCE(SUM(balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0))), 0) FROM invoices
 			    WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents <> 0)
 			+ (SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
 			    WHERE customer_id = $1::uuid AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF') AND source_type <> 'invoice')`,
