@@ -588,7 +588,9 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 	// that term rather than the bare days.
 	var docTerms customer.Terms
 	if w.terms != nil {
-		t, err := w.terms.TermsFor(ctx, f.CustomerID)
+		// The read rides the caller's transaction when there is one (QD5's one transaction): on a
+		// pool of one a second connection never comes.
+		t, err := w.terms.TermsFor(customer.WithCallerTx(ctx, ctxTx), f.CustomerID)
 		if err != nil {
 			return InvoiceDoc{}, err
 		}
