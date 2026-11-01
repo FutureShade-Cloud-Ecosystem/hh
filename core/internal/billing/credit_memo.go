@@ -679,7 +679,7 @@ func creditMemoMemo(no, origNo, reason string) string {
 // this request asks for. The customer, the branch, the reversed invoice and the job must match and, when the
 // request names an amount (zero means the whole of what is left), so must the amount. The route's pre check, the
 // writer's fast path and the unique violation fallback all call it. The existing document must carry
-// ReversesInvoiceID and jobID (creditMemoByKey does; loadCreditBody fills them for a plain key lookup).
+// ReversesInvoiceID and jobID (creditMemoByKey does; checkCreditBody fills them for a plain key lookup).
 func sameCreditBody(existing InvoiceDoc, in CreditMemoInput) bool {
 	if existing.CustomerID != in.CustomerID ||
 		existing.BranchID != in.BranchID ||
