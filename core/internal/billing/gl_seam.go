@@ -53,10 +53,10 @@ func (r *Repository) InvoiceForGL(ctx context.Context, invoiceID string) (gl.Inv
 // reading of the date); the transaction arm stays on the raw instant, because a payment or an NSF is
 // an instant and not a day.
 //
-// The invoice arm carries each document's balance AT the as-of instant ($2). At an as of on or after
-// the CURRENT house day ($3) it reads balance_cents, the inception to date figure, every open
+// The invoice arm carries each document's balance AT the as-of instant ($2). At an as of strictly after
+// the first instant of the CURRENT house day ($3, asOfIsCurrentState) it reads balance_cents, the inception to date figure, every open
 // document on the books (the finalize cut is a past date's cut), so the tie-out moves with every
-// balance move; only a PAST date rebuilds, the same reconstruction the aging's agingSelect runs, so
+// balance move; only a PAST instant rebuilds (today's own midnight included, the month end the close preflight reads on the 1st), the same reconstruction the aging's agingSelect runs, so
 // the tie-out at a past date compares what was owed then with the GL at that date and the aging's
 // grand total ties to this figure by construction: an invoice paid after the as-of date is still
 // owed at it, an invoice finalized after it is not on the books at it, and a document settled by the
@@ -65,14 +65,11 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 	if r.pool == nil {
 		return 0, errNoDB
 	}
-	day, err := r.clockAt(ctx, asOf)
+	zone, err := r.zoneFor(ctx)
 	if err != nil {
 		return 0, err
 	}
-	today, err := r.clockAt(ctx, time.Now())
-	if err != nil {
-		return 0, err
-	}
+	current := asOfIsCurrentState(asOf, time.Now(), zone)
 	var sum int64
 	err = r.pool.QueryRow(ctx,
 		`SELECT
@@ -100,7 +97,7 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 		     WHERE txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF') AND source_type <> 'invoice'
 		       AND ($3::bool OR created_at <= $2)
 		       AND ($1 = '' OR branch_id = $1::uuid))`,
-		branchID, asOf, onOrAfterHouseDay(day, today),
+		branchID, asOf, current,
 	).Scan(&sum)
 	if err != nil {
 		return 0, fmt.Errorf("billing: AR balance as-of %s: %w", asOf.Format(time.RFC3339), err)

@@ -65,6 +65,20 @@ func onOrAfterHouseDay(day, today time.Time) bool {
 	return day.YearDay() >= today.YearDay()
 }
 
+// asOfIsCurrentState says whether an as of INSTANT reads the books' own balances (the current state)
+// or rebuilds them from history. An instant strictly after the first instant of the current house day
+// is the current state: the callers that mean "now" pass an instant captured a moment before the
+// query, and nothing is dated inside today but today's own acts. The first instant of the house day
+// itself is NOT current: it is a past instant, the end of the day before, and the close preflight
+// reads the month's end there on the 1st, so it rebuilds (W3 0.57, FROM-PRINCIPAL 234). A later
+// day is the future and reads the books as they stand. The aging keeps its day based reading
+// (onOrAfterHouseDay), because its as of is a calendar date.
+func asOfIsCurrentState(asOf, now time.Time, zone houseday.Zone) bool {
+	n := houseClockIn(zone, now)
+	todayStart := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, zone.Location())
+	return asOf.After(todayStart)
+}
+
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
 
 func scanInvoice(row pgx.Row) (Invoice, error) {
