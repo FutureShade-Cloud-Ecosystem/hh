@@ -370,6 +370,12 @@ func TestRT3_TheDueToReleaseReadListsAmountsByInvoice(t *testing.T) {
 			t.Errorf("invoice %s: want due %d at the branch, got %+v (listed %v)", id, want, r, ok)
 		}
 	}
+	wantName := fmt.Sprintf("RT2 Customer %d", l.n)
+	for _, r := range rows {
+		if r.CustomerName != wantName {
+			t.Errorf("invoice %s: want the customer's name %q on the row, got %q", r.InvoiceID, wantName, r.CustomerName)
+		}
+	}
 	l.rt3PerfOn(10)
 	rows, err = holdBillingRepo(l.pool).HoldbackDueToRelease(context.Background(), billing.HoldbackDueQuery{BranchID: l.branch, Now: time.Now()})
 	if err != nil {

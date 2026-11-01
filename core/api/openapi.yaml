@@ -33578,6 +33578,7 @@ components:
         - invoice_id
         - invoice_no
         - customer_id
+        - customer_name
         - customer_job_id
         - branch_id
         - holdback_cents
@@ -33591,6 +33592,9 @@ components:
         customer_id:
           type: string
           format: uuid
+        customer_name:
+          type: string
+          description: The customer's display name, read with the row
         customer_job_id:
           type: string
           format: uuid

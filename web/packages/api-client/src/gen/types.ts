@@ -553,6 +553,7 @@ export type BillingHoldbackDueRow = {
   invoice_id: string;
   invoice_no: string;
   customer_id: string;
+  customer_name: string;
   customer_job_id: string;
   lien_job_id?: string;
   lien_job_no?: string;

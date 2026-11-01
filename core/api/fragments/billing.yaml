@@ -3427,6 +3427,7 @@ components:
         - invoice_id
         - invoice_no
         - customer_id
+        - customer_name
         - customer_job_id
         - branch_id
         - holdback_cents
@@ -3435,6 +3436,7 @@ components:
         invoice_id: { type: string, format: uuid }
         invoice_no: { type: string }
         customer_id: { type: string, format: uuid }
+        customer_name: { type: string, description: "The customer's display name, read with the row" }
         customer_job_id: { type: string, format: uuid }
         lien_job_id: { type: string, format: uuid }
         lien_job_no: { type: string }
