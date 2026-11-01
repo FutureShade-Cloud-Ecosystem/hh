@@ -818,6 +818,7 @@ const statementByJobTail = `
 			                 THEN split_part(a.memo, ' (', 1)
 			            WHEN a.txn_type = 'CREDIT_MEMO' THEN 'Credit memo ' || a.invoice_no
 			            WHEN a.txn_type = 'INVOICE' THEN a.invoice_no
+			            WHEN a.txn_type = 'WRITE_OFF' AND a.memo LIKE 'write off reversed %' THEN 'Write-off reversed'
 			            WHEN a.txn_type = 'WRITE_OFF' THEN 'Write-off'
 			            WHEN a.txn_type = 'NSF' THEN 'Returned payment'
 			            WHEN a.txn_type = 'PAYMENT' THEN 'Payment received, thank you'

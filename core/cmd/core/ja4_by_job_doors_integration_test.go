@@ -709,3 +709,46 @@ VALUES ($1::uuid, $2, $3, 0, 'invoice', $4::uuid, $5::uuid, $6, now() - interval
 		t.Errorf("found %d of the %d planted lines on job A: %+v", seen, len(want), lines)
 	}
 }
+
+// TestIntegration_JA4Doors_WriteOff (P061 fix round 2, P2-1): a write off and its reversal, through the
+// real write off door with a reason that would leak if it could, read fixed words on the job's lines. The
+// statement by job still equals the aging per job at every step.
+func TestIntegration_JA4Doors_WriteOff(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4writeoff")
+	w.ageInvoices(t, 90)
+	soon := time.Now().Add(time.Hour)
+	ctx := context.Background()
+
+	res, err := w.bill.WriteOffInvoice(ctx, billing.WriteOffInput{
+		InvoiceID: w.invA, Reason: ja4Reason, IdempotencyKey: "ja4-writeoff-" + w.cust, OrgID: cmRoundNorthOrg, IsController: true,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("the write off door: %v", err)
+	}
+	ja4Want(t, "after the write off", w.agree(t, "after the write off", soon), w, 0, 20000, 10000)
+	w.tie(t, "after the write off", soon)
+
+	if _, err := w.bill.ReverseWriteOff(ctx, billing.ReverseWriteOffInput{
+		InvoiceID: w.invA, WriteOffID: res.WriteOffID, Reason: ja4Reason, OrgID: cmRoundNorthOrg,
+	}, time.Now()); err != nil {
+		t.Fatalf("the write off reversal door: %v", err)
+	}
+	ja4Want(t, "after the write off is reversed", w.agree(t, "after the write off is reversed", soon), w, 30000, 20000, 10000)
+	w.tie(t, "after the write off is reversed", soon)
+
+	words := map[string]bool{}
+	lines, err := w.bill.StatementLinesByJob(ctx, w.cust, soon, billing.AllBranches)
+	if err != nil {
+		t.Fatalf("StatementLinesByJob: %v", err)
+	}
+	for _, ln := range lines {
+		if ln.JobID == w.jobA {
+			words[ln.Description] = true
+		}
+	}
+	for _, want := range []string{"Write-off", "Write-off reversed"} {
+		if !words[want] {
+			t.Errorf("job A's lines read %v; want a line reading %q", words, want)
+		}
+	}
+}
