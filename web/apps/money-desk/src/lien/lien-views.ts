@@ -363,6 +363,48 @@ function jobForm(model: LiensModel): TemplateResult {
   `;
 }
 
+/** What the core holds about a preserved lien on the job, in a sentence. */
+function lienStateWords(job: LienJob): string {
+  if (job.lien_preserved_on === undefined) return "No lien is recorded on this job.";
+  const note = job.lien_preserved_note === undefined || job.lien_preserved_note === "" ? "" : ` ${job.lien_preserved_note}.`;
+  if (job.lien_discharged_on === undefined) return `A lien was preserved on ${dueWords(job.lien_preserved_on)}.${note} It has not been discharged, so the holdback stays held.`;
+  return `A lien was preserved on ${dueWords(job.lien_preserved_on)} and discharged on ${dueWords(job.lien_discharged_on)}.${note}`;
+}
+
+/** The doors: record or discharge a preserved lien, and correct the three dates the preservation period counts from. Each is recorded by the core. */
+function doors(model: LiensModel, job: LienJob): TemplateResult {
+  const active = job.lien_preserved_on !== undefined && job.lien_discharged_on === undefined;
+  return html`
+    <div class="li-doors" data-doors>
+      <h3>Preservation</h3>
+      <p class="li-fact" data-lien-state>${lienStateWords(job)}</p>
+      ${active
+        ? html`
+            <div class="li-form">
+              <label class="li-field">Discharged on<input type="date" data-field="discharge_day" aria-label="Discharged on" /></label>
+              <label class="li-field">Note<input data-field="discharge_note" aria-label="Note" autocomplete="off" /></label>
+            </div>
+            <div class="li-actions"><button type="button" class="btn btn-secondary" data-action="li-lien-discharge" ?disabled=${model.busy}>Record discharge</button></div>
+          `
+        : html`
+            <div class="li-form">
+              <label class="li-field">Lien preserved on<input type="date" data-field="lien_day" aria-label="Lien preserved on" /></label>
+              <label class="li-field">Note<input data-field="lien_note" aria-label="Note" autocomplete="off" /></label>
+            </div>
+            <div class="li-actions"><button type="button" class="btn btn-secondary" data-action="li-lien-record" ?disabled=${model.busy}>Record preserved lien</button></div>
+          `}
+      <h3>Dates the period counts from</h3>
+      <p class="li-hint">The latest of these starts the preservation period. Clear a box to remove its date.</p>
+      <div class="li-form">
+        <label class="li-field">Certificate published on<input type="date" data-field="dates_csp" aria-label="Certificate published on" /></label>
+        <label class="li-field">Substantial performance date<input type="date" data-field="dates_perf" aria-label="Substantial performance date" /></label>
+        <label class="li-field">Last supply date<input type="date" data-field="dates_supply" aria-label="Last supply date" /></label>
+      </div>
+      <div class="li-actions"><button type="button" class="btn btn-secondary" data-action="li-dates-save" ?disabled=${model.busy}>Save dates</button></div>
+    </div>
+  `;
+}
+
 function jobPanel(model: LiensModel, job: LienJob): TemplateResult {
   const held = agingOf(model, job.id);
   return html`
@@ -374,6 +416,7 @@ function jobPanel(model: LiensModel, job: LienJob): TemplateResult {
         <dt>Holdback</dt><dd>${directionWord(job.holdback_direction)}. ${directionLine(job.holdback_direction)}</dd>
         <dt>Contract</dt><dd>${job.contract_cents === 0 ? "Not set" : formatMoney(job.contract_cents)}</dd>
         <dt>Held back</dt><dd>${bpsWords(job.holdback_pct_bps)}</dd>
+        <dt>Certificate published</dt><dd>${job.csp_published_on === undefined ? "Not set" : dueWords(job.csp_published_on)}</dd>
         <dt>Substantial performance</dt><dd>${job.substantial_perf_date === undefined ? "Not set" : dueWords(job.substantial_perf_date)}</dd>
         <dt>Last supply</dt><dd>${job.last_supply_date === undefined ? "Not set" : dueWords(job.last_supply_date)}</dd>
         <dt>Held now</dt><dd data-held-now>${heldNowWords(held === undefined ? null : formatMoney(held.outstanding_cents), held?.oldest_days ?? 0)}</dd>
@@ -385,6 +428,7 @@ function jobPanel(model: LiensModel, job: LienJob): TemplateResult {
           ? html`<button type="button" class="btn btn-secondary" data-action="li-release-open" data-id=${job.id}>Release</button>`
           : nothing}
       </div>
+      ${model.canWrite ? doors(model, job) : nothing}
     </section>
   `;
 }

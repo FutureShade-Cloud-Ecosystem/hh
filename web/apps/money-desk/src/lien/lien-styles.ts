@@ -113,6 +113,8 @@ export const lienStyles = css`
   .li-invoices { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--hh-s-4); }
   .li-invoices li { display: flex; justify-content: space-between; gap: var(--hh-s-16); }
   .li-cards.li-cards-always { display: grid; }
+  .li-doors { border-top: 1px solid var(--hh-line); margin-top: var(--hh-s-16); padding-top: var(--hh-s-16); }
+  .li-doors h3 { margin-top: var(--hh-s-12); }
   .li-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
   @media (max-width: 900px) {

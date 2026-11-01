@@ -19,15 +19,21 @@ import {
   canReleaseDue,
   canWrite,
   cosigners,
+  datesForm,
+  dischargeForm,
   groupDue,
   jobForm,
   mergeData,
+  preservedForm,
+  recordedDischargeWords,
+  recordedPreservedWords,
   refusalWords,
   releasedDueWords,
   reverseForm,
   reversedWords,
   releasedWords,
   renderedWords,
+  savedDatesWords,
   syncWords,
   templateFields,
   templateWord,
@@ -90,6 +96,8 @@ export class LienDesk {
   // under the whole list and a press would otherwise change nothing the person can see.
   #reveal = "";
   #clearMerge = false;
+  // The doors' fields are put back to the job's own after a job is opened and after each door is recorded.
+  #syncDoors = false;
 
   constructor(api: LienApi, host: LienHost) {
     this.#api = api;
@@ -243,6 +251,15 @@ export class LienDesk {
       case "li-reverse-confirm":
         void this.#confirmReverse();
         return true;
+      case "li-lien-record":
+        void this.#door("record");
+        return true;
+      case "li-lien-discharge":
+        void this.#door("discharge");
+        return true;
+      case "li-dates-save":
+        void this.#door("dates");
+        return true;
       case "li-render":
         void this.#render();
         return true;
@@ -300,6 +317,7 @@ export class LienDesk {
 
   #select(id: string): void {
     this.#selectedJob = id;
+    this.#syncDoors = true;
     this.#newJob = false;
     this.#clearMessages();
     this.#reveal = "[data-job-panel]";
@@ -462,6 +480,49 @@ export class LienDesk {
     await this.#refresh();
   }
 
+  /** A lien door: each is recorded server side and answers the job as it now stands. */
+  async #door(kind: "record" | "discharge" | "dates"): Promise<void> {
+    const job = this.#jobs.find((j) => j.id === this.#selectedJob);
+    if (job === undefined || this.#busy || !canWrite(this.#host.roleCode())) return;
+    this.#clearMessages();
+    let call: Promise<Result<LienJob>>;
+    let words: string;
+    if (kind === "record") {
+      const form = preservedForm(this.#host.field("lien_day"), this.#host.field("lien_note"));
+      if (!form.ok) return this.#refuse(form.words);
+      call = this.#api.recordPreservedLien(job.id, form.body.preserved_on, form.body.note);
+      words = recordedPreservedWords(job.job_no);
+    } else if (kind === "discharge") {
+      const form = dischargeForm(this.#host.field("discharge_day"), this.#host.field("discharge_note"));
+      if (!form.ok) return this.#refuse(form.words);
+      call = this.#api.dischargeLien(job.id, form.body.discharged_on, form.body.note);
+      words = recordedDischargeWords(job.job_no);
+    } else {
+      const form = datesForm(job, { csp: this.#host.field("dates_csp"), perf: this.#host.field("dates_perf"), supply: this.#host.field("dates_supply") });
+      if (!form.ok) return this.#refuse(form.words);
+      call = this.#api.setDates(job.id, form.body);
+      words = savedDatesWords(job.job_no);
+    }
+    this.#busy = true;
+    this.#host.repaint();
+    const answer = await call;
+    this.#busy = false;
+    if (!answer.ok) {
+      this.#error = refusalWords("job", answer.error, answer.status ?? 0);
+      this.#host.repaint();
+      return;
+    }
+    this.#jobs = this.#jobs.map((j) => (j.id === job.id ? answer.value : j));
+    this.#notice = words;
+    this.#syncDoors = true;
+    await this.#refresh();
+  }
+
+  #refuse(words: string): void {
+    this.#error = words;
+    this.#host.repaint();
+  }
+
   async #loadDocs(): Promise<void> {
     if (this.#docJob === "") {
       this.#docs = [];
@@ -526,6 +587,16 @@ export class LienDesk {
       if (this.#clearMerge) {
         this.#clearMerge = false;
         for (const f of templateFields(this.#docKind)) this.#host.setField("merge", "", f.key);
+      }
+    }
+    if (this.#syncDoors && this.#tab === "jobs") {
+      const job = this.#jobs.find((j) => j.id === this.#selectedJob);
+      if (job !== undefined) {
+        this.#syncDoors = false;
+        for (const name of ["lien_day", "lien_note", "discharge_day", "discharge_note"]) this.#host.setField(name, "");
+        this.#host.setField("dates_csp", job.csp_published_on ?? "");
+        this.#host.setField("dates_perf", job.substantial_perf_date ?? "");
+        this.#host.setField("dates_supply", job.last_supply_date ?? "");
       }
     }
     if (this.#release !== null && this.#release.cosigner !== "") this.#host.setField("cosigner", this.#release.cosigner);
