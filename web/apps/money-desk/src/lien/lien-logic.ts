@@ -435,6 +435,11 @@ export function groupDue(rows: readonly BillingHoldbackDueRow[]): DueGroup[] {
   });
 }
 
+/** The branches a job's invoices sit at, each once, in the order of its rows (a job can hold invoices at more than one). */
+export function dueBranchIds(g: DueGroup): string[] {
+  return [...new Set(g.rows.map((r) => r.branch_id))];
+}
+
 /** The state of a customer job's holdback, in words a bookkeeper can act on. */
 export function dueStateWords(g: DueGroup): string {
   if (g.due) return "Due now";

@@ -24,6 +24,7 @@ import {
   type DueGroup,
   documentTone,
   dueConfirmWords,
+  dueBranchIds,
   dueTotalOf,
   jobStatusToneFor,
   jobStatusWordFor,
@@ -215,10 +216,15 @@ function dueState(g: DueGroup): TemplateResult {
 
 const lastDayWords = (g: DueGroup): string => (g.lastDay === "" ? "No date" : dueWords(g.lastDay));
 
+/** Every branch the job's invoices sit at, by name, so a job over two branches names both. */
+function dueBranches(model: LiensModel, g: DueGroup): string {
+  return dueBranchIds(g).map((id) => branchName(model.branches, id)).filter((n) => n !== "").join(" and ");
+}
+
 function dueRow(model: LiensModel, g: DueGroup): TemplateResult {
   return html`
     <tr data-row="due" data-customer-job=${g.customerJobId} data-lien-job=${g.lienJobNo}>
-      <td><strong class="li-mono">${g.lienJobNo === "" ? "No lien job" : g.lienJobNo}</strong><span class="li-sub">${branchName(model.branches, g.branchId)}</span></td>
+      <td><strong class="li-mono">${g.lienJobNo === "" ? "No lien job" : g.lienJobNo}</strong><span class="li-sub">${dueBranches(model, g)}</span></td>
       <td>${dueInvoices(g)}</td>
       <td class="li-nowrap" data-last-day>${lastDayWords(g)}</td>
       <td>${dueState(g)}</td>
@@ -232,7 +238,7 @@ function dueCard(model: LiensModel, g: DueGroup): TemplateResult {
     <li class="li-card" data-row="due" data-customer-job=${g.customerJobId} data-lien-job=${g.lienJobNo}>
       <div class="li-card-top"><strong class="li-mono">${g.lienJobNo === "" ? "No lien job" : g.lienJobNo}</strong>${pill(dueTone(g), nonBreaking(dueStateWords(g)))}</div>
       ${dueInvoices(g)}
-      <span class="li-sub">${branchName(model.branches, g.branchId)} · Last day to preserve: <span data-last-day>${lastDayWords(g)}</span></span>
+      <span class="li-sub">${dueBranches(model, g)} · Last day to preserve: <span data-last-day>${lastDayWords(g)}</span></span>
       ${g.due || g.reason === "" ? nothing : html`<span class="li-sub" data-due-reason>${nonBreaking(noteWords(g.reason))}</span>`}
       ${dueAction(model, g)}
     </li>
@@ -285,7 +291,7 @@ function dueAction(model: LiensModel, g: DueGroup): TemplateResult | typeof noth
 /** The lien job's own description and its branch name the customer job in the confirm, when the lien job is known. */
 function jobAbout(model: LiensModel, g: DueGroup): string {
   const desc = g.lienJobNo === "" ? "" : (model.jobs.find((j) => j.job_no === g.lienJobNo)?.description ?? "");
-  const branch = branchName(model.branches, g.branchId);
+  const branch = dueBranches(model, g);
   return [desc, branch === "" ? "" : `at ${branch}`].filter((p) => p !== "").join(" ");
 }
 
@@ -444,15 +450,15 @@ function jobForm(model: LiensModel): TemplateResult {
 
 /** What the core holds about a preserved lien on the job, in a sentence. */
 function lienStateWords(job: LienJob): string {
-  if (job.lien_preserved_on === undefined) return "No lien is recorded on this job.";
+  if (job.lien_preserved_on === undefined || job.lien_preserved_on === "") return "No lien is recorded on this job.";
   const note = job.lien_preserved_note === undefined || job.lien_preserved_note === "" ? "" : ` ${job.lien_preserved_note}.`;
-  if (job.lien_discharged_on === undefined) return `A lien was preserved on ${dueWords(job.lien_preserved_on)}.${note} It has not been discharged, so the holdback stays held.`;
-  return `A lien was preserved on ${dueWords(job.lien_preserved_on)} and discharged on ${dueWords(job.lien_discharged_on)}.${note}`;
+  if (lienActive(job)) return `A lien was preserved on ${dueWords(job.lien_preserved_on)}.${note} It has not been discharged, so the holdback stays held.`;
+  return `A lien was preserved on ${dueWords(job.lien_preserved_on)} and discharged on ${dueWords(job.lien_discharged_on ?? "")}.${note}`;
 }
 
 /** The doors: record or discharge a preserved lien, and correct the three dates the preservation period counts from. Each is recorded by the core. */
 function doors(model: LiensModel, job: LienJob): TemplateResult {
-  const active = job.lien_preserved_on !== undefined && job.lien_discharged_on === undefined;
+  const active = lienActive(job);
   return html`
     <div class="li-doors" data-doors>
       <h3>Preservation</h3>

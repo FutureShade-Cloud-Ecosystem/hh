@@ -238,6 +238,8 @@ import {
   datesForm,
   dischargeForm,
   dueConfirmWords,
+  dueBranchIds,
+  lienActive,
   dueTotalOf,
   displayDays,
   heldOnInvoices,
@@ -330,6 +332,14 @@ test("the core's total is named only where it is the job's own: the sole due job
   const one = groupDue([dueRow({ lien_job_no: "GLS-1", branch_id: "b1" })]);
   assert.equal(dueTotalOf(one, totals, one[0]), "$18,600.00");
   assert.equal(dueTotalOf(one, [], one[0]), null);
+});
+
+test("a job over two branches names each branch once, in the order of its rows; lienActive treats an empty day as none", () => {
+  const split = groupDue([dueRow({ branch_id: "b1" }), dueRow({ invoice_id: "i2", branch_id: "b2" }), dueRow({ invoice_id: "i3", branch_id: "b1" })])[0];
+  assert.deepEqual(dueBranchIds(split), ["b1", "b2"]);
+  assert.deepEqual(dueBranchIds(groupDue([dueRow()])[0]), ["b1"]);
+  assert.equal(lienActive({ lien_preserved_on: "2030-01-02", lien_discharged_on: "" }), true);
+  assert.equal(lienActive({ lien_preserved_on: "2030-01-02", lien_discharged_on: "2030-02-02" }), false);
 });
 
 test("the core's total is not named for a job split across two branches", () => {
