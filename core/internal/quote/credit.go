@@ -238,7 +238,7 @@ func CreditRefusalMessage(e ErrCreditBlocked) string {
 	case identity.PolicyCredit:
 		// JA-3: a refusal names WHICH limit it broke. The job's own limit is said as the job's, never
 		// as the customer's.
-		who, against, owing := "the customer's", "a", "already owing"
+		who, against, owing := "the customer's", "a", "already owing or on order"
 		if b.Data["limit_scope"] == till.LimitScopeJob {
 			who, against, owing = "the job's own", "the job's own", "already on the job"
 		}
