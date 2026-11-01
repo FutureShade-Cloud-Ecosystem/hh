@@ -16,6 +16,8 @@
 // The words use no dashes: where the original wrote one, a colon, a comma or a
 // middle dot stands.
 
+import { isLostSignal } from "@hardscapehouse/api-client";
+
 export type StopStatus = "READY" | "LOADED" | "EN_ROUTE" | "DELIVERED" | "FAILED" | "CANCELLED";
 
 /** The forward only matrix, the core's own (transitions.go): terminal states map to nothing. */
@@ -228,22 +230,34 @@ export function formatGlossaryTime(ts: string | null | undefined, zone: string):
 /**
  * What the driver reads when a call fails. The core's refusals are sentences
  * written for this person (the module prefix comes off, a capital goes on, a
- * full stop closes it). A failure with no answer from the server, or a server
- * fault, is never shown as it came: the driver is told what to do at the
- * roadside. `fallback` is that sentence for the call that failed.
+ * full stop closes it). A failure is never shown as it came: the driver is
+ * told what to do at the roadside. `lead` names what failed ("Your run did
+ * not load."). Signal advice follows it only when nothing answered
+ * (`isLostSignal`); a server that answered with a fault, or answered success
+ * with a body that was not JSON, gets a server line instead, because a
+ * driver's signal was not the problem. `neutral` is a sentence that claims
+ * neither, used as it stands. `failure` is the result's status and
+ * code, passed as the result carries them.
  */
 export function roadsideError(
   error: string,
-  status: number | undefined,
-  fallback: string,
-  words: { notFound?: string } = {},
+  failure: { status?: number; code?: string },
+  lead: string,
+  words: { notFound?: string; retry?: "try again" | "add it again"; neutral?: string } = {},
 ): string {
-  if (status === undefined || status >= 500) return fallback;
+  const { status } = failure;
+  const retry = words.retry ?? "try again";
+  const fallback = (): string =>
+    words.neutral ??
+    (isLostSignal({ ok: false, ...failure })
+      ? `${lead} Check your signal and ${retry}.`
+      : `${lead} The server had a problem. ${retry.charAt(0).toUpperCase()}${retry.slice(1)} in a moment.`);
+  if (status === undefined || status >= 500) return fallback();
   if (status === 401) return "Your sign in has ended. Sign out and sign in again.";
   if (status === 403) return "You are not allowed to do that on this run.";
   if (status === 404) return words.notFound ?? "That is no longer on your run.";
   const plain = plainSentence(error);
-  if (plain === "") return fallback;
+  if (plain === "") return fallback();
   const cased = plain.charAt(0).toUpperCase() + plain.slice(1);
   return /[.!?]$/.test(cased) ? cased : `${cased}.`;
 }

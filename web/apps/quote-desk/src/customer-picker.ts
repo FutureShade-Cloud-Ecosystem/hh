@@ -3,6 +3,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { api } from '@hardscapehouse/pos-kit/src/ported/ports.js';
+import { createFailureWords } from './_create-failure.js';
 import { spokenRefusal } from './_quote-workarea.js';
 import { focusRing } from '@hardscapehouse/pos-kit/src/ported/styles/focus-ring.js';
 import {
@@ -772,8 +773,8 @@ export class HosCustomerPicker extends LitElement {
         open_balance_cents: acctBody.balance_cents,
         available_credit_cents: acctBody.available_credit_cents,
       });
-    } catch {
-      this.createError = 'Could not reach the server, try again.';
+    } catch (thrown) {
+      this.createError = createFailureWords(thrown);
     } finally {
       this.createBusy = false;
       this.createAbandoned = false;

@@ -4,6 +4,7 @@
 // src/drive-logic.ts), plus the places HH differs on purpose.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { MALFORMED_SUCCESS_CODE } from "@hardscapehouse/api-client";
 import {
   STOP_LABEL,
   addressLine,
@@ -105,22 +106,30 @@ test("a time reads in the dealer's zone using glossary 12-hour AM/PM form, and a
 });
 
 test("a refusal from the core reads as a sentence: prefix off, capital on, full stop on", () => {
-  assert.equal(roadsideError("dispatch: the run has not been dispatched", 409, "That move did not go through."), "The run has not been dispatched.");
-  assert.equal(roadsideError("Already a sentence.", 400, "x"), "Already a sentence.");
+  assert.equal(roadsideError("dispatch: the run has not been dispatched", { status: 409 }, "That move did not go through."), "The run has not been dispatched.");
+  assert.equal(roadsideError("Already a sentence.", { status: 400 }, "x"), "Already a sentence.");
 });
 
-test("a failure with no answer from the server says what to do at the roadside, never an engineering string", () => {
-  const generic = "Your run did not load. Check your signal and try again.";
-  assert.equal(roadsideError("dispatchListMyRuns: transport error: fetch failed", undefined, generic), generic);
-  assert.equal(roadsideError("internal error", 500, generic), generic);
-  assert.equal(roadsideError("HTTP 502", 502, generic), generic);
+test("a lost signal tells the driver to check their signal; a server that answered never does", () => {
+  const lead = "Your run did not load.";
+  const signal = "Your run did not load. Check your signal and try again.";
+  const server = "Your run did not load. The server had a problem. Try again in a moment.";
+  // Nothing answered: no status, no code.
+  assert.equal(roadsideError("dispatchListMyRuns: transport error: fetch failed", {}, lead), signal);
+  // The server answered with a fault, or answered success with a body that was not JSON.
+  assert.equal(roadsideError("internal error", { status: 500 }, lead), server);
+  assert.equal(roadsideError("HTTP 502", { status: 502 }, lead), server);
+  assert.equal(roadsideError("bad body", { code: MALFORMED_SUCCESS_CODE }, lead), server);
+  // The photo's retry reads in its own verb.
+  assert.equal(roadsideError("x", {}, "The photo did not send.", { retry: "add it again" }), "The photo did not send. Check your signal and add it again.");
+  assert.equal(roadsideError("x", { status: 503 }, "The photo did not send.", { retry: "add it again" }), "The photo did not send. The server had a problem. Add it again in a moment.");
 });
 
 test("a login that may not do this, or has no driver record, is told in the driver's words", () => {
-  assert.equal(roadsideError("forbidden", 403, "x"), "You are not allowed to do that on this run.");
-  assert.equal(roadsideError("unauthenticated", 401, "x"), "Your sign in has ended. Sign out and sign in again.");
-  assert.equal(roadsideError("not found", 404, "x", { notFound: "You are not set up as a driver. Ask your branch manager to link your login." }), "You are not set up as a driver. Ask your branch manager to link your login.");
-  assert.equal(roadsideError("not found", 404, "x"), "That is no longer on your run.");
+  assert.equal(roadsideError("forbidden", { status: 403 }, "x"), "You are not allowed to do that on this run.");
+  assert.equal(roadsideError("unauthenticated", { status: 401 }, "x"), "Your sign in has ended. Sign out and sign in again.");
+  assert.equal(roadsideError("not found", { status: 404 }, "x", { notFound: "You are not set up as a driver. Ask your branch manager to link your login." }), "You are not set up as a driver. Ask your branch manager to link your login.");
+  assert.equal(roadsideError("not found", { status: 404 }, "x"), "That is no longer on your run.");
 });
 
 // ---- sub item 3: proof of delivery ----
