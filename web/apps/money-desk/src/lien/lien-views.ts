@@ -340,7 +340,12 @@ function duePanel(model: LiensModel, g: DueGroup): TemplateResult {
 
 /** An error drawn inside the panel it is about, where the person is looking. */
 function besideField(model: LiensModel, at: ErrorAt): TemplateResult | typeof nothing {
-  return model.errorAt === at && model.error !== "" ? html`<p class="li-alert li-alert-error" role="alert" id="li-error-${at}" data-error>${nonBreaking(model.error)}</p>` : nothing;
+  if (model.errorAt !== at || model.error === "") return nothing;
+  // The reversal's error is the one a field points at (the Reason box's aria-describedby), so it alone carries an id,
+  // written whole: a template never binds a value into an id.
+  return at === "reverse"
+    ? html`<p class="li-alert li-alert-error" role="alert" id="li-error-reverse" data-error>${nonBreaking(model.error)}</p>`
+    : html`<p class="li-alert li-alert-error" role="alert" data-error>${nonBreaking(model.error)}</p>`;
 }
 
 const itemWords = (items: readonly ReleasedItem[]): ReadonlyArray<{ invoiceNo: string; amount: string }> => items.map((i) => ({ invoiceNo: i.invoiceNo, amount: formatMoney(i.amountCents) }));
