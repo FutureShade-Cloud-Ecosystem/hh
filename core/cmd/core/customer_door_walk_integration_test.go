@@ -338,7 +338,19 @@ func walkEveryCustomerDoor(t *testing.T, pool *pgxpool.Pool, custB, custShared, 
 		ids := []string{custB, custB2, custShared}
 		_, _ = pool.Exec(bg, `DELETE FROM rep_assignments WHERE customer_id::text = ANY($1)`, ids)
 		_, _ = pool.Exec(bg, `DELETE FROM ar_promises_to_pay WHERE customer_id::text = ANY($1)`, ids)
-		_, _ = pool.Exec(bg, `DELETE FROM invoices WHERE customer_id::text = ANY($1)`, ids)
+		// The apply door's allocations name the walk's invoices, so they go first (the invoice delete is
+		// refused by that key otherwise, and the job delete after it), each delete failing loudly.
+		for _, d := range []struct{ table, q string }{
+			{"customer_transactions", `DELETE FROM customer_transactions WHERE customer_id::text = ANY($1)`},
+			{"payment_allocations", `DELETE FROM payment_allocations WHERE payment_id IN (SELECT id FROM payments WHERE customer_id::text = ANY($1))`},
+			{"payments (self references)", `UPDATE payments SET reversed_by_payment_id = NULL, reverses_payment_id = NULL WHERE customer_id::text = ANY($1)`},
+			{"payments", `DELETE FROM payments WHERE customer_id::text = ANY($1)`},
+			{"invoices", `DELETE FROM invoices WHERE customer_id::text = ANY($1)`},
+		} {
+			if _, err := pool.Exec(bg, d.q, ids); err != nil {
+				t.Errorf("clean up the walk's %s: %v", d.table, err)
+			}
+		}
 		if _, err := pool.Exec(bg, `DELETE FROM customer_jobs WHERE customer_id::text = ANY($1)`, ids); err != nil {
 			t.Errorf("clean up the walk's customer_jobs: %v", err)
 		}
