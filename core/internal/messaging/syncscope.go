@@ -405,7 +405,9 @@ func (s *acksSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilte
 func (s *acksSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
 	if messageID, _ := fields["message_id"].(string); messageID == "" {
 		return syncRefused(fmt.Errorf("message_id is required"))
-	} else if uuid.Validate(messageID) != nil {
+	} else if !validChannelID(messageID) {
+		// The canonical 36 character form only, the prefs store's check and the engine's own: uuid.Validate alone
+		// lets urn:uuid: through, which Postgres refuses and which would then fail the whole push.
 		return syncRefused(fmt.Errorf("message_id is not a valid id"))
 	}
 	method, _ := fields["method"].(string)
