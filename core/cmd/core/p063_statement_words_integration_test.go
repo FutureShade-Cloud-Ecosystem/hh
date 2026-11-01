@@ -212,11 +212,12 @@ func (w *p063World) staffKeepsReason(t *testing.T, label string) {
 	t.Helper()
 	var n int
 	if err := w.pool.QueryRow(context.Background(),
-		`SELECT count(*) FROM customer_transactions WHERE customer_id = $1::uuid AND memo LIKE '%P063LEAK%'`, w.cust).Scan(&n); err != nil {
+		`SELECT (SELECT count(*) FROM customer_transactions WHERE customer_id = $1::uuid AND memo LIKE '%P063LEAK%')
+		      + (SELECT count(*) FROM payment_nsf WHERE customer_id = $1::uuid AND reason LIKE '%P063LEAK%')`, w.cust).Scan(&n); err != nil {
 		t.Fatalf("%s: read the ledger: %v", label, err)
 	}
 	if n == 0 {
-		t.Errorf("%s: the ledger no longer keeps the clerk's reason", label)
+		t.Errorf("%s: the ledger (or the NSF record) no longer keeps the clerk's reason", label)
 	}
 }
 
@@ -304,6 +305,8 @@ func TestIntegration_P063_PlainStatementWords(t *testing.T) {
 		w.bounce(t, p.ID)
 		ls := w.lines(t, "nsf", 4500)
 		p063Has(t, "nsf", ls, "Returned payment")
+		p063Has(t, "nsf", ls, "NSF fee")
+		w.staffKeepsReason(t, "nsf")
 	})
 
 	t.Run("CreditApplyAndReverse", func(t *testing.T) {
