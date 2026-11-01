@@ -327,7 +327,7 @@ export class DispatchBoardApp extends HHElement {
     }
     return demo
       ? html`<hos-app-header demo compact product-name="Dispatch">${tools}</hos-app-header>`
-      : html`<hos-app-header compact product-name="Dispatch">${tools}</hos-app-header>`;
+      : html`<hos-app-header compact word="Sign in" product-name="Dispatch">${tools}</hos-app-header>`;
   }
 
   private renderSignedIn(): TemplateResult {

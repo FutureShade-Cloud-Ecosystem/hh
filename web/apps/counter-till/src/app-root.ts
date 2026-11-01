@@ -37,7 +37,7 @@ import {
 import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
-import { bootCustody, entryAfter, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bootCustody, entryAfter, reasonForStatus, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { bandIdentity } from "./band-identity.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import {
@@ -776,7 +776,7 @@ export class CounterTillApp extends HHElement {
       this.requestUpdate();
       return;
     }
-    this.#flowsState = { kind: "offline", reason: "unavailable" };
+    this.#flowsState = { kind: "offline", reason: reasonForStatus(status) };
     this.requestUpdate();
     this.#custody.retry("counter-till", (outcome) => this.#onRecovered(outcome));
   }
