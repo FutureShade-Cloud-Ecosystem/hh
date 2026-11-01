@@ -4,6 +4,7 @@ package billing
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,9 +61,9 @@ type jaFixture struct {
 	accountCents int64
 }
 
-func jaSeed(t *testing.T, pool *pgxpool.Pool) jaFixture {
+func jaSeed(t *testing.T, pool *pgxpool.Pool, tag ...string) jaFixture {
 	t.Helper()
-	n := ns(t)
+	n := ns(t) + strings.Join(tag, "")
 	f := jaFixture{n: n}
 	f.customer = seedCustomer(t, pool, n+"-JA")
 	f.jobA = jaSeedJob(t, pool, f.customer, "A-"+n)

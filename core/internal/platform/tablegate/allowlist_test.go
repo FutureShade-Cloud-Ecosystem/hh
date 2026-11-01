@@ -256,6 +256,12 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "billing",
+		file:   "core/internal/billing/statement_by_job.go",
+		tables: []string{"customer_contacts", "customer_jobs", "customers"},
+		reason: "the statement by job (JA-4) names the customer, each job by number and name, and addresses a job statement to the job's own contact or the customer's primary contact; read only",
+	},
+	{
+		module: "billing",
 		file:   "core/internal/billing/statement_repository.go",
 		tables: []string{"customer_contacts", "customer_jobs", "customers", "locations", "payment_allocations"},
 		writes: []string{"print_queue"},
