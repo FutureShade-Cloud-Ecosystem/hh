@@ -226,6 +226,11 @@ func (s *messagesSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter,
 }
 
 func (s *messagesSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	// The canonical 36 character form only (UX-133): every non-canonical form is a miss, the answer an id that does
+	// not exist gets, never a fault that fails the whole push (Postgres refuses urn:uuid: outright).
+	if !validChannelID(id) {
+		return sync.RowState{}, false, nil
+	}
 	uid, ok := syncFeedUser(ctx, s.link, f)
 	if !ok {
 		return sync.RowState{}, false, nil
@@ -259,7 +264,7 @@ func (s *messagesSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id str
 // see. The module's tables keep no org column, so the bare row read is
 // the caller-independent answer the contract asks for.
 func (s *messagesSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
-	if f.Tenant || f.OrgID == "" || uuid.Validate(id) != nil {
+	if f.Tenant || f.OrgID == "" || !validChannelID(id) {
 		return false, nil
 	}
 	return s.repo.syncMessageExists(ctx, id)
@@ -270,8 +275,17 @@ func (s *messagesSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeF
 // gate calls it before the hidden refusal, so an invalid body meets this
 // refusal under a spent key and a free one. The words are exactly Create's.
 func (s *messagesSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
-	if channelID, _ := fields["channel_id"].(string); channelID == "" {
+	channelID, _ := fields["channel_id"].(string)
+	if channelID == "" {
 		return syncRefused(fmt.Errorf("channel_id is required"))
+	}
+	// The canonical 36 character form only (UX-133): both ids reach a `::uuid` cast, and the refusal names the
+	// body's shape alone, so it reads the same for every caller and every key state.
+	if !validChannelID(channelID) {
+		return syncRefused(fmt.Errorf("channel_id is not a valid id"))
+	}
+	if threadRoot, _ := fields["thread_root_id"].(string); threadRoot != "" && !validChannelID(threadRoot) {
+		return syncRefused(fmt.Errorf("thread_root_id is not a valid id"))
 	}
 	if body, _ := fields["body"].(string); body == "" {
 		return syncRefused(fmt.Errorf("message body is empty"))
@@ -373,6 +387,11 @@ func (s *acksSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key
 }
 
 func (s *acksSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	// The canonical 36 character form only (UX-133): every non-canonical form is a miss, the answer an id that does
+	// not exist gets, never a fault that fails the whole push (Postgres refuses urn:uuid: outright).
+	if !validChannelID(id) {
+		return sync.RowState{}, false, nil
+	}
 	uid, ok := syncFeedUser(ctx, s.link, f)
 	if !ok {
 		return sync.RowState{}, false, nil
@@ -392,7 +411,7 @@ func (s *acksSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string)
 // the ack row stands, tombstone aware, for every caller at once, with no
 // user leg (whose ack it is being the caller's fence Load speaks).
 func (s *acksSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
-	if f.Tenant || f.OrgID == "" || uuid.Validate(id) != nil {
+	if f.Tenant || f.OrgID == "" || !validChannelID(id) {
 		return false, nil
 	}
 	return s.repo.syncAckExists(ctx, id)
@@ -520,6 +539,11 @@ func (s *notifyPrefsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilt
 }
 
 func (s *notifyPrefsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
+	// The canonical 36 character form only (UX-133): every non-canonical form is a miss, the answer an id that does
+	// not exist gets, never a fault that fails the whole push (Postgres refuses urn:uuid: outright).
+	if !validChannelID(id) {
+		return sync.RowState{}, false, nil
+	}
 	uid, ok := syncFeedUser(ctx, s.link, f)
 	if !ok {
 		return sync.RowState{}, false, nil
@@ -539,7 +563,7 @@ func (s *notifyPrefsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id 
 // the pref row stands, tombstone aware, for every caller at once, with no
 // user leg (whose row it is being the caller's fence Load speaks).
 func (s *notifyPrefsSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilter, id string) (bool, error) {
-	if f.Tenant || f.OrgID == "" || uuid.Validate(id) != nil {
+	if f.Tenant || f.OrgID == "" || !validChannelID(id) {
 		return false, nil
 	}
 	return s.repo.syncPrefsExists(ctx, id)

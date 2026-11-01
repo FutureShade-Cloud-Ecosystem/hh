@@ -34,7 +34,7 @@
 // text/html), the raw bytes when it marked bytesResponse (format: binary
 // content: images, workbooks). A refusal (4xx, 5xx) always reads the body as
 // text, because the contract's error envelope is JSON in every case.
-import { err, ok, type Result } from "./result.js";
+import { MALFORMED_SUCCESS_CODE, err, ok, type Result } from "./result.js";
 
 export type FetchLike = (url: string, init: RequestInitLike) => Promise<ResponseLike>;
 
@@ -558,7 +558,7 @@ export class ApiClient {
       try {
         return ok(JSON.parse(text) as T);
       } catch {
-        return err(`${id}: the success response is not valid JSON`);
+        return err(`${id}: the success response is not valid JSON`, undefined, MALFORMED_SUCCESS_CODE);
       }
     } finally {
       if (timer !== undefined) clearTimeout(timer);

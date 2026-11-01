@@ -2,6 +2,7 @@
 // Every demo-page message stays exactly as it was.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { ApiClient, MALFORMED_SUCCESS_CODE } from "@hardscapehouse/api-client";
 import { entryAfter, entryUnavailable, reasonForStatus } from "./boot-custody.ts";
 import { renderEntry } from "./entry.ts";
 
@@ -81,4 +82,25 @@ test("a failed start's status names the offline reason: no status is lost signal
   assert.equal(reasonForStatus(429), "rate_limited");
   assert.equal(reasonForStatus(503), "unavailable");
   assert.equal(reasonForStatus(500), "unavailable");
+});
+
+// UX-131 (round 3 P3): a 2xx answer with a malformed body carries no status, but the server did answer: it must not
+// read as "cannot reach the server". A transport failure still does.
+test("a malformed success body reads as unavailable, a transport failure still reads as offline", () => {
+  assert.equal(reasonForStatus(undefined, MALFORMED_SUCCESS_CODE), "unavailable");
+  assert.equal(reasonForStatus(undefined, undefined), "offline");
+  assert.equal(reasonForStatus(undefined, "some_other_code"), "offline");
+  assert.equal(reasonForStatus(429, undefined), "rate_limited");
+  assert.equal(reasonForStatus(503, undefined), "unavailable");
+});
+
+test("the api client tags a malformed success body with the client code", async () => {
+  const client = new ApiClient({
+    baseUrl: "https://hh-core.example",
+    fetch: () => Promise.resolve({ status: 200, ok: true, text: () => Promise.resolve("<html>nope</html>") }),
+  });
+  const result = await client.request({ method: "GET", path: "/x", pathParams: {}, operationId: "x" });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, undefined);
+  assert.equal(result.code, MALFORMED_SUCCESS_CODE);
 });

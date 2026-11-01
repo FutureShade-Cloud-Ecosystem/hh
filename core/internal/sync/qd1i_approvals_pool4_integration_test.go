@@ -169,10 +169,11 @@ func TestQD1I_ApprovalsCreateTakenIDDoesNotNeedASecondConnection(t *testing.T) {
 		t.Fatalf("fixture pool is %d, want %d", got, n)
 	}
 	ctx := context.Background()
+	auditSince := auditMark(t, f.pool)
 	t.Cleanup(func() {
 		_, _ = f.pool.Exec(context.Background(), `DELETE FROM permission_approval_requests WHERE detail = 'qd1i pool leg'`)
 		_, _ = f.pool.Exec(context.Background(), `DELETE FROM scope_sequences WHERE scope = 'approvals'`)
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM audit_log WHERE entity_type = 'sync.approvals'`)
+		deleteOwnAudit(t, f.pool, auditSince, "sync.approvals")
 	})
 	info, _ := sync.Lookup("approvals")
 	staff := sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubInsideSales}
@@ -207,10 +208,11 @@ func TestQD1I_ApprovalsDecideDoesNotNeedASecondConnection(t *testing.T) {
 		t.Fatalf("fixture pool is %d, want %d", got, n)
 	}
 	ctx := context.Background()
+	auditSince := auditMark(t, f.pool)
 	t.Cleanup(func() {
 		_, _ = f.pool.Exec(context.Background(), `DELETE FROM permission_approval_requests WHERE detail = 'qd1i pool leg'`)
 		_, _ = f.pool.Exec(context.Background(), `DELETE FROM scope_sequences WHERE scope = 'approvals'`)
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM audit_log WHERE entity_type = 'sync.approvals'`)
+		deleteOwnAudit(t, f.pool, auditSince, "sync.approvals")
 	})
 	info, _ := sync.Lookup("approvals")
 	staff := sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: testkit.SubInsideSales}

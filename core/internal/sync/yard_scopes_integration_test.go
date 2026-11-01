@@ -60,6 +60,7 @@ type yardFixture struct {
 func newYard(t *testing.T) *yardFixture {
 	t.Helper()
 	pool := intPool(t)
+	auditSince := auditMark(t, pool)
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx,
@@ -68,7 +69,7 @@ func newYard(t *testing.T) *yardFixture {
 		_, _ = pool.Exec(ctx, `DELETE FROM attachment WHERE org_id IN ($1::uuid, $2::uuid)`,
 			testkit.OrgNorthID, testkit.OrgSouthID)
 		_, _ = pool.Exec(ctx, `DELETE FROM scope_sequences WHERE scope IN ('shortages', 'weights', 'attachments')`)
-		_, _ = pool.Exec(ctx, `DELETE FROM audit_log WHERE entity_type IN ('sync.shortages', 'sync.weights', 'sync.attachments')`)
+		deleteOwnAudit(t, pool, auditSince, "sync.shortages", "sync.weights", "sync.attachments")
 	})
 	reader := intOrderReader{repo: order.NewRepository(pool)}
 	linker := linkedUser(pool)
