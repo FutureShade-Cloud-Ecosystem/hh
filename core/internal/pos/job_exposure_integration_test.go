@@ -169,7 +169,7 @@ func TestIntegration_JobExposure_TheRowsTwoHoldsAndTheTie(t *testing.T) {
 	var orderID string
 	if err := pool.QueryRow(bg, `
 		INSERT INTO orders (order_no, customer_id, branch_id, status, total_cents, job_id, org_id)
-		VALUES ('JA3-OPEN-' || substr(gen_random_uuid()::text, 1, 8), $1::uuid, $2::uuid, 'DRAFT', 7000, $3::uuid,
+		VALUES ('JA3-OPEN-' || substr(gen_random_uuid()::text, 1, 8), $1::uuid, $2::uuid, 'CONFIRMED', 7000, $3::uuid,
 		        (SELECT org_id FROM locations WHERE id = $2::uuid)) RETURNING id::text`,
 		w.customer, w.branchID, w.open).Scan(&orderID); err != nil {
 		t.Fatalf("plant the open order: %v", err)

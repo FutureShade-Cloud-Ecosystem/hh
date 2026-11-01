@@ -85,7 +85,7 @@ func TestIntegration_JobExposure_ConversionIsHeldByTheJobAndByTheCustomer(t *tes
 	// exposure: another job already has an open order of 9000 cents, the customer's limit is 10000.
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO orders (order_no, customer_id, branch_id, status, total_cents, job_id, org_id)
-		VALUES ('JE-OPEN-' || $3, $1::uuid, $2::uuid, 'DRAFT', 9000, $4::uuid, (SELECT org_id FROM locations WHERE id = $2::uuid))`,
+		VALUES ('JE-OPEN-' || $3, $1::uuid, $2::uuid, 'CONFIRMED', 9000, $4::uuid, (SELECT org_id FROM locations WHERE id = $2::uuid))`,
 		cust, intTrenton, tag, limited.JobID); err != nil {
 		t.Fatalf("plant the other job's open order: %v", err)
 	}
