@@ -723,6 +723,10 @@ func (r *Repository) RecordPaylinkDelivery(ctx context.Context, row PaylinkDeliv
 //	                 REVERSAL allocations the NSF door wrote under that payment, so each job returns to
 //	                 owing what it did before the receipt (the receipt's own act keeps its credit)
 //
+// The nsf act's own ledger memo names the whole bounce and the payment's internal id; a job's line
+// must carry neither (a job contact reads it), so an nsf act has no memo and its lines read as the
+// standard "Returned payment".
+//
 // Each act reads as one line per job, dated at the act's first ledger row, and the act's ledger sum
 // less its shares is left at account level (the unapplied part).
 //
@@ -745,7 +749,8 @@ const statementByJobTail = `
 		), acts AS (
 			SELECT p.act_type, p.src_ref, MIN(p.txn_type) AS txn_type,
 			       MIN(p.occurred_at) AS occurred_at, MIN(p.created_at) AS created_at,
-			       SUM(p.amount_cents) AS amount_cents, MIN(p.memo) AS memo
+			       SUM(p.amount_cents) AS amount_cents,
+			       CASE WHEN p.act_type = 'nsf' THEN '' ELSE MIN(p.memo) END AS memo
 			  FROM paytxn p GROUP BY p.act_type, p.src_ref
 		), shares AS (
 			SELECT ac.act_type, ac.src_ref, inv.job_id,

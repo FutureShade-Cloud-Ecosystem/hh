@@ -12,6 +12,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
@@ -178,6 +180,7 @@ func (w *ja4World) agree(t *testing.T, label string, asOf time.Time) map[string]
 	}
 	stmt := map[string]int64{}
 	var stmtSum int64
+	jobLinesReadOnlyTheirOwn(t, label, lines)
 	for _, ln := range lines {
 		stmt[ln.JobID] += ln.ChargeCents - ln.CreditCents
 		stmtSum += ln.ChargeCents - ln.CreditCents
@@ -207,6 +210,32 @@ func (w *ja4World) agree(t *testing.T, label string, asOf time.Time) map[string]
 		t.Errorf("%s: plain closing %d, by job statement %d, by job aging %d", label, closing, stmtSum, ageSum)
 	}
 	return age
+}
+
+var (
+	ja4UUID  = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+	ja4Cents = regexp.MustCompile(`([0-9]+) cents`)
+)
+
+// jobLinesReadOnlyTheirOwn is the words half of the by job proof (P3-D3): a statement line, at a job or
+// at account level, carries no internal id and no money figure other than its own amount, so a job
+// contact never reads another job's money (a bounce split across jobs names the whole bounce otherwise).
+func jobLinesReadOnlyTheirOwn(t *testing.T, label string, lines []billing.StatementLine) {
+	t.Helper()
+	for _, ln := range lines {
+		if ja4UUID.MatchString(ln.Description) || ja4UUID.MatchString(ln.DocNo) {
+			t.Errorf("%s: job %q line %q (doc %q) carries an internal id", label, ln.JobID, ln.Description, ln.DocNo)
+		}
+		own := ln.ChargeCents - ln.CreditCents
+		if own < 0 {
+			own = -own
+		}
+		for _, m := range ja4Cents.FindAllStringSubmatch(ln.Description, -1) {
+			if n, err := strconv.ParseInt(m[1], 10, 64); err != nil || n != own {
+				t.Errorf("%s: job %q line %q (amount %d) names a figure %s that is not its own", label, ln.JobID, ln.Description, own, m[1])
+			}
+		}
+	}
 }
 
 func ja4Want(t *testing.T, label string, got map[string]int64, w *ja4World, a, b, acct int64) {
