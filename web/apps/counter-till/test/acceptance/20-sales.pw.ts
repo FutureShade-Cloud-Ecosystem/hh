@@ -351,18 +351,23 @@ test("tender and receipt: an account sale bills the account, invoice and fresh b
 }, testInfo) => {
   await signIn(page, "Sales");
   const bearer = await mint(page, "sales");
-  const balanceOf = async (): Promise<number> => {
+  const balanceOf = async (): Promise<unknown> => {
     // C02 answers the Ridgeview name the demo world's own dictionary gave
-    // it; the search reads the same word the picker types.
+    // it; the search reads the same word the picker types. The balance is the
+    // account position policy's to give, and in the demo world the policy
+    // refuses the till clerk (ruling 448: the policy stands): the core leaves
+    // open_balance_cents out of the row (the contract says absent, never zero).
     const read = await staffGet(
       page,
       bearer,
       `/api/v1/customers/search?q=Ridgeview&branch_id=${POINT_LOMA_ID}`,
     );
     const rows = read.body as unknown as Array<Record<string, unknown>>;
-    return rows[0].open_balance_cents as number;
+    expect(rows.length, "the search finds the Ridgeview account").toBeGreaterThan(0);
+    return rows[0].open_balance_cents;
   };
-  const balanceBefore = await balanceOf();
+  // The refused shape is pinned, not mirrored: a till clerk who is given a balance is the policy leaking.
+  expect(await balanceOf(), "the account position policy gives the till clerk no balance").toBeUndefined();
   await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
   await searchAndAdd(page, "DEMO-STEP-SLAB", "Step slab 24x48, natural");
   await openStep(page, "payment");
@@ -375,16 +380,15 @@ test("tender and receipt: an account sale bills the account, invoice and fresh b
   await expect(sold).toContainText("On account");
   await expect(sold).toContainText(rung.invoice_no);
   await expect(sold).toContainText(cad(sale.total_cents as number));
-  // The fresh balance is the core's: the account's open balance grew by this
-  // sale, and the till re-reads the account after the ring, so the account's
-  // card shows the new balance (not the figure read at the pick).
-  const balanceAfter = await balanceOf();
-  expect(balanceAfter).toBe(balanceBefore + (sale.total_cents as number));
+  // After the sale the policy still refuses the till clerk: no balance in the core's answer, and the
+  // account card says so in words, never a figure.
+  expect(await balanceOf(), "the till clerk is given no balance after the sale either").toBeUndefined();
   const confirmation = await sold.screenshot();
   await openStep(page, "customer");
   const card = page.getByTestId("customer-card");
-  await expect(card).toContainText(/outstanding/i);
-  await expect(card).toContainText(cad(balanceAfter));
+  await expect(card).toContainText("Ridgeview Outdoor Living");
+  await expect(card).not.toContainText(/outstanding/i);
+  await expect(card.getByTestId("cust-position-withheld")).toHaveText("Credit position not shown for your role");
   const freshCard = await card.screenshot();
   await shotParts(page, "sales-06-receipt-account", testInfo, [confirmation, freshCard]);
 });

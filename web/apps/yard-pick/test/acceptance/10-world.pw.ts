@@ -49,8 +49,9 @@ test("L-cost: cost is hidden for the role as the decided matrix says (PR 275)", 
   // all, byte absent rather than a zero that reads as free. The browse read
   // is branch shaped; the on-hand read is product scoped (DIB-443 names
   // product_id), so the leg takes one product id off the browse answer and
-  // reads that product's on-hand rows.
-  const browse = await staff(page, "GET", "/api/v1/inventory/browse?branch_id=" + POINT_LOMA);
+  // reads that product's on-hand rows. The browse asks for stock only (in_stock_only=1), so the
+  // product the leg takes holds stock somewhere; without it the first product may hold none.
+  const browse = await staff(page, "GET", "/api/v1/inventory/browse?in_stock_only=1&branch_id=" + POINT_LOMA);
   expect(browse.status).toBe(200);
   expect(JSON.stringify(browse.body).toLowerCase()).not.toMatch(/avg_cost_cents|unit_cost_cents|suggested_value_cents/);
   const rows = (browse.body.rows ?? []) as Array<{ product_id?: string }>;
