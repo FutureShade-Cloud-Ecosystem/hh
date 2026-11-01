@@ -89,10 +89,13 @@ export const lienStyles = css`
   .li-fact { margin: 0 0 var(--hh-s-8); font-weight: 600; overflow-wrap: anywhere; }
   .li-credit { color: var(--hh-text); }
   .li-debit { color: var(--hh-text); }
-  .li-cards { display: none; list-style: none; margin: 0; padding: 0; gap: var(--hh-s-8); }
+  .li-cards { display: none; list-style: none; margin: 0; padding: 0; gap: var(--hh-s-8); min-width: 0; }
   .li-card { display: grid; gap: var(--hh-s-8); padding: var(--hh-s-12) var(--hh-s-16); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); background: var(--hh-card); }
   .li-card[aria-current="true"] { background: var(--hh-row-alt); outline: 2px solid var(--hh-focus-ring); outline-offset: -2px; }
-  .li-card-top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--hh-s-12); }
+  .li-card-top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--hh-s-4) var(--hh-s-12); min-width: 0; }
+  .li-card-top > .li-mono { flex: 0 0 auto; white-space: nowrap; overflow-wrap: normal; max-width: 100%; }
+  .li-card-top > .li-status { white-space: normal; max-width: 100%; min-width: 0; }
+  .li-card { min-width: 0; }
   .li-card-amount { font-weight: 700; font-variant-numeric: tabular-nums; }
   .li-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--hh-s-4) var(--hh-s-24); margin: 0 0 var(--hh-s-12); }
   .li-facts dt { color: var(--hh-text-dim); }

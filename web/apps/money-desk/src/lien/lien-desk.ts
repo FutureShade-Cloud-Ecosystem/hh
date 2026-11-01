@@ -322,6 +322,8 @@ export class LienDesk {
       void this.#loadDocs();
     }
     this.#host.repaint();
+    // The due list is read again each time it is opened: another desk may have released, reversed or preserved since.
+    if (tab === "due" && this.#phase === "ready") void this.#refresh();
   }
 
   #select(id: string): void {

@@ -210,3 +210,52 @@ test("fix 9: a job with a preserved lien is not called Released and not called r
   await expect(panel).not.toContainText("can be released");
   await expect(page.locator("[data-row='job'][data-job-no='GLS-2100']:visible")).not.toContainText("Released");
 });
+
+/** Nothing is wider than the window, no card runs past its right edge, and a job label sits on one line. */
+async function fitsNarrow(page: Page, where: string): Promise<void> {
+  // The screen sits in a shadow root: locators pierce it, document.querySelector does not.
+  const win = await page.evaluate(() => window.innerWidth);
+  const doc = await page.evaluate(() => document.documentElement.scrollWidth);
+  const over = await page.locator("[data-liens] *").evaluateAll(
+    (els, w) =>
+      els
+        .filter((el) => {
+          const box = el.getBoundingClientRect();
+          return box.width > 0 && box.right > (w as number) + 0.5 && el.closest(".li-scroll") === null;
+        })
+        .map((el) => `${el.tagName.toLowerCase()}.${String(el.className)}`),
+    win,
+  );
+  const wrapped = await page.locator("[data-liens] .li-card .li-card-top .li-mono").evaluateAll((els) =>
+    els.filter((el) => el.getBoundingClientRect().height > 2 * parseFloat(getComputedStyle(el).fontSize)).map((el) => el.textContent ?? ""),
+  );
+  expect(doc, `${where}: the page scrolls sideways`).toBeLessThanOrEqual(win);
+  expect(over, `${where}: something runs past the right edge`).toEqual([]);
+  expect(wrapped, `${where}: a job label wraps`).toEqual([]);
+}
+
+test("fix 1: at 390 wide every state fits, the longest pill wraps under the job label and the label stays on one line", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDue(page, request);
+  await fitsNarrow(page, "list");
+  await due(page, "GLS-2100").getByRole("button", { name: "Release" }).click();
+  await fitsNarrow(page, "release asks");
+  await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
+  await expect(page.locator("[data-notice]")).toBeVisible();
+  await fitsNarrow(page, "released");
+  await page.locator("[data-row='released']:visible").first().getByRole("button", { name: "Reverse" }).click();
+  await fitsNarrow(page, "reversing");
+  await page.locator("[data-reverse-panel]").getByRole("button", { name: "Reverse release" }).click();
+  await expect(page.locator("[data-error]")).toBeVisible();
+  await fitsNarrow(page, "reverse needs a reason");
+});
+
+test("fix 1: at 390 wide the blocked row, with the longest pill, fits", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDue(page, request);
+  await behind(request, "POST", `/api/v1/lien/jobs/${JOB5}/preserved-lien`, { preserved_on: dayFrom(-1), note: "filed" });
+  await liensTab(page, "jobs");
+  await liensTab(page, "due");
+  await expect(due(page, "GLS-2100").first()).toContainText("Blocked by a preserved lien");
+  await fitsNarrow(page, "blocked row");
+});
