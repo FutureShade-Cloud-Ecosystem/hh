@@ -19,6 +19,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/compliance"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -45,6 +46,7 @@ func intPool(t *testing.T) *pgxpool.Pool {
 		fail("integration DB not reachable: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	legsweep.Register(t, pool)
 	return pool
 }
 
