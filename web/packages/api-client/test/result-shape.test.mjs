@@ -68,11 +68,12 @@ test("every generated operation's signature returns Promise<Result<...>>", (t) =
   // (billingListHoldbackDueToRelease and billingReleaseHoldback): 840 / 839 / 840, plus the RT-3 fix round's three doors
   // (billingReverseHoldbackRelease, lienRecordPreservedLien, lienDischargeLien and lienSetPreservationDates): 844 / 843 / 844, plus FC-1b's four finance charge doors (billingRunFinanceCharges,
   // billingListFinanceCharges, billingSetFinanceChargeWaiver and billingClearFinanceChargeWaiver): 848 / 847 / 848, plus FC-1c's two finance job doors (billingListFinanceJobs and
-  // billingSetFinanceJobEnabled) and its waiver read (billingListFinanceChargeWaivers): 851 / 850 / 851.
-  assert.equal(operations, 851, "the document's operation count minus the excluded stream, plus the declared body variant");
-  assert.equal(emitted.length, 850, "the document's operation count minus the excluded stream");
+  // billingSetFinanceJobEnabled) and its waiver read (billingListFinanceChargeWaivers): 851 / 850 / 851, plus JA-4's three by job doors (billingGetAgingByJob,
+  // billingGetCustomerStatementByJob and billingGetJobStatement): 854 / 853 / 854.
+  assert.equal(operations, 854, "the document's operation count minus the excluded stream, plus the declared body variant");
+  assert.equal(emitted.length, 853, "the document's operation count minus the excluded stream");
   assert.deepEqual(variants, ["feedbackCreateMultipart"], "the only multi content type body is feedbackCreate's multipart form");
-  assert.equal(ROUTES.length, 851, "the manifest census keeps the full route table");
+  assert.equal(ROUTES.length, 854, "the manifest census keeps the full route table");
 });
 
 test("each declared body variant resolves to a live generated function beside its operation", (t) => {

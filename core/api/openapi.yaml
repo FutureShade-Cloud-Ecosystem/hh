@@ -2352,6 +2352,160 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/ar/aging-by-job:
+    get:
+      operationId: billingGetAgingByJob
+      tags:
+        - staff-billing
+      summary: Read the AR aging by customer and job
+      description: The account aging grouped by job (JA-4). A document with no job, and every non-invoice movement, reads at account level (job_id empty, account_level true). The rows of one customer sum to its account aging row and every row together to the AR subledger and GL 1100.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: as_of
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: job_id
+          in: query
+          required: false
+          description: Only this job's rows
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The aging rows, one per customer and job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingAgingByJobPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/ar/customers/{customerID}/statement-by-job:
+    get:
+      operationId: billingGetCustomerStatementByJob
+      tags:
+        - staff-billing
+      summary: Read one account's statement grouped by job
+      description: A section per job and one for account level, each with its subtotal; the closing balance is the plain statement's. With format=html the response is the rendered document.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: as_of
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - html
+      responses:
+        "200":
+          description: The statement by job, or its rendering when format=html
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingJobStatement"
+            text/html:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/ar/customers/{customerID}/jobs/{jobID}/statement:
+    get:
+      operationId: billingGetJobStatement
+      tags:
+        - staff-billing
+      summary: Read one job's statement
+      description: Only that job's lines, addressed to the job's contact, or to the customer's primary contact when the job has none (contact.source says which, contact.note says so).
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - money-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customerID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: jobID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: as_of
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - html
+      responses:
+        "200":
+          description: The job statement, or its rendering when format=html
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingJobStatement"
+            text/html:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/ar/holds:
     get:
       operationId: billingListHolds
@@ -34707,6 +34861,179 @@ components:
         limit:
           type: integer
           format: int32
+    BillingAgingByJobRow:
+      type: object
+      required:
+        - customer_id
+        - customer_name
+        - account_no
+        - job_id
+        - job_no
+        - job_name
+        - account_level
+        - current_cents
+        - days_30_cents
+        - days_60_cents
+        - days_60_to_90_cents
+        - days_90_plus_cents
+        - total_cents
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        customer_name:
+          type: string
+        account_no:
+          type: string
+        job_id:
+          type: string
+          description: Empty at account level
+        job_no:
+          type: string
+        job_name:
+          type: string
+        account_level:
+          type: boolean
+        current_cents:
+          type: integer
+          format: int64
+        days_30_cents:
+          type: integer
+          format: int64
+        days_60_cents:
+          type: integer
+          format: int64
+        days_60_to_90_cents:
+          type: integer
+          format: int64
+        days_90_plus_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+    BillingAgingByJobPage:
+      type: object
+      required:
+        - items
+        - as_of
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingAgingByJobRow"
+        as_of:
+          type: string
+          format: date
+    BillingJobStatementLine:
+      type: object
+      required:
+        - date
+        - doc_no
+        - description
+        - charge_cents
+        - credit_cents
+        - balance_run_cents
+        - job_id
+      properties:
+        date:
+          type: string
+          format: date-time
+        doc_no:
+          type: string
+        description:
+          type: string
+        charge_cents:
+          type: integer
+          format: int64
+        credit_cents:
+          type: integer
+          format: int64
+        balance_run_cents:
+          type: integer
+          format: int64
+          description: Running balance within the section
+        job_id:
+          type: string
+    BillingJobStatementSection:
+      type: object
+      required:
+        - job_id
+        - job_no
+        - job_name
+        - account_level
+        - lines
+        - subtotal_cents
+      properties:
+        job_id:
+          type: string
+        job_no:
+          type: string
+        job_name:
+          type: string
+        account_level:
+          type: boolean
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingJobStatementLine"
+        subtotal_cents:
+          type: integer
+          format: int64
+    BillingStatementContact:
+      type: object
+      required:
+        - name
+        - email
+        - phone
+        - source
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        source:
+          type: string
+          enum:
+            - job
+            - customer
+            - none
+        note:
+          type: string
+    BillingJobStatement:
+      type: object
+      required:
+        - customer_id
+        - customer_name
+        - account_no
+        - as_of_date
+        - sections
+        - closing_balance_cents
+        - contact
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        customer_name:
+          type: string
+        account_no:
+          type: string
+        as_of_date:
+          type: string
+          format: date-time
+        job_id:
+          type: string
+        sections:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingJobStatementSection"
+        closing_balance_cents:
+          type: integer
+          format: int64
+        contact:
+          $ref: "#/components/schemas/BillingStatementContact"
     BillingCreditHold:
       type: object
       required:
