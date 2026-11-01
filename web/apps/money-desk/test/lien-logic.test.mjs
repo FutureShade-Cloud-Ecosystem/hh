@@ -231,3 +231,115 @@ test("a co-signer is anyone on the roster the core would take: a Financial Contr
   assert.deepEqual(cosigners(roster, "b").map((p) => p.user_id), ["c"], "never the person releasing");
   assert.deepEqual(cosigners([], "a"), []);
 });
+
+// ---- RT-3b: due to release, the release, its reversal, the lien doors, the old press and the move refusal ----------
+import {
+  canReleaseDue,
+  datesForm,
+  dischargeForm,
+  dueConfirmWords,
+  dueStateWords,
+  dueTone,
+  groupDue,
+  jobLevelRefusedWords,
+  preservedForm,
+  releasedDueWords,
+  reverseForm,
+  reversedWords,
+} from "../src/lien/lien-logic.ts";
+
+const dueRow = (over = {}) => ({
+  invoice_id: "i1",
+  invoice_no: "INV-1",
+  customer_id: "c1",
+  customer_job_id: "cj1",
+  branch_id: "b1",
+  holdback_cents: 840000,
+  due: true,
+  ...over,
+});
+
+test("rows of one customer job group together, in the core's order, and carry the one judgement the core gave them", () => {
+  const groups = groupDue([
+    dueRow({ invoice_id: "i1", invoice_no: "INV-1", lien_job_id: "l1", lien_job_no: "GLS-1", releasable_on: "2030-01-02" }),
+    dueRow({ invoice_id: "i2", invoice_no: "INV-2", customer_job_id: "cj2", due: false, blocked_kind: "NO_LIEN_JOB", blocked_reason: "no lien job is linked to this job, so there is no preservation period to count" }),
+    dueRow({ invoice_id: "i3", invoice_no: "INV-3", lien_job_id: "l1", lien_job_no: "GLS-1", releasable_on: "2030-01-02" }),
+  ]);
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups[0].rows.map((r) => r.invoice_no), ["INV-1", "INV-3"]);
+  assert.equal(groups[0].lienJobNo, "GLS-1");
+  assert.equal(groups[0].due, true);
+  assert.equal(groups[1].kind, "NO_LIEN_JOB");
+  assert.deepEqual(groupDue([]), []);
+});
+
+test("a state is said in words a bookkeeper can act on, and a colour never stands alone", () => {
+  const due = groupDue([dueRow({ lien_job_no: "GLS-1" })])[0];
+  assert.equal(dueStateWords(due), "Due now");
+  assert.equal(dueTone(due), "good");
+  const notDue = groupDue([dueRow({ due: false, blocked_kind: "NOT_DUE", releasable_on: "2030-02-03", lien_job_no: "GLS-3" })])[0];
+  assert.equal(dueStateWords(notDue), "Not due until Feb 3, 2030");
+  assert.equal(dueTone(notDue), "watch");
+  const held = groupDue([dueRow({ due: false, blocked_kind: "LIEN_PRESERVED", lien_job_no: "GLS-2" })])[0];
+  assert.equal(dueStateWords(held), "Blocked by a preserved lien on GLS-2");
+  assert.equal(dueTone(held), "stop");
+  const noDate = groupDue([dueRow({ due: false, blocked_kind: "NO_DATE", lien_job_no: "GLS-4" })])[0];
+  assert.equal(dueStateWords(noDate), "No date to count from");
+  const noJob = groupDue([dueRow({ due: false, blocked_kind: "NO_LIEN_JOB" })])[0];
+  assert.equal(dueStateWords(noJob), "No lien job linked");
+  assert.equal(noJob.label, "the customer job with INV-1");
+  assert.equal(due.label, "lien job GLS-1");
+});
+
+test("only the Financial Controller releases a due holdback, and the screen asks first, naming the job, the invoices and each amount", () => {
+  assert.equal(canReleaseDue("financial_controller"), true);
+  assert.equal(canReleaseDue("FINANCIAL_CONTROLLER"), true);
+  assert.equal(canReleaseDue("general_manager"), false);
+  assert.equal(canReleaseDue("payables_receivables"), false);
+  const g = groupDue([dueRow({ lien_job_no: "GLS-1" }), dueRow({ invoice_id: "i2", invoice_no: "INV-2", holdback_cents: 1020000, lien_job_no: "GLS-1" })])[0];
+  const words = dueConfirmWords(g);
+  assert.match(words, /lien job GLS-1/);
+  assert.match(words, /INV-1 \(\$8,400\.00\)/);
+  assert.match(words, /INV-2 \(\$10,200\.00\)/);
+  assert.match(words, /whole holdback of the job/);
+  assert.match(words, /journal/);
+  assert.equal(releasedDueWords("lien job GLS-1", "$18,600.00", 2, false), "Released $18,600.00 on lien job GLS-1: 2 invoices.");
+  assert.equal(releasedDueWords("lien job GLS-1", "$18,600.00", 1, true), "That release was already made: $18,600.00 on lien job GLS-1, 1 invoice.");
+  assert.equal(reversedWords("INV-1", "$8,400.00"), "Reversed the release of INV-1: $8,400.00 is held back again.");
+});
+
+test("a reversal needs a reason, and says so before anything is sent", () => {
+  assert.deepEqual(reverseForm("  "), { ok: false, words: "Say why the release is reversed." });
+  assert.deepEqual(reverseForm(" paid in error "), { ok: true, reason: "paid in error" });
+});
+
+test("the doors: a preserved lien and its discharge need a real day, and a dates change sends only what changed", () => {
+  assert.equal(preservedForm("", "").ok, false);
+  assert.equal(preservedForm("2030-02-30", "").ok, false);
+  assert.deepEqual(preservedForm("2030-02-01", " filed "), { ok: true, body: { preserved_on: "2030-02-01", note: "filed" } });
+  assert.deepEqual(dischargeForm("2030-03-01", ""), { ok: true, body: { discharged_on: "2030-03-01", note: "" } });
+  assert.equal(dischargeForm("soon", "").ok, false);
+  const job = { csp_published_on: "2030-01-01", substantial_perf_date: "2030-01-05" };
+  // Unchanged fields are left out; an emptied box that held a date clears it; an empty box that held none is left alone.
+  assert.deepEqual(datesForm(job, { csp: "2030-01-01", perf: "", supply: "" }), { ok: true, body: { substantial_perf_date: null } });
+  assert.deepEqual(datesForm(job, { csp: "2030-01-09", perf: "2030-01-05", supply: "2030-01-02" }), { ok: true, body: { csp_published_on: "2030-01-09", last_supply_date: "2030-01-02" } });
+  assert.deepEqual(datesForm(job, { csp: "2030-01-01", perf: "2030-01-05", supply: "" }), { ok: false, words: "Change at least one date." });
+  assert.equal(datesForm(job, { csp: "01/02/2030", perf: "2030-01-05", supply: "" }).ok, false);
+});
+
+test("the core's refusals keep its sentence; the old press and the move refusal get their words", () => {
+  const core = "lien: job GLS-2103 is linked to a customer job, so its holdback is released by the Controller's holdback release (POST /api/v1/ar/holdback/releases), once its preservation period has run out, and not by this job level release";
+  assert.equal(
+    refusalWords("release", core, 422),
+    "Job GLS-2103 is linked to a customer job, so its holdback is released from Due to release by the Financial Controller, once its preservation period has run out, and not here.",
+  );
+  assert.equal(jobLevelRefusedWords(core), true);
+  assert.equal(jobLevelRefusedWords("lien: no outstanding retention to release for this job"), false);
+  assert.equal(
+    refusalWords("job", "lien: job RT2-LIEN-1 holds invoice level retention in its ledger, so it cannot be unlinked from its customer job; correct the invoices' holdback first", 422),
+    "Job RT2-LIEN-1 holds invoice level retention in its ledger, so it cannot be moved or unlinked from its customer job; correct the invoices' holdback first.",
+  );
+  assert.equal(refusalWords("due-release", "releasing a holdback is the Controller's action", 403), "Releasing a holdback is the Controller's action.");
+  assert.equal(refusalWords("due-release", "Forbidden", 403), "Releasing a due holdback is for the Financial Controller.");
+  assert.equal(refusalWords("due-release", "that release has already been reversed", 409), "That release has already been reversed.");
+});
