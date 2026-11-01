@@ -376,7 +376,7 @@ export function createLienWorld() {
       if (key === "") return clientError(400, "an idempotency key is required");
       const made = world.releases.filter((r) => r.key === key);
       if (made.length > 0) {
-        if (made.every((r) => r.reversed)) return clientError(409, "the release this idempotency key made was reversed, so nothing stands released; release the holdback again with a new key");
+        if (made.some((r) => r.reversed)) return clientError(409, "the release this idempotency key made was reversed, so nothing stands released; release the holdback again with a new key");
         if (made[0].customer_job_id !== cj) return clientError(409, "that idempotency key already released the holdback of another job; a key names one release, use a new key");
         const items = made.filter((r) => !r.reversed).map(releasedItem);
         return { status: 200, body: { customer_job_id: cj, released_on: dayFrom(0), total_cents: made.filter((r) => !r.reversed).reduce((n, r) => n + r.amount_cents, 0), items, replayed: true } };

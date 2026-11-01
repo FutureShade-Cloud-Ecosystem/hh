@@ -536,6 +536,18 @@ test("a reversal is the Controller's, needs a reason, puts the holdback back onc
   assert.deepEqual(byJob(await dueRows(), IDS.cjA).map((r) => r.invoice_no), ["INV-4101"]);
 });
 
+test("a key whose release was partly reversed is refused on replay, as the core refuses it", async () => {
+  await reset();
+  const key = "55555555-5555-4555-8555-555555555555";
+  const made = await call(CONTROLLER, "POST", "/api/v1/ar/holdback/releases", { customer_job_id: IDS.cjA, idempotency_key: key });
+  assert.equal(made.status, 201);
+  const one = await call(CONTROLLER, "POST", `/api/v1/ar/holdback/releases/${made.json.items[0].release_id}/reversal`, { reason: "keyed twice" });
+  assert.equal(one.status, 200);
+  const msg = "the release this idempotency key made was reversed, so nothing stands released; release the holdback again with a new key";
+  refused(await call(CONTROLLER, "POST", "/api/v1/ar/holdback/releases", { customer_job_id: IDS.cjA, idempotency_key: key }), 409, msg);
+  assert.ok(coreSource.includes(msg));
+});
+
 test("the old job level press is refused in the core's words on a job linked to a customer job", async () => {
   await reset();
   const res = await call(GM, "POST", `/api/v1/lien/holdback/${IDS.job3}/release`, { approver_id: CONTROLLER, approver_role: "FINANCIAL_CONTROLLER" });
