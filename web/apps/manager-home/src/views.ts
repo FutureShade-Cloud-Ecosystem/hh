@@ -42,6 +42,8 @@ import {
   pickedWords,
   qtyWords,
   shortageCard,
+  cardsToShow,
+  headCountWords,
   rangeWord,
   severityWord,
   shareNote,
@@ -483,6 +485,8 @@ export interface ShortagesModel {
   readonly branchName: string;
   readonly entries: readonly QueueEntry[];
   readonly resolving: ResolveDraft | null;
+  /** Picks the manager settled this visit: their cards stay, done rows and all, until the sheet is next opened. */
+  readonly kept: readonly string[];
   readonly error: string;
   readonly notice: string;
   readonly resolverWords: string;
@@ -510,7 +514,7 @@ export function renderShortages(model: ShortagesModel): TemplateResult {
 }
 
 function renderShortageList(model: ShortagesModel): TemplateResult {
-  const withOpen = model.entries.filter((e) => e.task.open_shortages > 0 || e.shortages.some((s) => s.resolved_at === null));
+  const withOpen = cardsToShow(model.entries, model.kept);
   if (withOpen.length === 0) {
     return html`<section class="sheet"><div class="list-card"><p class="notice-line">No open shortages at this branch.</p></div></section>`;
   }
@@ -523,7 +527,6 @@ function renderShortageList(model: ShortagesModel): TemplateResult {
 
 function renderShortageTask(entry: QueueEntry, model: ShortagesModel): TemplateResult {
   const open = entry.shortages.filter((s) => s.resolved_at === null);
-  const done = entry.shortages.filter((s) => s.resolved_at !== null);
   const orderLabel = entry.order_no !== "" ? entry.order_no : entry.task.order_id;
   const status = taskStatusWord(entry.task.status);
   return html`
@@ -533,20 +536,24 @@ function renderShortageTask(entry: QueueEntry, model: ShortagesModel): TemplateR
         ${entry.customer_name !== "" ? html`<span class="meta">${entry.customer_name}</span>` : nothing}
         ${status !== "" ? html`<span class="meta">${status}</span>` : nothing}
         ${entry.task.stage_location !== "" ? html`<span class="meta">staged at ${entry.task.stage_location}</span>` : nothing}
-        <span class="meta">${entry.task.open_shortages} open</span>
+        <span class="meta">${headCountWords(open.length)}</span>
       </div>
-      ${open.map((s) => renderShortageRow(entry, s, model))}
-      ${done.map((s) => html`
-        <div class="shortage" data-shortage=${s.id}>
-          <div class="body">
-            <p class="status status-done">${shortageCard(s, model.nowMs).status}</p>
-            <p class="line">${s.description}</p>
-            <p class="detail">${shortageLine(s)}</p>
-            <p class="resolved-word">Resolved: ${s.resolution}</p>
-          </div>
-        </div>
-      `)}
+      ${entry.shortages.map((s) => s.resolved_at === null ? renderShortageRow(entry, s, model) : renderDoneRow(s, model))}
     </article>
+  `;
+}
+
+/** A settled shortage, calmer than an open row: the status word, what it was, and the resolution's words. */
+function renderDoneRow(s: QueueEntry["shortages"][number], model: ShortagesModel): TemplateResult {
+  return html`
+    <div class="shortage" data-shortage=${s.id}>
+      <div class="body">
+        <p class="status status-done">${shortageCard(s, model.nowMs).status}</p>
+        <p class="line">${s.description}</p>
+        <p class="detail">${shortageLine(s)}</p>
+        <p class="resolved-word">${s.resolution}</p>
+      </div>
+    </div>
   `;
 }
 

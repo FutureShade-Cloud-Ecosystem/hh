@@ -46,6 +46,7 @@ import {
   APPROVAL_KINDS,
   RECEIVING_DIFFERENCE_WORDS,
   SHORTAGE_RESOLVER_WORDS,
+  settleShortage,
   approvalsRefusalWords,
   canResolve,
   decideRefusalWords,
@@ -216,7 +217,7 @@ export class ManagerHomeApp extends HHElement {
 
   // The views' states.
   #shortages: ShortagesModel = {
-    phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
+    phase: "loading", branchName: "", entries: [], resolving: null, kept: [], error: "", notice: "",
     resolverWords: SHORTAGE_RESOLVER_WORDS, nowMs: 0,
   };
   #receiving: ReceivingModel = { phase: "loading", branchName: "", rows: [], error: "", definitionWords: RECEIVING_DIFFERENCE_WORDS };
@@ -819,7 +820,7 @@ export class ManagerHomeApp extends HHElement {
     this.#warranty.reset();
     this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false, unsourcedNeeds: [] };
     this.#shortages = {
-      phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
+      phase: "loading", branchName: "", entries: [], resolving: null, kept: [], error: "", notice: "",
       resolverWords: SHORTAGE_RESOLVER_WORDS, nowMs: 0,
     };
     this.#receiving = { phase: "loading", branchName: "", rows: [], error: "", definitionWords: RECEIVING_DIFFERENCE_WORDS };
@@ -1086,7 +1087,7 @@ export class ManagerHomeApp extends HHElement {
     // Leaving the builder re-reads the landing: the desk may have saved a new
     // layout, and the board below must be what the server now answers.
     if (leaving === "builder" && view === "home") void this.#loadLanding();
-    if (view === "shortages" && this.#shortages.phase === "loading") void this.#loadShortages();
+    if (view === "shortages" && (this.#shortages.phase === "loading" || leaving !== "shortages")) void this.#loadShortages();
     if (view === "receiving" && this.#receiving.phase === "loading") void this.#loadReceiving();
     if (view === "approvals" && leaving !== "approvals") void this.#openApprovals();
     if (view === "drivers" && this.#drivers.phase === "loading") void this.#loadDrivers();
@@ -1673,7 +1674,7 @@ export class ManagerHomeApp extends HHElement {
   // -- Shortages · open -----------------------------------------------------------------------------
 
   async #loadShortages(): Promise<void> {
-    this.#shortages = { ...this.#shortages, phase: "loading", error: "", branchName: this.#branchName() };
+    this.#shortages = { ...this.#shortages, phase: "loading", kept: [], error: "", branchName: this.#branchName() };
     this.requestUpdate();
     const result = await this.#pickQueue();
     if (result.ok) {
@@ -1715,8 +1716,16 @@ export class ManagerHomeApp extends HHElement {
       resolutionText(draft.choice, draft.note),
     );
     if (result.ok) {
-      this.#shortages = { ...this.#shortages, resolving: null };
-      await this.#loadShortages();
+      // The answer is the resolved shortage itself: merge it in place and keep the card, so the
+      // manager sees what they settled, with its words, until the sheet is next opened.
+      this.#shortages = {
+        ...this.#shortages,
+        resolving: null,
+        entries: settleShortage(this.#shortages.entries, result.value),
+        kept: this.#shortages.kept.includes(draft.taskId) ? this.#shortages.kept : [...this.#shortages.kept, draft.taskId],
+        nowMs: Date.now(),
+      };
+      this.requestUpdate();
       await this.#refreshLanding();
       const remaining = this.#landing.needs?.rows.find((r) => r.source_key === "tasks.open_shortages")?.count;
       this.#shortages = {

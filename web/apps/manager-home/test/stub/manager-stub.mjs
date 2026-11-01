@@ -1727,11 +1727,16 @@ async function handle(req, res) {
   }
 
   if (req.method === "GET" && path === "/api/v1/yard/pick-queue") {
-    const items = world.tasks.map((entry) => ({
-      task: { ...entry.task, open_shortages: entry.shortages.filter((s) => s.resolved_at === undefined).length },
-      ticket: entry.ticket,
-      shortages: entry.shortages,
-    }));
+    // The scenario "open-only-queue" is the core's own queue: it decorates every pick its filter returns
+    // and loads shortages only when some are open (decorate in yard_service.go), so a pick with none
+    // left open comes back with an empty list and a resolved shortage is gone on re-read.
+    const openOnly = scenario === "open-only-queue";
+    const items = world.tasks
+      .map((entry) => ({
+        task: { ...entry.task, open_shortages: entry.shortages.filter((s) => s.resolved_at === undefined).length },
+        ticket: entry.ticket,
+        shortages: openOnly ? entry.shortages.filter((s) => s.resolved_at === undefined) : entry.shortages,
+      }));
     return json(res, { items, next_cursor: null, limit: 50 });
   }
 
