@@ -151,6 +151,7 @@ function fresh() {
       entry(IDS.job1, uuid("a1", 2), "RETENTION", 1_020_000, 40),
       entry(IDS.job2, uuid("a1", 3), "RETENTION", 647_500, 100),
       entry(IDS.job3, uuid("a1", 4), "RETENTION", 336_000, 12),
+      entry(IDS.job3, uuid("a3", 1), "RETENTION", 210_000, 12),
       entry(IDS.job6, uuid("a2", 1), "RETENTION", 630_000, 66),
       entry(IDS.job6, uuid("a2", 2), "RETENTION", 750_000, 41),
       entry(IDS.job4, uuid("a1", 5), "RETENTION", 290_000, 38),
@@ -171,6 +172,8 @@ function fresh() {
       { invoice_id: uuid("a2", 1), invoice_no: "INV-4101", customer_id: IDS.customerA, customer_job_id: IDS.cjA, branch_id: IDS.branch1, holdback_cents: 630_000 },
       { invoice_id: uuid("a2", 2), invoice_no: "INV-4102", customer_id: IDS.customerA, customer_job_id: IDS.cjA, branch_id: IDS.branch1, holdback_cents: 750_000 },
       { invoice_id: uuid("a1", 4), invoice_no: "INV-4201", customer_id: IDS.customerB, customer_job_id: IDS.cjB, branch_id: IDS.branch1, holdback_cents: 336_000 },
+      // The same customer job's second invoice sits at the other yard: a job split across two branches.
+      { invoice_id: uuid("a3", 1), invoice_no: "INV-4202", customer_id: IDS.customerB, customer_job_id: IDS.cjB, branch_id: IDS.branch2, holdback_cents: 210_000 },
       { invoice_id: uuid("a2", 4), invoice_no: "INV-4301", customer_id: IDS.customerB, customer_job_id: IDS.cjC, branch_id: IDS.branch1, holdback_cents: 120_000 },
     ],
     // One row per invoice released: { id, invoice_id, customer_job_id, amount_cents, key, reversed }.

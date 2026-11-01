@@ -439,8 +439,10 @@ test("due to release answers the contract per invoice: the judgement the core gi
   assert.equal(c[0].blocked_kind, "NO_LIEN_JOB");
   assert.equal(c[0].blocked_reason, "no lien job is linked to this job, so there is no preservation period to count");
   assert.ok(coreSource.includes(c[0].blocked_reason));
-  // Only what is due counts toward a branch's total.
-  assert.deepEqual(res.json.branches, [{ branch_id: IDS.branch1, due_cents: 1_380_000 }]);
+  // Only what is due counts toward a branch's total; a branch with nothing due is listed at zero, as the core lists it.
+  assert.deepEqual(res.json.branches, [{ branch_id: IDS.branch1, due_cents: 1_380_000 }, { branch_id: IDS.branch2, due_cents: 0 }]);
+  // INV-4201 and INV-4202 are one customer job split over two branches.
+  assert.deepEqual(byJob(res.json.items, IDS.cjB).map((r) => [r.invoice_no, r.branch_id]), [["INV-4201", IDS.branch1], ["INV-4202", IDS.branch2]]);
   // A role the guards wall reads nothing.
   assert.equal((await get(IDS.sales, "/api/v1/ar/holdback/due-to-release")).status, 403);
 });
@@ -569,7 +571,9 @@ test("the stub tells one story: every due invoice's retention sits on the lien j
     assert.equal(job.job_no, r.lien_job_no);
     assert.equal(job.customer_job_id, r.customer_job_id, `${r.invoice_no}: the lien job is linked to the row's customer job`);
     assert.equal(job.customer_id, r.customer_id, `${r.invoice_no}: the lien job is the same customer's`);
-    assert.equal(job.branch_id, r.branch_id, `${r.invoice_no}: the lien job is at the same branch`);
+    // A customer job can hold invoices at two branches; the lien job sits at the branch of its first row.
+    const mine = rows.filter((x) => x.customer_job_id === r.customer_job_id);
+    assert.ok(mine.some((x) => x.branch_id === job.branch_id), `${r.invoice_no}: the lien job is at a branch the customer job holds invoices at`);
   }
   // The Holdbacks tab agrees on the amount: what the lien job holds is what its due rows add up to (nothing is released yet).
   for (const no of new Set(named.map((r) => r.lien_job_no))) {

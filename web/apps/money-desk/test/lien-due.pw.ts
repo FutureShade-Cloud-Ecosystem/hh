@@ -453,3 +453,123 @@ test("polish: the Holdbacks tab offers no Release on a row that is not yet due",
   await expect(rows("GLS-2101")).toContainText("Release due");
   await expect(rows("GLS-2101").getByRole("button", { name: "Release" })).toHaveCount(1);
 });
+
+// ---- RT-3b fix round 3: the key on a retry, the key across a reload, the partial reversal, a job over two branches ----
+
+const RELEASES = "**/api/v1/ar/holdback/releases";
+const REVERSAL = /\/api\/v1\/ar\/holdback\/releases\/[^/]+\/reversal$/;
+
+/** The idempotency key of every release POST the page makes, in order; `first` decides the answer of the first one. */
+async function watchReleases(page: Page, first: "pass" | "abort" | "five-hundred" | "refuse"): Promise<string[]> {
+  const keys: string[] = [];
+  await page.route(RELEASES, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    keys.push((route.request().postDataJSON() as { idempotency_key: string }).idempotency_key);
+    if (keys.length === 1 && first === "abort") return route.abort();
+    if (keys.length === 1 && first === "five-hundred") return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "internal error" }) });
+    if (keys.length === 1 && first === "refuse") return route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "the holdback of this job has already been released, and no invoice on it withholds any more" }) });
+    return route.continue();
+  });
+  return keys;
+}
+
+async function pressRelease(page: Page): Promise<void> {
+  const open = due(page, "GLS-2105").getByRole("button", { name: "Release" });
+  if ((await page.locator("[data-due-panel]").count()) === 0) await open.click();
+  await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
+}
+
+for (const first of ["abort", "five-hundred"] as const) {
+  test(`fix r3: a release with no answer (${first}) is retried with the same key`, async ({ page, request }) => {
+    await openDue(page, request);
+    const keys = await watchReleases(page, first);
+    await pressRelease(page);
+    await expect(page.locator("[data-error]").first()).toBeVisible();
+    await pressRelease(page);
+    await expect(page.locator("[data-notice]")).toContainText(nb("Released $13,800.00 on lien job GLS-2105: 2 invoices."));
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+  });
+}
+
+test("fix r3: a refused release (a 4xx) drops its key, so the next press is a new release with a new key", async ({ page, request }) => {
+  await openDue(page, request);
+  const keys = await watchReleases(page, "refuse");
+  await pressRelease(page);
+  await expect(page.locator("[data-error]").first()).toContainText("already been released");
+  await pressRelease(page);
+  await expect(page.locator("[data-notice]")).toContainText(nb("Released $13,800.00 on lien job GLS-2105: 2 invoices."));
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).not.toBe(keys[0]);
+});
+
+test("fix r3: the key of a release with no answer survives a reload, held beside the other money presses' keys", async ({ page, request }) => {
+  await openDue(page, request);
+  const keys = await watchReleases(page, "abort");
+  await pressRelease(page);
+  await expect(page.locator("[data-error]").first()).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Liens", exact: true }).click();
+  await liensTab(page, "due");
+  await expect(page.locator("[data-row='due']:visible").first()).toBeVisible();
+  await pressRelease(page);
+  await expect(page.locator("[data-notice]")).toContainText(nb("Released $13,800.00 on lien job GLS-2105: 2 invoices."));
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).toBe(keys[0]);
+});
+
+test("fix r3: a reversal refused part way reads Partly reversed, and the next press sends only the rest", async ({ page, request }) => {
+  await openDue(page, request);
+  await pressRelease(page);
+  const press = page.locator("[data-row='released']:visible");
+  await expect(press).toHaveCount(1);
+  let posts = 0;
+  let refuseSecond = true;
+  await page.route(REVERSAL, async (route) => {
+    posts += 1;
+    // The first press: the first invoice goes through, the second is refused once.
+    if (refuseSecond && posts === 2) {
+      refuseSecond = false;
+      return route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "an invoice on this release has been paid since, so it cannot be put back on hold" }) });
+    }
+    return route.continue();
+  });
+  await press.getByRole("button", { name: "Reverse" }).click();
+  const panel = page.locator("[data-reverse-panel]");
+  await panel.getByLabel("Reason").fill("Released against the wrong job");
+  await panel.getByRole("button", { name: "Reverse release" }).click();
+  await expect(panel.locator("[data-error]")).toContainText("has been paid since");
+  await expect(press).toContainText("Partly reversed");
+  await expect(press.locator("[data-partly]")).toBeVisible();
+  expect(posts).toBe(2);
+  // Reverse again: the one still released is the only one sent.
+  await press.getByRole("button", { name: "Reverse" }).click();
+  await page.locator("[data-reverse-panel]").getByLabel("Reason").fill("Released against the wrong job");
+  await page.locator("[data-reverse-panel]").getByRole("button", { name: "Reverse release" }).click();
+  await expect(page.locator("[data-notice]")).toContainText(nb("Reversed the release on lien job GLS-2105: INV-4102 ($7,500.00) is held back again."));
+  expect(posts).toBe(3);
+  await expect(press).toContainText("Reversed");
+  await expect(press).not.toContainText("Partly reversed");
+});
+
+test("fix r3: a job over two branches names both, and the confirm names no branch total that is not the job's", async ({ page, request }) => {
+  await openDue(page, request);
+  // The Fieldstone patio job (INV-4201 at one yard, INV-4202 at the other) comes due while the screen is open.
+  await behind(request, "PUT", "/api/v1/lien/jobs/10b00000-0000-4000-8000-000000000003/preservation-dates", { substantial_perf_date: dayFrom(-120), last_supply_date: dayFrom(-120), csp_published_on: dayFrom(-120) });
+  await liensTab(page, "jobs");
+  await liensTab(page, "due");
+  const split = due(page, "GLS-2103");
+  await expect(split).toContainText("Due now");
+  await expect(split).toContainText("INV-4201");
+  await expect(split).toContainText("INV-4202");
+  await expect(split).toContainText("Point Loma (demo) and Julian (demo)");
+  await split.getByRole("button", { name: "Release" }).click();
+  const words = page.locator("[data-due-panel] [data-confirm-words]");
+  await expect(words).toContainText("Release the holdback held on 2 invoices for ");
+  await expect(words).not.toContainText("Release $");
+  await expect(words).toContainText("Point Loma (demo) and Julian (demo)");
+  await expect(words).toContainText(nb("INV-4201 ($3,360.00)"));
+  await expect(words).toContainText(nb("INV-4202 ($2,100.00)"));
+  await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
+  await expect(page.locator("[data-notice]")).toContainText(nb("Released $5,460.00 on lien job GLS-2103: 2 invoices."));
+});
