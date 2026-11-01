@@ -14,6 +14,13 @@
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string; status?: number; code?: string };
 
+/**
+ * The client code on the error leg for a 2xx answer whose body is not valid JSON. It carries no status (the server
+ * answered success), so a caller that reads the status alone would take it for a lost signal; this code tells the
+ * two apart. It is a client code, never a server one.
+ */
+export const MALFORMED_SUCCESS_CODE = "malformed_success_body";
+
 export function ok<T>(value: T): Result<T> {
   return { ok: true, value };
 }

@@ -511,14 +511,14 @@ export class QuoteDeskApp extends HHElement {
    * core blip must not end it: an ending refusal (401, 403) leaves cleanly; anything else shows the
    * unavailable entry and the custody tries the start again on its backoff.
    */
-  async #consoleStartFailed(status: number | undefined): Promise<void> {
+  async #consoleStartFailed(status: number | undefined, code?: string): Promise<void> {
     if (status === 401 || status === 403) {
       this.#flowsState = entryUnavailable().flows;
       await this.#custody.leave();
       this.requestUpdate();
       return;
     }
-    this.#flowsState = { kind: "offline", reason: reasonForStatus(status) };
+    this.#flowsState = { kind: "offline", reason: reasonForStatus(status, code) };
     this.requestUpdate();
     this.#custody.retry("quote-desk", (outcome) => this.#onRecovered(outcome));
   }
@@ -600,7 +600,7 @@ export class QuoteDeskApp extends HHElement {
       this.#deskUserId = null;
       this.#deskIdentity = null;
       if (this.#custody.mode === "console") {
-        await this.#consoleStartFailed(branch.status);
+        await this.#consoleStartFailed(branch.status, branch.code);
         return;
       }
       await this.#controller.signOut();

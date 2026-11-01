@@ -53,5 +53,17 @@ test("a console box's door says to sign in: no Pick a role header, no dashed sta
   await page.goto("/");
   await expect(page.locator("p.notice")).toContainText("Sign in to open Dispatch Board.");
   await expect(page.getByTestId("header-word")).not.toHaveText(/pick a role/i);
+  await expect(page.getByTestId("header-word")).toHaveText("Sign in");
   await expect(page.locator("div.stage")).toHaveCSS("border-top-style", "none");
+});
+
+// UX-131: the header word follows the door's state. Offline, the body says the server cannot be reached, so the
+// header does not say "Sign in".
+test("a console box's offline door has no Sign in word in the header", async ({ page }) => {
+  await page.route("**/config.json", (route) => route.fulfill({ json: CONSOLE_CONFIG }));
+  await page.route("https://console.invalid/**", (route) => route.abort());
+  await page.goto("/");
+  await expect(page.locator("p.notice")).toContainText(/reach the server/i);
+  await expect(page.locator("hos-app-header")).not.toHaveAttribute("word", "Sign in");
+  await expect(page.getByTestId("header-word")).toHaveText("Offline");
 });
