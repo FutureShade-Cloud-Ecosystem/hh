@@ -38,6 +38,8 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${appPort}`,
     channel: "chrome",
     headless: true,
+    // The house zone, as the dealer's browser and the sign off gate read it (month end class).
+    timezoneId: "America/Toronto",
   },
   webServer: [
     {
@@ -45,7 +47,7 @@ export default defineConfig({
       url: `http://127.0.0.1:${stubPort}/healthz`,
       reuseExistingServer: false,
       cwd: appDir,
-      env: { ROLE_STUB_PORT: stubPort },
+      env: { ROLE_STUB_PORT: stubPort, TZ: "America/Toronto" },
     },
     {
       // The demo mode flag is the seam rule: the front door's handoff exists
