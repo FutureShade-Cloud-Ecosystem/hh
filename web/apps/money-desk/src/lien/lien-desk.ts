@@ -28,6 +28,8 @@ import {
   preservedForm,
   recordedDischargeWords,
   recordedPreservedWords,
+  lateLienWords,
+  lastDayFor,
   refusalWords,
   releasedDueWords,
   reverseForm,
@@ -588,6 +590,13 @@ export class LienDesk {
     this.#notice = words;
     this.#syncDoors = true;
     await this.#refresh();
+    if (kind === "record" && answer.value.lien_preserved_on !== undefined) {
+      const late = lateLienWords(answer.value.lien_preserved_on, lastDayFor(this.#due.groups, job.job_no));
+      if (late !== "") {
+        this.#notice = `${words} ${late}`;
+        this.#host.repaint();
+      }
+    }
   }
 
   #refuse(words: string): void {

@@ -632,3 +632,43 @@ test("fix r3: a job over two branches names both, and the confirm names no branc
   await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
   await expect(page.locator("[data-notice]")).toContainText(nb("Released $5,460.00 on lien job GLS-2103: 2 invoices."));
 });
+
+// ---- P058: the customer's name on the confirm, a late lien date named, and RT-3b's two key legs ----
+
+test("p058: the confirm names the customer the core's row names", async ({ page, request }) => {
+  await openDue(page, request);
+  await due(page, "GLS-2105").getByRole("button", { name: "Release" }).click();
+  const words = page.locator("[data-due-panel] [data-confirm-words]");
+  await expect(words).toContainText("for Summit Ridge Builders (");
+  await expect(words).toContainText(nb("lien job GLS-2105"));
+});
+
+test("p058: a lien recorded after the job's last day to preserve says so in neutral words, on record and on the job's panel", async ({ page, request }) => {
+  await openLiens(page, request);
+  // GLS-2105 counts 45 days from 75 days ago, so its last day to preserve was 30 days ago.
+  const lastDay = dayFrom(-30);
+  const recorded = dayFrom(-2);
+  await liensTab(page, "jobs");
+  await page.locator("[data-row='job'][data-job-no='GLS-2105']:visible").getByRole("button", { name: "Open" }).click();
+  const doors = page.locator("[data-doors]");
+  await doors.getByLabel("Lien preserved on").fill(recorded);
+  await doors.getByRole("button", { name: "Record preserved lien" }).click();
+  const sentence = `The recorded date, ${shown(recorded)}, is after the last day to preserve, ${shown(lastDay)}.`;
+  await expect(page.locator("[data-notice]")).toContainText(sentence);
+  await expect(doors.locator("[data-lien-state]")).toContainText(sentence);
+  // Neutral: it states the two dates and does not rule on the lien.
+  await expect(doors.locator("[data-lien-state]")).not.toContainText(/invalid|too late|expired|void/i);
+});
+
+test("p058: a lien recorded on or before the last day to preserve carries no such sentence", async ({ page, request }) => {
+  await openLiens(page, request);
+  await liensTab(page, "jobs");
+  await page.locator("[data-row='job'][data-job-no='GLS-2105']:visible").getByRole("button", { name: "Open" }).click();
+  const doors = page.locator("[data-doors]");
+  await doors.getByLabel("Lien preserved on").fill(dayFrom(-40));
+  await doors.getByRole("button", { name: "Record preserved lien" }).click();
+  await expect(page.locator("[data-notice]")).toContainText(nb("Recorded: a lien was preserved on lien job GLS-2105."));
+  await expect(doors.locator("[data-lien-state]")).toContainText("A lien was preserved on");
+  await expect(doors.locator("[data-lien-state]")).not.toContainText("is after the last day to preserve");
+  await expect(page.locator("[data-notice]")).not.toContainText("is after the last day to preserve");
+});

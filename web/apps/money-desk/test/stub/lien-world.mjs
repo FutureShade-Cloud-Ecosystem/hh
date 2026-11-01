@@ -285,6 +285,8 @@ export function createLienWorld() {
   };
 
   // ---- the preservation rule (core/internal/lien/release.go) ---------------------------------------------
+  /** The display names the core reads from customers.name, in the same query as the row. */
+  const CUSTOMER_NAMES = { [IDS.customerA]: "Summit Ridge Builders", [IDS.customerB]: "Fieldstone Pools and Patios" };
   const addDays = (iso, n) => dayFrom(n, Date.parse(`${iso}T00:00:00Z`));
 
   /** One lien job's facts under the rule's preserve days: the latest date that can start the period wins. */
@@ -340,6 +342,7 @@ export function createLienWorld() {
           invoice_id: inv.invoice_id,
           invoice_no: inv.invoice_no,
           customer_id: inv.customer_id,
+          customer_name: CUSTOMER_NAMES[inv.customer_id],
           customer_job_id: cj,
           ...(g === null ? {} : { lien_job_id: g.id, lien_job_no: g.no, basis: g.basis, ...(g.basisDate === "" ? {} : { basis_date: g.basisDate, last_day_to_preserve: g.last, releasable_on: g.releasable }), preserve_days: RULE_DAYS }),
           branch_id: inv.branch_id,

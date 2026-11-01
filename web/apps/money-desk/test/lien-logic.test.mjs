@@ -238,6 +238,8 @@ import {
   datesForm,
   dischargeForm,
   dueConfirmWords,
+  lateLienWords,
+  lastDayFor,
   dueBranchIds,
   lienActive,
   dueTotalOf,
@@ -323,6 +325,26 @@ test("only the Financial Controller releases a due holdback, and the screen asks
   assert.match(reverseConfirmWords("lien job GLS-1", [{ invoiceNo: "INV-1", amount: "$8,400.00" }]), /^Reverse the release on lien job GLS-1: INV-1 \(\$8,400\.00\)\./);
   // Without a figure from the core for the job, the confirm names no total rather than adding one up.
   assert.match(dueConfirmWords(g, null, ""), /^Release the holdback held on 2 invoices for lien job GLS-1: /);
+});
+
+test("the confirm names the customer from the row", () => {
+  const g = groupDue([dueRow({ lien_job_no: "GLS-1", customer_name: "Summit Ridge Builders" })])[0];
+  assert.equal(g.customerName, "Summit Ridge Builders");
+  assert.match(dueConfirmWords(g, "$8,400.00", ""), /^Release \$8,400\.00 held on 1 invoice for Summit Ridge Builders \(lien job GLS-1\): /);
+});
+
+test("a lien recorded after the last day to preserve says so in neutral words, naming both dates", () => {
+  const words = lateLienWords("2026-03-05", "2026-03-01");
+  assert.match(words, /recorded date/);
+  assert.match(words, /is after the last day to preserve/);
+  assert.match(words, /Mar/);
+  assert.doesNotMatch(words, /invalid|late|expired|void|too/i);
+  assert.equal(lateLienWords("2026-03-01", "2026-03-01"), "");
+  assert.equal(lateLienWords("2026-02-20", "2026-03-01"), "");
+  assert.equal(lateLienWords("2026-03-05", ""), "");
+  const g = groupDue([dueRow({ lien_job_no: "GLS-1", last_day_to_preserve: "2026-03-01" })]);
+  assert.equal(lastDayFor(g, "GLS-1"), "2026-03-01");
+  assert.equal(lastDayFor(g, "GLS-9"), "");
 });
 
 test("the core's total is named only where it is the job's own: the sole due job at its branch", () => {

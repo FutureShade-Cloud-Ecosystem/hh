@@ -430,6 +430,10 @@ test("due to release answers the contract per invoice: the judgement the core gi
   assert.deepEqual(a.map((r) => r.invoice_no), ["INV-4101", "INV-4102"]);
   assert.ok(a.every((r) => r.due === true && r.lien_job_no === "GLS-2105" && r.blocked_kind === undefined));
   const b = byJob(res.json.items, IDS.cjB);
+  // The customer's name rides every row, read with the row; the core's row declares it.
+  assert.ok(a.every((r) => r.customer_name === "Summit Ridge Builders") && b.every((r) => r.customer_name === "Fieldstone Pools and Patios"));
+  assert.ok(res.json.items.every((r) => typeof r.customer_name === "string" && r.customer_name !== ""));
+  assert.ok(coreSource.includes('CustomerName      string `json:"customer_name"`'), "the core's due row does not carry customer_name");
   assert.equal(b[0].due, false);
   assert.equal(b[0].blocked_kind, "NOT_DUE");
   assert.equal(b[0].releasable_on, dayFrom(34));
