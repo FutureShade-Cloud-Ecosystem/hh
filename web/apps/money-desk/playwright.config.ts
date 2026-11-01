@@ -12,6 +12,11 @@
 import { defineConfig } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 
+// The house zone for every process of this run (the workers that compute the helpers' months and days, the stub
+// worlds that cut theirs from the process clock, and the browser): the sign off gate and the tax world read
+// Toronto's day, so a runner on UTC must not name another month on a month's last evening (month end class).
+process.env.TZ = "America/Toronto";
+
 const appDir = fileURLToPath(new URL(".", import.meta.url));
 
 function portSlot(text: string): number {
