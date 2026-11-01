@@ -8,6 +8,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // service.go, the lien domain orchestration: jobs, the idempotent holdback sync, the dual-gated release (with
@@ -193,9 +194,25 @@ func (s *Service) releaseHoldback(ctx context.Context, jobID string, appr Releas
 		return ReleaseResult{}, unprocessable("lien: PAYABLE holdback release is manual, recorded, not posted (register a calendar deadline)")
 	}
 
+	// A lien job linked to a customer job holds invoice level retention that RT-3's Controller release
+	// moves with the invoice's column and the dated ledger. This job level route posts DR 2350 / CR 1150 and
+	// writes a row the dated readers cannot see, so on such a job it would release the same holdback a
+	// second time. It is refused in words naming RT-3's release.
+	if job.CustomerJobID != "" {
+		return ReleaseResult{}, unprocessable("lien: job %s is linked to a customer job, so its holdback is released by the Controller's holdback release (POST /api/v1/ar/holdback/releases), once its preservation period has run out, and not by this job level release", job.JobNo)
+	}
+
 	entries, err := s.store.HoldbackEntriesForJob(ctx, jobID)
 	if err != nil {
 		return ReleaseResult{}, err
+	}
+	// The ledger decides, not the link: a manager can unlink a lien job, and a job whose ledger holds
+	// invoice level retention is released by RT-3 (which moves the invoice's column and the dated ledger
+	// with it), so this job level route would release the same holdback a second time.
+	for _, e := range entries {
+		if e.InvoiceID != "" {
+			return ReleaseResult{}, unprocessable("lien: job %s holds invoice level retention in its ledger, so its holdback is released by the Controller's holdback release (POST /api/v1/ar/holdback/releases) and not by this job level release", job.JobNo)
+		}
 	}
 	outstanding := outstandingCents(entries)
 	if outstanding <= 0 {
@@ -355,7 +372,32 @@ func (s *Service) jobFacts(ctx context.Context, branchID string) (map[string]job
 	}
 	out := make(map[string]jobFacts, len(jobs))
 	for _, j := range jobs {
-		out[j.ID] = jobFacts{JobNo: j.JobNo, BranchID: j.BranchID, Direction: j.Direction}
+		f := jobFacts{JobNo: j.JobNo, BranchID: j.BranchID, Direction: j.Direction, Linked: j.CustomerJobID != ""}
+		if f.Linked {
+			f.Hold = s.linkedHoldOf(ctx, j)
+		}
+		out[j.ID] = f
 	}
 	return out, nil
+}
+
+// linkedHoldOf reads a linked job's standing under RT-3's preservation rule: THE RULE (JudgePreservations)
+// over every lien job that bears on the job's customer job (all linked, and this one), at the preserve days
+// of the rule that governs the customer job. A rule that cannot be read leaves the job "no date" (the
+// worklist then says it cannot be judged), never a guess.
+func (s *Service) linkedHoldOf(ctx context.Context, j Job) linkedHold {
+	set, err := s.preservationSet(ctx, j.CustomerJobID, nil, []string{j.ID})
+	if err != nil || len(set) == 0 {
+		return linkedHold{State: holdNoDate}
+	}
+	jd := JudgePreservations(set, houseday.DefaultZone().Today(s.clock))
+	switch jd.Kind {
+	case KindLienPreserved:
+		return linkedHold{State: holdLien}
+	case KindNoDate:
+		return linkedHold{State: holdNoDate}
+	case KindNotDue:
+		return linkedHold{State: holdWaiting, ReleasableOn: jd.Governing.ReleasableOn}
+	}
+	return linkedHold{State: holdReleaseD, ReleasableOn: jd.Governing.ReleasableOn}
 }

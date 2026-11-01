@@ -549,6 +549,60 @@ export type BillingWriteOffReversed = {
   invoice_balance_after_cents: number;
   replayed: boolean;
 };
+export type BillingHoldbackDueRow = {
+  invoice_id: string;
+  invoice_no: string;
+  customer_id: string;
+  customer_job_id: string;
+  lien_job_id?: string;
+  lien_job_no?: string;
+  branch_id: string;
+  holdback_cents: number;
+  basis?: "CSP_PUBLICATION" | "SUBSTANTIAL_PERFORMANCE" | "COMPLETION" | "NONE";
+  basis_date?: string;
+  preserve_days?: number;
+  last_day_to_preserve?: string;
+  releasable_on?: string;
+  due: boolean;
+  blocked_kind?: "NOT_DUE" | "LIEN_PRESERVED" | "NO_DATE" | "NO_LIEN_JOB";
+  blocked_reason?: string;
+};
+export type BillingHoldbackBranchDue = {
+  branch_id: string;
+  due_cents: number;
+};
+export type BillingHoldbackDueToRelease = {
+  items: BillingHoldbackDueRow[];
+  branches: BillingHoldbackBranchDue[];
+};
+export type BillingHoldbackReleaseInput = {
+  customer_job_id: string;
+  idempotency_key: string;
+};
+export type BillingHoldbackReleasedInvoice = {
+  invoice_id: string;
+  invoice_no: string;
+  branch_id: string;
+  release_id: string;
+  amount_cents: number;
+};
+export type BillingHoldbackReversalInput = {
+  reason: string;
+};
+export type BillingHoldbackReversal = {
+  release_id: string;
+  invoice_id: string;
+  invoice_no: string;
+  restored_cents: number;
+  reversed_on: string;
+};
+export type BillingHoldbackRelease = {
+  customer_job_id: string;
+  released_on: string;
+  total_cents: number;
+  items: BillingHoldbackReleasedInvoice[];
+  replayed: boolean;
+};
 export type BillingCreditApplication = {
   application_id: string;
   credit_kind: "MEMO" | "ACCOUNT";
@@ -9377,6 +9431,10 @@ export type LienJob = {
   holdback_pct_bps: number;
   substantial_perf_date?: string;
   last_supply_date?: string;
+  csp_published_on?: string;
+  lien_preserved_on?: string;
+  lien_preserved_note?: string;
+  lien_discharged_on?: string;
   status: "OPEN" | "SUBSTANTIALLY_PERFORMED" | "RELEASED" | "CLOSED";
   holdback_direction: "RECEIVABLE" | "PAYABLE";
   hst_on_holdback: boolean;
@@ -9418,8 +9476,22 @@ export type LienJobInput = {
   holdback_pct_bps: number;
   substantial_perf_date: string;
   last_supply_date: string;
+  csp_published_on?: string;
   holdback_direction: "RECEIVABLE" | "PAYABLE";
   hst_on_holdback: boolean;
+};
+export type LienPreservedLienInput = {
+  preserved_on: string;
+  note?: string;
+};
+export type LienDischargeInput = {
+  discharged_on: string;
+  note?: string;
+};
+export type LienPreservationDatesInput = {
+  csp_published_on?: string | null;
+  substantial_perf_date?: string | null;
+  last_supply_date?: string | null;
 };
 export type LienJobPage = {
   items: LienJob[];
