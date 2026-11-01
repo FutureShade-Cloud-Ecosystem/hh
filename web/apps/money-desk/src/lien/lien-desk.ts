@@ -42,7 +42,7 @@ import {
 } from "./lien-logic.js";
 import { formatMoney } from "./lien-money.js";
 import { newKey } from "../ar/held-keys.js";
-import { renderLiens, type DueModel, type LienTab, type LiensModel, type ReleasedItem, type ReleaseModel } from "./lien-views.js";
+import { renderLiens, type DueModel, type ErrorAt, type LienTab, type LiensModel, type ReleasedPress, type ReleaseModel } from "./lien-views.js";
 
 export interface LienHost {
   readonly repaint: () => void;
@@ -88,12 +88,13 @@ export class LienDesk {
   // press whose outcome is not known (kept, so a second press replays rather than releases twice).
   #dueOpen = "";
   #reversing = "";
-  #released: ReleasedItem[] = [];
+  #released: ReleasedPress[] = [];
   readonly #dueKeys = new Map<string, string>();
   // The roster is read once, the first time a release opens, and kept.
   #people: IdentityStaffMember[] | null = null;
   #busy = false;
   #error = "";
+  #errorAt: ErrorAt = "";
   #notice = "";
   // A selection or a panel asks the screen to bring itself into view once it has rendered: on a phone the panel sits
   // under the whole list and a press would otherwise change nothing the person can see.
@@ -311,7 +312,15 @@ export class LienDesk {
 
   #clearMessages(): void {
     this.#error = "";
+    this.#errorAt = "";
     this.#notice = "";
+  }
+
+  /** An error beside the panel it is about, brought into view; at the head of the page when the panel has gone. */
+  #failAt(at: ErrorAt, words: string): void {
+    this.#error = words;
+    this.#errorAt = at;
+    this.#reveal = "[data-error]";
   }
 
   #openTab(tab: LienTab): void {
@@ -412,7 +421,7 @@ export class LienDesk {
     this.#clearMessages();
     const person = cosigners(release.people, this.#host.userId()).find((p) => p.user_id === chosen);
     if (person === undefined) {
-      this.#error = "Pick the co-signer who reviewed this release.";
+      this.#failAt("release", "Pick the co-signer who reviewed this release.");
       this.#host.repaint();
       return;
     }
@@ -424,7 +433,7 @@ export class LienDesk {
     const answer = await this.#api.release(release.jobId, person.user_id, person.role_code);
     this.#busy = false;
     if (!answer.ok) {
-      this.#error = refusalWords("release", answer.error, answer.status ?? 0);
+      this.#failAt("release", refusalWords("release", answer.error, answer.status ?? 0));
       this.#jobLevelRefused = jobLevelRefusedWords(answer.error);
       // A holdback released meanwhile, or a job that is gone, is read again so the list says what is true.
       this.#host.repaint();
@@ -432,6 +441,7 @@ export class LienDesk {
       return;
     }
     this.#notice = releasedWords(formatMoney(answer.value.amount_cents), row.job_no, person.display_name);
+    this.#reveal = "[data-notice]";
     this.#release = null;
     await this.#refresh();
   }
@@ -449,48 +459,77 @@ export class LienDesk {
     this.#busy = false;
     if (!answer.ok) {
       if ((answer.status ?? 0) >= 400 && (answer.status ?? 0) < 500) this.#dueKeys.delete(group.customerJobId);
-      this.#error = refusalWords("due-release", answer.error, answer.status ?? 0);
+      this.#failAt("due", refusalWords("due-release", answer.error, answer.status ?? 0));
       this.#host.repaint();
       await this.#refresh();
-      // A job that is no longer due has nothing left to ask about.
+      // A job that is no longer due has nothing left to ask about; its refusal then reads at the head of the page.
       if (!this.#due.groups.some((g) => g.customerJobId === group.customerJobId && g.due)) this.#dueOpen = "";
       this.#host.repaint();
       return;
     }
     this.#dueKeys.delete(group.customerJobId);
     const done = answer.value;
-    this.#notice = releasedDueWords(group.label, formatMoney(done.total_cents), done.items?.length ?? 0, done.replayed);
-    this.#released = [...(done.items ?? []).map((i) => ({ releaseId: i.release_id, invoiceNo: i.invoice_no, amountCents: i.amount_cents, label: group.label, reversed: false })), ...this.#released.filter((r) => !(done.items ?? []).some((i) => i.release_id === r.releaseId))];
+    const made = done.items ?? [];
+    this.#notice = releasedDueWords(group.label, formatMoney(done.total_cents), made.length, done.replayed);
+    this.#reveal = "[data-notice]";
+    const press: ReleasedPress = {
+      id: made[0]?.release_id ?? group.customerJobId,
+      label: group.label,
+      lienJobNo: group.lienJobNo,
+      totalCents: done.total_cents,
+      items: made.map((i) => ({ releaseId: i.release_id, invoiceNo: i.invoice_no, amountCents: i.amount_cents, reversed: false })),
+    };
+    // A replayed press is the same press: the same releases are not listed twice.
+    this.#released = [press, ...this.#released.filter((r) => !r.items.some((i) => made.some((m) => m.release_id === i.releaseId)))];
     this.#dueOpen = "";
     await this.#refresh();
   }
 
+  /**
+   * Reverses the whole press: every invoice still released, one after another, each with the one reason. A release
+   * the core says was reversed already counts as done. If one is refused for another reason the rest are left
+   * alone, the press reads as partly reversed, and pressing again finishes it (each call is idempotent).
+   */
   async #confirmReverse(): Promise<void> {
-    const item = this.#released.find((r) => r.releaseId === this.#reversing);
-    if (item === undefined || this.#busy || !canReleaseDue(this.#host.roleCode())) return;
+    const press = this.#released.find((r) => r.id === this.#reversing);
+    if (press === undefined || this.#busy || !canReleaseDue(this.#host.roleCode())) return;
     const form = reverseForm(this.#host.field("reverse_reason"));
     this.#clearMessages();
     if (!form.ok) {
-      this.#error = form.words;
+      this.#failAt("reverse", form.words);
       this.#host.repaint();
       return;
     }
     this.#busy = true;
     this.#host.repaint();
-    const answer = await this.#api.reverseRelease(item.releaseId, form.reason);
+    const put: Array<{ invoiceNo: string; amount: string }> = [];
+    let refused = "";
+    for (const item of press.items.filter((i) => !i.reversed)) {
+      const answer = await this.#api.reverseRelease(item.releaseId, form.reason);
+      const already = !answer.ok && answer.status === 409 && answer.error.includes("already been reversed");
+      if (answer.ok || already) {
+        this.#mark(press.id, item.releaseId);
+        put.push({ invoiceNo: item.invoiceNo, amount: formatMoney(answer.ok ? answer.value.restored_cents : item.amountCents) });
+        continue;
+      }
+      refused = refusalWords("due-release", answer.error, answer.status ?? 0);
+      break;
+    }
     this.#busy = false;
-    const gone = answer.ok || (answer.status === 409 && answer.error.includes("already been reversed"));
-    if (gone) this.#released = this.#released.map((r) => (r.releaseId === item.releaseId ? { ...r, reversed: true } : r));
-    if (!answer.ok) {
-      this.#error = refusalWords("due-release", answer.error, answer.status ?? 0);
-      if (gone) this.#reversing = "";
+    if (refused !== "") {
+      this.#failAt("reverse", refused);
       this.#host.repaint();
-      if (gone) await this.#refresh();
+      await this.#refresh();
       return;
     }
-    this.#notice = reversedWords(item.label, [{ invoiceNo: item.invoiceNo, amount: formatMoney(answer.value.restored_cents) }]);
+    this.#notice = reversedWords(press.label, put);
+    this.#reveal = "[data-notice]";
     this.#reversing = "";
     await this.#refresh();
+  }
+
+  #mark(pressId: string, releaseId: string): void {
+    this.#released = this.#released.map((r) => (r.id === pressId ? { ...r, items: r.items.map((i) => (i.releaseId === releaseId ? { ...i, reversed: true } : i)) } : r));
   }
 
   /** A lien door: each is recorded server side and answers the job as it now stands. */
@@ -635,7 +674,7 @@ export class LienDesk {
       canReleaseDue: canReleaseDue(this.#host.roleCode()),
       dueOpen: this.#due.groups.find((g) => g.customerJobId === this.#dueOpen) ?? null,
       released: this.#released,
-      reversing: this.#released.find((r) => r.releaseId === this.#reversing) ?? null,
+      reversing: this.#released.find((r) => r.id === this.#reversing) ?? null,
       branches: this.#branches,
       selectedJob: this.#selectedJob,
       newJob: this.#newJob,
@@ -649,6 +688,7 @@ export class LienDesk {
       jobLevelRefused: this.#jobLevelRefused,
       busy: this.#busy,
       error: this.#error,
+      errorAt: this.#errorAt,
       notice: this.#notice,
     };
     return html`${renderLiens(model)}`;
