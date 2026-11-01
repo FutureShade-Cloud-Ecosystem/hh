@@ -98,8 +98,9 @@ function json(response, status, body) {
 
 /**
  * Serve `dist` on a free loopback port. Resolves { url, close }.
- * With `holdApi`, every /api/ call other than the demo mint is held: no answer
- * is ever sent, like a core that has not replied yet. A real desk app that is
+ * With `holdApi`, every /api/ call other than the demo mint and the public
+ * tenant config is held: no answer is ever sent, like a core that has not
+ * replied yet. A real desk app that is
  * hosted with no core behind it ends its own walk on an answer that fails
  * (the Counter Till signs out and goes to the front door when its branch
  * cannot resolve), so the legs that load the real bundles hold the request

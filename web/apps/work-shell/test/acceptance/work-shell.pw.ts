@@ -10,10 +10,21 @@ import type { Page } from "@playwright/test";
 
 const KEYS = ["hh-demo.front-door.session.v1", "hh-auth.session.v2"];
 
-// The legs that read a fixture page's own text: an assembled dist (WS_DIST) ships the real bundles, which have no
-// fixture text, so those legs run on the composed dist alone (real-bundles.pw.ts opens every app for two roles there).
+// An assembled dist (WS_DIST) ships the real bundles, which carry no fixture text. A leg that needs a fixture page's
+// own control runs on the composed dist alone (real-bundles.pw.ts opens every app for two roles there); a leg that
+// only checks which app the host framed proves it by the frame's address instead.
 const assembled = (process.env["WS_DIST"] ?? "") !== "";
-const FIXTURE_ONLY = "reads the composed fixture pages, which an assembled dist does not ship";
+const FIXTURE_ONLY = "drives a composed fixture page's own control, which an assembled dist does not ship";
+
+/** The host framed the app at `path` for `role`: the fixture says so on the composed dist, the frame's address on an assembled one. */
+async function expectHosted(page: Page, path: string, role: string): Promise<void> {
+  if (!assembled) {
+    await expect(page.frameLocator('[data-testid="app-frame"]').getByTestId("fixture")).toHaveText(`fixture:${path}:${role}`);
+    return;
+  }
+  const frameEl = page.locator('[data-testid="app-frame"]');
+  await expect.poll(async () => frameEl.evaluate((f) => (f as HTMLIFrameElement).contentWindow?.location.pathname ?? "")).toBe(path);
+}
 
 async function open(page: Page, shellUrl: string): Promise<void> {
   await page.goto(`${shellUrl}/`);
@@ -46,14 +57,12 @@ async function switchRole(page: Page): Promise<void> {
 }
 
 test("Sales signs in through the front door's picker and lands on the Counter Till", async ({ page, shellUrl }) => {
-  test.skip(assembled, FIXTURE_ONLY);
   await signInAs(page, shellUrl, "Sales");
   const shell = page.getByTestId("ws-shell");
   await expect(shell).toHaveAttribute("data-role", "inside_sales");
   await expect(shell).toHaveAttribute("data-current-app", "counter-till");
   await expect(page.locator("hh-shell-header button.selector")).toContainText("Counter Till");
-  const frame = page.frameLocator('[data-testid="app-frame"]');
-  await expect(frame.getByTestId("fixture")).toHaveText("fixture:/till/:inside_sales");
+  await expectHosted(page, "/till/", "inside_sales");
 });
 
 test("the switcher is built from the profile by the signed in role", async ({ page, shellUrl }) => {
@@ -66,11 +75,10 @@ test("the switcher is built from the profile by the signed in role", async ({ pa
 });
 
 test("a sales manager lands on Manager Home, not the Counter Till", async ({ page, shellUrl }) => {
-  test.skip(assembled, FIXTURE_ONLY);
   await signInAs(page, shellUrl, "Sales manager");
   const shell = page.getByTestId("ws-shell");
   await expect(shell).toHaveAttribute("data-current-app", "manager-home");
-  await expect(page.frameLocator('[data-testid="app-frame"]').getByTestId("fixture")).toHaveText("fixture:/home/:sales_manager");
+  await expectHosted(page, "/home/", "sales_manager");
   expect(await switcherApps(page)).toContain("counter-till");
 });
 
@@ -145,10 +153,9 @@ test("an app that asks for the origin root (its own Switch role) returns the hos
 });
 
 test("a role holding only House Messages lands on it, with Switch role in the header", async ({ page, shellUrl }) => {
-  test.skip(assembled, FIXTURE_ONLY);
   await signInAs(page, shellUrl, "Driver");
   await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-current-app", "house-messages");
-  await expect(page.frameLocator('[data-testid="app-frame"]').getByTestId("fixture")).toHaveText("fixture:/messages/:driver");
+  await expectHosted(page, "/messages/", "driver");
   await switchRole(page);
 });
 
