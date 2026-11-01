@@ -551,7 +551,7 @@ function renderDoneRow(s: QueueEntry["shortages"][number], model: ShortagesModel
         <p class="status status-done">${shortageCard(s, model.nowMs).status}</p>
         <p class="line">${s.description}</p>
         <p class="detail">${shortageLine(s)}</p>
-        <p class="resolved-word">Resolved: ${s.resolution}</p>
+        <p class="resolved-word">${s.resolution}</p>
       </div>
     </div>
   `;

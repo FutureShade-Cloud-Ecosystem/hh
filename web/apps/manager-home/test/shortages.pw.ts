@@ -118,7 +118,7 @@ test("each open shortage is a review card: what, how much, who by role, when, an
   // The reporter id the core sends is a user: it never reaches the card.
   await expect(first).not.toContainText("de110000");
   // A resolved shortage is history, not a card waiting on the manager.
-  const done = page.locator("[data-shortage]:not([data-card='shortage-review'])").filter({ hasText: "Resolved:" });
+  const done = page.locator("[data-shortage]:not([data-card='shortage-review'])").filter({ hasText: "Resolved" });
   await expect(done).toHaveCount(1);
   await expect(done.locator(".status")).toHaveText("Resolved");
 });
@@ -141,7 +141,7 @@ test("a resolved shortage stays on its card with its words until the sheet is ne
   await expect(page.locator("[data-test='shortages-notice']")).toContainText("1 still open");
   await expect(card.locator("[data-shortage]")).toHaveCount(2);
   await expect(card.locator("[data-shortage]").first().locator(".resolved-word")).toContainText(
-    "Resolved: Backordered the shortfall; the order keeps the short line open. Customer ok with Thursday",
+    "Backordered the shortfall; the order keeps the short line open. Customer ok with Thursday",
   );
   await expect(card.locator("[data-card='shortage-review']")).toHaveCount(1);
   await expect(card.locator(".task-head .meta").last()).toHaveText("1 open");
