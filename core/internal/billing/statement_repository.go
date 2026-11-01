@@ -846,8 +846,8 @@ func (r *Repository) RecordPaylinkDelivery(ctx context.Context, row PaylinkDeliv
 // invoice it was applied to (which may sit on another job) and the clerk's reason, and a credit memo
 // row carries its reason in brackets. A job's line reads the fixed words of the act ("Credit applied",
 // "Credit memo applied", "Credit application reversed", "Credit memo restored") or the memo's number
-// and the invoice it reverses (the same job's) without the reason. Account level lines keep the ledger
-// words, as the plain statement does.
+// and the invoice it reverses (the same job's) without the reason. Account level lines read the plain
+// statement's words (statementDescription), never the raw ledger memo.
 //
 // The job's lines are safe by default (P061 fix round 2): every ledger row on a job reads the fixed words
 // of its transaction type ("Adjustment", "Credit memo <no>", "Write-off", "Returned payment", "Payment
@@ -908,7 +908,7 @@ const statementByJobTail = `
 			 WHERE ac.act_type = 'payment_reapply'
 			 GROUP BY ac.act_type, ac.src_ref, inv.job_id
 		), leftover AS (
-			SELECT ac.occurred_at, ac.created_at, ac.txn_type, ac.memo,
+			SELECT ac.occurred_at, ac.created_at, ac.txn_type, ac.memo, ac.act_type,
 			       ac.amount_cents - COALESCE(sh.net, 0) AS amount_cents
 			  FROM acts ac
 			  LEFT JOIN (SELECT s.act_type, s.src_ref, SUM(s.share) AS net FROM shares s GROUP BY s.act_type, s.src_ref) sh
@@ -942,17 +942,17 @@ const statementByJobTail = `
 			            WHEN a.txn_type = 'NSF' THEN 'Returned payment'
 			            WHEN a.txn_type = 'PAYMENT' THEN 'Payment received, thank you'
 			            ELSE 'Adjustment' END AS memo,
-			       a.job_id
+			       a.job_id, COALESCE(a.src_type, '') AS src_type, a.reverses_no
 			  FROM activity a
 			 WHERE NOT EXISTS (SELECT 1 FROM paytxn p WHERE p.src_id = a.src_id)
 			UNION ALL
-			SELECT ac.occurred_at, ac.created_at, ac.txn_type, s.share, '', ac.memo, s.job_id
+			SELECT ac.occurred_at, ac.created_at, ac.txn_type, s.share, '', ac.memo, s.job_id, ac.act_type, ''
 			  FROM acts ac JOIN shares s ON s.act_type = ac.act_type AND s.src_ref = ac.src_ref
 			UNION ALL
-			SELECT l.occurred_at, l.created_at, l.txn_type, l.amount_cents, '', l.memo, NULL::uuid
+			SELECT l.occurred_at, l.created_at, l.txn_type, l.amount_cents, '', l.memo, NULL::uuid, l.act_type, ''
 			  FROM leftover l WHERE l.amount_cents <> 0
 		)
-		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, COALESCE(job_id::text, '')
+		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, COALESCE(job_id::text, ''), src_type, reverses_no
 		  FROM parts
 		 ORDER BY COALESCE(job_id::text, ''), occurred_at, created_at`
 
@@ -986,14 +986,21 @@ func (r *Repository) StatementLinesByJob(ctx context.Context, customerID string,
 			invNo   string
 			memo    string
 			jobID   string
+			srcType string
+			revNo   string
 		)
-		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &jobID); err != nil {
+		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &jobID, &srcType, &revNo); err != nil {
 			return nil, fmt.Errorf("billing: scan statement line by job: %w", err)
 		}
 		if len(out) == 0 || jobID != cur {
 			cur, running = jobID, 0
 		}
-		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: jobLineDescription(txnType, memo), JobID: jobID}
+		desc := jobLineDescription(txnType, memo)
+		if jobID == "" {
+			// Account level lines read the plain statement's words, never the raw ledger memo.
+			desc = statementDescription(txnType, srcType, memo, invNo, revNo)
+		}
+		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: desc, JobID: jobID}
 		if cents >= 0 {
 			ln.ChargeCents = cents
 		} else {
