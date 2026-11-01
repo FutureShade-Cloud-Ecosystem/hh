@@ -10,6 +10,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"strings"
@@ -65,6 +66,42 @@ type JobStatementParties struct {
 type statementByJobStore interface {
 	StatementLinesByJob(ctx context.Context, customerID string, asOf time.Time, reach BranchReach) ([]StatementLine, error)
 	JobStatementParties(ctx context.Context, customerID string) (JobStatementParties, error)
+	// JobDocumentBranches is every branch the job's documents sit at, whatever the caller's reach.
+	JobDocumentBranches(ctx context.Context, customerID, jobID string) ([]string, error)
+}
+
+// ErrJobBranchesOutOfReach refuses a job statement to a caller who cannot reach every branch the job's
+// documents sit at: a figure cut to the caller's branches would read as the job's whole account.
+var ErrJobBranchesOutOfReach = errors.New("billing: this job has documents at a branch the caller cannot see")
+
+// JobBranchesOutOfReachWords is what the caller is told, and it names why.
+const JobBranchesOutOfReachWords = "this job has documents at a branch you cannot see; ask someone who can reach every branch on it"
+
+// JobDocumentBranches reads the distinct branches of the job's invoices and credit memos and of the
+// ledger rows they posted.
+func (r *Repository) JobDocumentBranches(ctx context.Context, customerID, jobID string) ([]string, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT i.branch_id::text FROM invoices i WHERE i.customer_id = $1::uuid AND i.job_id = $2::uuid AND i.branch_id IS NOT NULL
+		 UNION
+		 SELECT t.branch_id::text FROM customer_transactions t
+		   JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
+		  WHERE t.customer_id = $1::uuid AND i.job_id = $2::uuid AND t.branch_id IS NOT NULL`, customerID, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("billing: job document branches: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			return nil, fmt.Errorf("billing: scan job document branch: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 // JobStatementParties reads the customer's name, its jobs and the contacts a statement goes to.
@@ -149,6 +186,17 @@ func (s *StatementService) StatementByJob(ctx context.Context, customerID string
 		branch, known := parties.JobBranchID[jobID]
 		if !known || (!reach.Global && !reach.Allows(branch)) {
 			return JobStatement{}, ErrNotFound
+		}
+		if !reach.Global {
+			docBranches, derr := st.JobDocumentBranches(ctx, customerID, jobID)
+			if derr != nil {
+				return JobStatement{}, derr
+			}
+			for _, b := range docBranches {
+				if !reach.Allows(b) {
+					return JobStatement{}, ErrJobBranchesOutOfReach
+				}
+			}
 		}
 	}
 	lines, err := st.StatementLinesByJob(ctx, customerID, asOf, reach)
