@@ -318,7 +318,8 @@ export class DispatchBoardApp extends HHElement {
   // console config, renders the header without the demo attribute. Two whole templates rather than a
   // bound boolean, because the template position gate allows no boolean binding but ?disabled.
   // The signed-out header's word follows the door's state (UX-131): "Offline" for a lost signal, "Server unavailable"
-  // for a server not answering, "Server busy" for a throttle, "Sign in" otherwise. A blank word would fall back to the demo picker's "Pick a role".
+  // for a server not answering, "Server busy" for a throttle, "Sign in" otherwise. A blank word would fall back to
+  // the demo picker's "Pick a role".
   #header(signedIn: boolean, offlineDoor: "offline" | "unavailable" | "rate_limited" | null = null): TemplateResult {
     const tools = this.renderThemeControl();
     const demo = servedConsoleConfig() === null;
