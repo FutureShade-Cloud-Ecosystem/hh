@@ -48,7 +48,7 @@ func TestRT3Fix2_TheCollectionsSweepDoesNotDunAReleasedHoldbackOnReleaseDay(t *t
 		day := rt3Today().AddDate(0, 0, -daysAgo)
 		mustExec(t, context.Background(), l.pool, `
 			UPDATE holdback_ledger SET released_at = $2::date, created_at = $3
-			 WHERE invoice_id = $1::uuid AND entry_type = 'RELEASE'`, doc.InvoiceID, day.Format("2006-01-02"), day.Add(12*time.Hour))
+			 WHERE invoice_id = $1::uuid AND entry_type = 'RELEASE'`, doc.InvoiceID, day.Format("2006-01-02"), rt3InstantOn(day))
 	}
 	mustExecRelease(45)
 	r, listed := l.sweepListing(doc.InvoiceID)
