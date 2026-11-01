@@ -257,9 +257,9 @@ var allowlist = []allowlistEntry{
 	{
 		module: "billing",
 		file:   "core/internal/billing/statement_repository.go",
-		tables: []string{"customers", "locations"},
+		tables: []string{"customer_contacts", "customer_jobs", "customers", "locations", "payment_allocations"},
 		writes: []string{"print_queue"},
-		reason: "statements carry the customer and branch names they are addressed by, and print through the shared print_queue substrate (0088)",
+		reason: "statements carry the customer and branch names they are addressed by, and print through the shared print_queue substrate (0088); the by job statement (JA-4) splits a receipt by its allocations, names each job, and addresses a job statement to the job's contact or the customer's primary contact; read only",
 	},
 	{
 		module: "billing",

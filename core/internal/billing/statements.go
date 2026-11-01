@@ -205,6 +205,8 @@ type StatementLine struct {
 	ChargeCents int64
 	CreditCents int64
 	BalanceRun  int64
+	// JobID is the job the line belongs to (JA-4), "" for account level. Only the by job read sets it.
+	JobID string
 }
 
 // StatementHeader is the branch's letterhead.
