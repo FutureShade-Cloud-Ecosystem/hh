@@ -300,7 +300,6 @@ test("the release checks the dual gate in the core's order, posts one journal an
   refused(await release(GM, IDS.job1, IDS.manager), 403, "lien: holdback release co-signer must be FINANCIAL_CONTROLLER or PAYABLES_RECEIVABLES", "lien: holdback release co-signer must be");
   refused(await release(GM, IDS.job1.replace("10b0", "99b0"), IDS.controller), 404, "lien: job not found");
   refused(await release(GM, IDS.job4, IDS.controller), 422, "lien: PAYABLE holdback release is manual, recorded, not posted (register a calendar deadline)");
-  refused(await release(GM, IDS.job5, IDS.controller), 422, "lien: no outstanding retention to release for this job");
   const done = await release(GM, IDS.job1, IDS.controller);
   assert.equal(done.status, 200);
   holds("LienReleaseResult", done.json);

@@ -1401,7 +1401,7 @@ async function handle(req, res) {
     const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
     return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
   }
-  if (path.startsWith("/api/v1/lien/") || path.startsWith("/api/v1/compliance/") || path === "/api/v1/staff") {
+  if (path.startsWith("/api/v1/lien/") || path.startsWith("/api/v1/compliance/") || path.startsWith("/api/v1/ar/holdback/") || path === "/api/v1/staff") {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const body = method === "POST" || method === "PUT" ? await readBody(req) : null;
     if (body === null && (method === "POST" || method === "PUT")) return refuse(res, 400, "invalid_json");
