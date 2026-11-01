@@ -124,7 +124,7 @@ func TestIntegration_Exposure_TheCustomerSumsEveryJobAndTheJobReadsItsOwn(t *tes
 	plantInvoice(t, pool, w.cust, w.jobB, "EXP-IB-"+tag, 70000)
 	plantInvoice(t, pool, w.cust, "", "EXP-IN-"+tag, 5000) // the account's own document, no job
 	plantLedger(t, pool, w.cust, 175000, 175000)
-	w.orderOnA = plantOrder(t, pool, w.cust, w.jobA, "EXP-OA-"+tag, "DRAFT", 20000)
+	w.orderOnA = plantOrder(t, pool, w.cust, w.jobA, "EXP-OA-"+tag, "CONFIRMED", 20000)
 	// not open: cancelled, and one that already has an invoice (counted in AR, never twice)
 	plantOrder(t, pool, w.cust, w.jobA, "EXP-OC-"+tag, "CANCELLED", 999)
 	invoiced := plantOrder(t, pool, w.cust, w.jobB, "EXP-OI-"+tag, "CONFIRMED", 70000)
@@ -156,5 +156,105 @@ func TestIntegration_Exposure_TheCustomerSumsEveryJobAndTheJobReadsItsOwn(t *tes
 	// a job of another customer is not found, never an empty position
 	if _, _, _, err := rd.JobPosition(ctx, nil, w.cust, w.otherJob); err == nil {
 		t.Fatal("another customer's job read as a position, want not found")
+	}
+}
+
+// plantQuote plants a quote row for an order's quote_id (a converted quote's order carries it).
+func plantQuote(t *testing.T, pool *pgxpool.Pool, cust, no string) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO quotes (quote_no, customer_id, branch_id) VALUES ($1, $2::uuid, $3::uuid) RETURNING id::text`,
+		no, cust, trentonBranch).Scan(&id); err != nil {
+		t.Fatalf("plant the quote %s: %v", no, err)
+	}
+	t.Cleanup(func() {
+		// the order's quote_id is ON DELETE SET NULL, and the world cleanup removes the order
+		if _, err := pool.Exec(context.Background(), `DELETE FROM quotes WHERE id = $1::uuid`, id); err != nil {
+			t.Errorf("clean up quotes: %v", err)
+		}
+	})
+	return id
+}
+
+// JA-3 fix P1: a progress invoice takes its billed part into AR and leaves the order's unbilled
+// remainder in the open order term. A 1,000.00 order with one 300.00 progress invoice reads 1,000.00
+// in all, never 300.00.
+func TestIntegration_Exposure_AProgressInvoiceLeavesTheUnbilledRemainder(t *testing.T) {
+	pool := intPool(t)
+	w := plantExposureWorld(t, pool)
+	ctx := context.Background()
+	rd := NewExposureReader(pool, customer.NewRepository(pool))
+	tag := fmt.Sprint(time.Now().UnixNano() % 1_000_000_000)
+
+	order := plantOrder(t, pool, w.cust, w.jobB, "EXP-PO-"+tag, "PARTIALLY_FULFILLED", 100000)
+	plantInvoice(t, pool, w.cust, w.jobB, "EXP-PI-"+tag, 30000)
+	if _, err := pool.Exec(ctx, `UPDATE invoices SET order_id = $1::uuid WHERE invoice_no = $2`, order, "EXP-PI-"+tag); err != nil {
+		t.Fatalf("link the progress invoice: %v", err)
+	}
+	plantLedger(t, pool, w.cust, 30000, 30000)
+
+	got, err := rd.CustomerExposure(ctx, nil, w.cust)
+	if err != nil {
+		t.Fatalf("customer exposure: %v", err)
+	}
+	if got != 100000 {
+		t.Fatalf("customer exposure = %d, want 100000 (30000 billed in AR plus 70000 unbilled)", got)
+	}
+	_, jobExp, _, err := rd.JobPosition(ctx, nil, w.cust, w.jobB)
+	if err != nil {
+		t.Fatalf("job position: %v", err)
+	}
+	if jobExp != 100000 {
+		t.Fatalf("job exposure = %d, want 100000", jobExp)
+	}
+	// a void invoice does not bill anything, a credit memo is not a bill of the order, and a
+	// remainder never goes below zero (an invoice larger than the order)
+	plantInvoice(t, pool, w.cust, w.jobB, "EXP-PV-"+tag, 500)
+	if _, err := pool.Exec(ctx, `UPDATE invoices SET order_id = $1::uuid, status = 'VOID' WHERE invoice_no = $2`, order, "EXP-PV-"+tag); err != nil {
+		t.Fatalf("void invoice: %v", err)
+	}
+	if got, _ := rd.CustomerExposure(ctx, nil, w.cust); got != 100000 {
+		t.Fatalf("with a void invoice, customer exposure = %d, want 100000", got)
+	}
+	over := plantOrder(t, pool, w.cust, w.jobA, "EXP-PX-"+tag, "CONFIRMED", 1000)
+	plantInvoice(t, pool, w.cust, w.jobA, "EXP-PXI-"+tag, 4000)
+	if _, err := pool.Exec(ctx, `UPDATE invoices SET order_id = $1::uuid WHERE invoice_no = $2`, over, "EXP-PXI-"+tag); err != nil {
+		t.Fatalf("link the over invoice: %v", err)
+	}
+	if got, _ := rd.CustomerExposure(ctx, nil, w.cust); got != 100000 {
+		t.Fatalf("with an over billed order, customer exposure = %d, want 100000 (floored at zero)", got)
+	}
+}
+
+// JA-3 fix P2: an abandoned reorder or duplicate DRAFT does not count; a converted quote's DRAFT does.
+func TestIntegration_Exposure_OnlyAConvertedQuotesDraftCounts(t *testing.T) {
+	pool := intPool(t)
+	w := plantExposureWorld(t, pool)
+	ctx := context.Background()
+	rd := NewExposureReader(pool, customer.NewRepository(pool))
+	tag := fmt.Sprint(time.Now().UnixNano() % 1_000_000_000)
+
+	plantOrder(t, pool, w.cust, w.jobB, "EXP-DR-"+tag, "DRAFT", 900000)
+	got, err := rd.CustomerExposure(ctx, nil, w.cust)
+	if err != nil {
+		t.Fatalf("customer exposure: %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("an abandoned DRAFT counted: customer exposure = %d, want 0", got)
+	}
+	if _, jobExp, _, err := rd.JobPosition(ctx, nil, w.cust, w.jobB); err != nil || jobExp != 0 {
+		t.Fatalf("an abandoned DRAFT counted on the job: exposure %d err %v, want 0", jobExp, err)
+	}
+	converted := plantOrder(t, pool, w.cust, w.jobB, "EXP-DQ-"+tag, "DRAFT", 40000)
+	q := plantQuote(t, pool, w.cust, "EXP-Q-"+tag)
+	if _, err := pool.Exec(ctx, `UPDATE orders SET quote_id = $1::uuid WHERE id = $2::uuid`, q, converted); err != nil {
+		t.Fatalf("link the converted quote: %v", err)
+	}
+	if got, _ := rd.CustomerExposure(ctx, nil, w.cust); got != 40000 {
+		t.Fatalf("a converted quote's DRAFT: customer exposure = %d, want 40000", got)
+	}
+	if _, jobExp, _, _ := rd.JobPosition(ctx, nil, w.cust, w.jobB); jobExp != 40000 {
+		t.Fatalf("a converted quote's DRAFT: job exposure = %d, want 40000", jobExp)
 	}
 }
