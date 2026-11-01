@@ -856,13 +856,46 @@ func ja4Has(t *testing.T, descs []string, want string) {
 	t.Errorf("job A has no line reading %q (lines %q)", want, descs)
 }
 
-// TestIntegration_JA4Doors_PlantedReversesReadsFixed (P061 fix round 3, P2-1): a credit memo row whose
-// memo is not the writer's shape (clerk text after "reverses") reads "Credit memo <no>".
+// TestIntegration_JA4Doors_PlantedReversesReadsFixed (P061 fix round 3, P2-1; round 4, P3-1): a real credit
+// memo the door issues on job A's own invoice reads the writer's own shape; the same ledger row rewritten
+// off that shape (clerk text after the reversed invoice number) reads "Credit memo <no>".
 func TestIntegration_JA4Doors_PlantedReversesReadsFixed(t *testing.T) {
-	w := ja4Plant(t)
-	w.ja4PlantRow(t, "CREDIT_MEMO", -333, "CM-9, reverses "+ja4Reason)
-	d := w.ja4JobADescriptions(t, "planted reverses", time.Now().Add(time.Hour))
-	ja4NoneReads(t, d, "reverses")
+	w := ja4PlantFresh(t, "ja4rev")
+	w.ageInvoices(t, 90)
+	soon := time.Now().Add(time.Hour)
+	svc, _ := cmRoundService(t, w.pool)
+	svc = svc.WithJobFence(newCustomerJobFence(w.pool))
+	var userID string
+	if err := w.pool.QueryRow(context.Background(), `SELECT id::text FROM users ORDER BY id LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("pick a seeded user: %v", err)
+	}
+	caller := staffcontext.ContextWithStaff(context.Background(), staffcontext.StaffContext{
+		UserID: userID, Tier: staffcontext.TierLeadership, Scope: staffcontext.ScopeGlobal, Status: "ACTIVE",
+	})
+	res, err := svc.Issue(caller, billing.CreditMemoRouteRequest{
+		CustomerID: w.cust, BranchID: trentonBranchID, InvoiceID: w.invA, AmountCents: 1000,
+		Reason: ja4Reason, IdempotencyKey: "ja4-rev-shape-" + w.cust,
+	}, billing.CreditMemoCaller{OrgID: cmRoundNorthOrg, Scope: staffcontext.ScopeGlobal})
+	if err != nil {
+		t.Fatalf("the credit memo door: %v", err)
+	}
+	if res.Status != billing.CreditMemoIssued {
+		t.Fatalf("the memo is %q, want ISSUED", res.Status)
+	}
+	t.Cleanup(func() {
+		ja4Exec(t, w.pool, "memo journals", `DELETE FROM gl_journals WHERE idempotency_key = $1`, billing.CreditMemoJournalKeyPrefix+res.CreditMemoID)
+	})
+	no := w.invoiceNo(t, res.CreditMemoID)
+	own := no + ", reverses " + w.invoiceNo(t, w.invA)
+	d := w.ja4JobADescriptions(t, "the writer's own shape", soon)
+	ja4NoneReads(t, d, ja4Marker)
+	ja4Has(t, d, own)
+	ja4Exec(t, w.pool, "rewrite the memo off shape", `
+UPDATE customer_transactions SET memo = split_part(memo, ' (', 1) || ' ' || $2
+ WHERE txn_type = 'CREDIT_MEMO' AND source_ref_id = $1::uuid`, res.CreditMemoID, ja4Reason)
+	d = w.ja4JobADescriptions(t, "the memo off shape", soon)
+	ja4NoneReads(t, d, ja4Marker)
+	ja4Has(t, d, "Credit memo "+no)
 }
 
 // TestIntegration_JA4Doors_PlantedSupplierDepositReadsFixed (P061 fix round 3, P3-1): a supplier deposit
