@@ -12,6 +12,7 @@
 // out, so a new state added to the schema shows up strange (a bug report)
 // rather than confident and wrong (a lie nobody catches).
 
+import { isLostSignal } from "@hardscapehouse/api-client";
 import { servedConsoleConfig } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { houseDay, stampDay } from "../po/po-logic.js";
 import { formatQty } from "../po/po-money.js";
@@ -296,15 +297,16 @@ function sentence(text: string): string {
  * names who may do the move; a 403 that carries the server's own sentence (the
  * branch fence's words) reads as it is, capitalised and ended.
  */
-export function refusalWords(action: string, error: string, status: number | undefined, served: unknown = servedConsoleConfig()): string {
+export function refusalWords(action: string, error: string, status: number | undefined, served: unknown = servedConsoleConfig(), code?: string): string {
   if (status === 403) {
     const words = sentence(error);
     if (words !== "" && words !== "Forbidden.") return words;
     return whoMay(served)[action] ?? "Your role may not do that. Ask the General Manager.";
   }
   if (status === 401) return "Your sign in has ended. Sign in again.";
-  if (status === undefined) return "The server could not be reached. Nothing was changed. Try again.";
-  if (status >= 500) return "The server hit a problem. Nothing was changed. Try again.";
+  // Only a lost signal is "could not be reached"; a malformed success answered, so it reads as the server's problem.
+  if (isLostSignal({ ok: false, ...(status === undefined ? {} : { status }), ...(code === undefined ? {} : { code }) })) return "The server could not be reached. Nothing was changed. Try again.";
+  if (status === undefined || status >= 500) return "The server hit a problem. Nothing was changed. Try again.";
   const words = sentence(error);
   return words === "" ? "The server refused that." : words;
 }

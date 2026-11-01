@@ -167,6 +167,9 @@ test("parked sales: a ticket parks and either role picks it up, at the same coun
   await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await closeAccountMenu(page);
+  // The app redirects to its own landing after sign out; wait for it, then sign in from there
+  // (a page.goto over the redirect races it and is interrupted).
+  await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
   await signIn(page, "Sales");
   await resumeFirst();
 
@@ -174,6 +177,9 @@ test("parked sales: a ticket parks and either role picks it up, at the same coun
   await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await closeAccountMenu(page);
+  // The app redirects to its own landing after sign out; wait for it, then sign in from there
+  // (a page.goto over the redirect races it and is interrupted).
+  await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
   await signIn(page, "Sales manager");
   await resumeFirst();
 });

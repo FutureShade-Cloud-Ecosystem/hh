@@ -82,7 +82,7 @@ export class BillsDesk implements AreaDesk {
 
   #loadFailed(result: Failure): void {
     this.#phase = "error";
-    this.#error = refusalWords("load", result.error, result.status);
+    this.#error = refusalWords("load", result.error, result.status, result.code);
     this.#host.repaint();
   }
 
@@ -254,7 +254,7 @@ export class BillsDesk implements AreaDesk {
 
   #fail(result: Failure, at: "bill" | "rules"): void {
     this.#notice = "";
-    this.#error = refusalWords(at === "rules" ? "tolerance" : "bill", result.error, result.status);
+    this.#error = refusalWords(at === "rules" ? "tolerance" : "bill", result.error, result.status, result.code);
     this.#errorAt = at;
   }
 
