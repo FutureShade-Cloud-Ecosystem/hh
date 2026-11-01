@@ -170,6 +170,7 @@ func openGapPool(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 	legsweep.Register(t, pool)
+	auditSince := auditMark(t, pool)
 	if err := testkit.Build(context.Background(), testkit.PgxPool(pool)); err != nil {
 		t.Fatalf("fixture build: %v", err)
 	}
@@ -239,7 +240,7 @@ func openGapPool(t *testing.T) *pgxpool.Pool {
 		exec(`DELETE FROM order_lines WHERE id = $1::uuid`, gapOrderLineID)
 		exec(`DELETE FROM orders WHERE id = $1::uuid`, gapOrderID)
 		exec(`DELETE FROM scope_sequences WHERE scope IN ('approvals', 'invoices', 'payments')`)
-		exec(`DELETE FROM audit_log WHERE entity_type IN ('sync.approvals', 'sync.invoices', 'sync.payments')`)
+		deleteOwnAudit(t, pool, auditSince, "sync.approvals", "sync.invoices", "sync.payments")
 		_ = testkit.Cleanup(ctx, testkit.PgxPool(pool))
 	})
 	return pool
