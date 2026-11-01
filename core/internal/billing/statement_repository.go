@@ -723,9 +723,14 @@ func (r *Repository) RecordPaylinkDelivery(ctx context.Context, row PaylinkDeliv
 //	                 REVERSAL allocations the NSF door wrote under that payment, so each job returns to
 //	                 owing what it did before the receipt (the receipt's own act keeps its credit)
 //
-// The nsf act's own ledger memo names the whole bounce and the payment's internal id; a job's line
-// must carry neither (a job contact reads it), so an nsf act has no memo and its lines read as the
-// standard "Returned payment".
+// An act's own ledger memo is for staff: the nsf memo names the whole bounce and the payment's internal
+// id, and the void, reversal and reapply memos carry the clerk's free text reason, which may name another
+// job and its figures. A job contact reads the job's lines, so each act reads in fixed words of its own
+// ("Returned payment", "Payment voided", "Payment reversed", "Payment applied") and never a blank, which
+// would fall back to "Payment received, thank you".
+//
+// A credit memo's row on a job carries its reason in brackets after its number and the invoice it
+// reverses (the same job's); the job's line reads the number and the invoice without the reason.
 //
 // Each act reads as one line per job, dated at the act's first ledger row, and the act's ledger sum
 // less its shares is left at account level (the unapplied part).
@@ -750,7 +755,12 @@ const statementByJobTail = `
 			SELECT p.act_type, p.src_ref, MIN(p.txn_type) AS txn_type,
 			       MIN(p.occurred_at) AS occurred_at, MIN(p.created_at) AS created_at,
 			       SUM(p.amount_cents) AS amount_cents,
-			       CASE WHEN p.act_type = 'nsf' THEN '' ELSE MIN(p.memo) END AS memo
+			       CASE p.act_type
+			            WHEN 'nsf' THEN 'Returned payment'
+			            WHEN 'payment_void' THEN 'Payment voided'
+			            WHEN 'payment_reversal' THEN 'Payment reversed'
+			            WHEN 'payment_reapply' THEN 'Payment applied'
+			            ELSE MIN(p.memo) END AS memo
 			  FROM paytxn p GROUP BY p.act_type, p.src_ref
 		), shares AS (
 			SELECT ac.act_type, ac.src_ref, inv.job_id,
@@ -780,7 +790,10 @@ const statementByJobTail = `
 			  LEFT JOIN (SELECT s.act_type, s.src_ref, SUM(s.share) AS net FROM shares s GROUP BY s.act_type, s.src_ref) sh
 			    ON sh.act_type = ac.act_type AND sh.src_ref = ac.src_ref
 		), parts AS (
-			SELECT a.occurred_at, a.created_at, a.txn_type, a.amount_cents, a.invoice_no, a.memo, a.job_id
+			SELECT a.occurred_at, a.created_at, a.txn_type, a.amount_cents, a.invoice_no,
+			       CASE WHEN a.job_id IS NOT NULL AND a.src_type = 'invoice' AND a.txn_type = 'CREDIT_MEMO'
+			            THEN split_part(a.memo, ' (', 1) ELSE a.memo END AS memo,
+			       a.job_id
 			  FROM activity a
 			 WHERE NOT EXISTS (SELECT 1 FROM paytxn p WHERE p.src_id = a.src_id)
 			UNION ALL
