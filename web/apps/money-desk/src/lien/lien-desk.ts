@@ -23,6 +23,7 @@ import {
   dischargeForm,
   groupDue,
   jobForm,
+  jobLevelRefusedWords,
   mergeData,
   preservedForm,
   recordedDischargeWords,
@@ -81,6 +82,8 @@ export class LienDesk {
   #viewing: LienDocument | null = null;
   #versions: LienDocument[] | null = null;
   #release: ReleaseModel | null = null;
+  // The core refused the old job level press because the holdback is held on invoices: the panel then points to Due to release.
+  #jobLevelRefused = false;
   // The Controller's release: the customer job being asked about, what was released on this visit, and the key of a
   // press whose outcome is not known (kept, so a second press replays rather than releases twice).
   #dueOpen = "";
@@ -215,8 +218,14 @@ export class LienDesk {
       case "li-release-open":
         void this.#openRelease(id);
         return true;
+      case "li-go-due":
+        this.#jobLevelRefused = false;
+        this.#release = null;
+        this.#openTab("due");
+        return true;
       case "li-release-close":
         this.#release = null;
+        this.#jobLevelRefused = false;
         this.#clearMessages();
         this.#host.repaint();
         return true;
@@ -378,6 +387,7 @@ export class LienDesk {
   async #openRelease(jobId: string): Promise<void> {
     this.#tab = "holdbacks";
     this.#clearMessages();
+    this.#jobLevelRefused = false;
     this.#release = { jobId, roster: this.#people === null && canRelease(this.#host.roleCode()) ? "loading" : "ready", people: this.#people ?? [], rosterError: "", cosigner: "" };
     this.#reveal = "[data-release-panel]";
     this.#host.repaint();
@@ -413,6 +423,7 @@ export class LienDesk {
     this.#busy = false;
     if (!answer.ok) {
       this.#error = refusalWords("release", answer.error, answer.status ?? 0);
+      this.#jobLevelRefused = jobLevelRefusedWords(answer.error);
       // A holdback released meanwhile, or a job that is gone, is read again so the list says what is true.
       this.#host.repaint();
       if (answer.status === 422 || answer.status === 404) await this.#refresh();
@@ -633,6 +644,7 @@ export class LienDesk {
       viewing: this.#viewing,
       versions: this.#versions,
       release: this.#release,
+      jobLevelRefused: this.#jobLevelRefused,
       busy: this.#busy,
       error: this.#error,
       notice: this.#notice,

@@ -94,6 +94,7 @@ export interface LiensModel {
   readonly viewing: LienDocument | null;
   readonly versions: readonly LienDocument[] | null;
   readonly release: ReleaseModel | null;
+  readonly jobLevelRefused: boolean;
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
@@ -506,6 +507,14 @@ function releasePanel(model: LiensModel, release: ReleaseModel): TemplateResult 
   return html`
     <section class="li-panel" data-release-panel tabindex="-1" role="region" aria-label="Release holdback">
       <div class="li-panel-head"><h2>Release holdback</h2></div>
+      ${model.jobLevelRefused
+        ? html`
+            <div class="li-note" data-job-level-refused>
+              <p>This job's holdback is held on its invoices. It is released from Due to release, by the Financial Controller, once the preservation period has run out.</p>
+              <button type="button" class="btn btn-secondary" data-action="li-go-due">Go to Due to release</button>
+            </div>
+          `
+        : nothing}
       <dl class="li-facts">
         <dt>Job</dt><dd>${jobNo}</dd>
         <dt>Held</dt><dd>${amount === "" ? "Nothing held now." : amount}</dd>
