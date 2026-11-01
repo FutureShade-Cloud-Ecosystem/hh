@@ -827,6 +827,59 @@ export type BillingAgingPage = {
   next_cursor?: string | null;
   limit?: number;
 };
+export type BillingAgingByJobRow = {
+  customer_id: string;
+  customer_name: string;
+  account_no: string;
+  job_id: string;
+  job_no: string;
+  job_name: string;
+  account_level: boolean;
+  current_cents: number;
+  days_30_cents: number;
+  days_60_cents: number;
+  days_60_to_90_cents: number;
+  days_90_plus_cents: number;
+  total_cents: number;
+};
+export type BillingAgingByJobPage = {
+  items: BillingAgingByJobRow[];
+  as_of: string;
+};
+export type BillingJobStatementLine = {
+  date: string;
+  doc_no: string;
+  description: string;
+  charge_cents: number;
+  credit_cents: number;
+  balance_run_cents: number;
+  job_id: string;
+};
+export type BillingJobStatementSection = {
+  job_id: string;
+  job_no: string;
+  job_name: string;
+  account_level: boolean;
+  lines: BillingJobStatementLine[];
+  subtotal_cents: number;
+};
+export type BillingStatementContact = {
+  name: string;
+  email: string;
+  phone: string;
+  source: "job" | "customer" | "none";
+  note?: string;
+};
+export type BillingJobStatement = {
+  customer_id: string;
+  customer_name: string;
+  account_no: string;
+  as_of_date: string;
+  job_id?: string;
+  sections: BillingJobStatementSection[];
+  closing_balance_cents: number;
+  contact: BillingStatementContact;
+};
 export type BillingCreditHold = {
   id: string;
   customer_id: string;

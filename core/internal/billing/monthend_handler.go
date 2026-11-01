@@ -15,6 +15,7 @@ import (
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"log/slog"
@@ -60,6 +61,11 @@ func NewMonthEndHandler(credit *CreditService, statements *StatementService, log
 // not two that split by which Go package happened to implement them.
 func (h *MonthEndHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/ar/aging", g.RequireManager(h.staff(h.aging)))
+	// JA-4: the aging, the statement and a job's own statement by job, behind the gates and the
+	// branch reach of the account reads above.
+	r.Handle("GET /api/v1/ar/aging-by-job", g.RequireManager(h.staff(h.agingByJob)))
+	r.Handle("GET /api/v1/ar/customers/{customerID}/statement-by-job", g.RequireManager(h.staff(h.statementByJob)))
+	r.Handle("GET /api/v1/ar/customers/{customerID}/jobs/{jobID}/statement", g.RequireManager(h.staff(h.jobStatement)))
 	r.Handle("GET /api/v1/ar/holds", g.RequireManager(h.staff(h.listHolds)))
 	r.Handle("POST /api/v1/ar/holds/{id}/override", g.RequireAdmin(h.staff(h.override)))
 	r.Handle("POST /api/v1/ar/holds/{id}/ar-release", g.RequireAdmin(h.staff(h.release)))
@@ -93,6 +99,62 @@ func (h *MonthEndHandler) aging(w http.ResponseWriter, r *http.Request, caller g
 		rows = []AgingRow{}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": rows, "as_of": asOf.Format("2006-01-02")})
+}
+
+// agingByJob is the aging worklist by customer and job. ?job_id= narrows it to one job.
+func (h *MonthEndHandler) agingByJob(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	asOf, err := parseAsOfFor(r.Context(), h.zone, r.URL.Query().Get("as_of"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	rows, err := h.credit.AgingByJob(r.Context(), asOf, r.URL.Query().Get("branch_id"), r.URL.Query().Get("job_id"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if rows == nil {
+		rows = []AgingJobRow{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": rows, "as_of": asOf.Format("2006-01-02")})
+}
+
+// statementByJob is the customer's statement grouped by job.
+func (h *MonthEndHandler) statementByJob(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	h.writeJobStatement(w, r, r.PathValue("customerID"), "")
+}
+
+// jobStatement is one job's statement, addressed to the job's contact.
+func (h *MonthEndHandler) jobStatement(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	h.writeJobStatement(w, r, r.PathValue("customerID"), r.PathValue("jobID"))
+}
+
+func (h *MonthEndHandler) writeJobStatement(w http.ResponseWriter, r *http.Request, customerID, jobID string) {
+	if !FenceCustomer(w, r, h.reach, customerID) {
+		return
+	}
+	asOf, err := parseAsOfFor(r.Context(), h.zone, r.URL.Query().Get("as_of"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	st, err := h.statements.StatementByJob(r.Context(), customerID, asOf, jobID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	if r.URL.Query().Get("format") == "html" {
+		header, herr := h.statements.store.BranchHeader(r.Context(), "")
+		if herr != nil {
+			header = StatementHeader{BranchName: dealer.Or("Your dealer")}
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(RenderJobStatementHTML(header, st)))
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
 // listHolds returns credit holds; ?status=ACTIVE|RELEASED filters.
