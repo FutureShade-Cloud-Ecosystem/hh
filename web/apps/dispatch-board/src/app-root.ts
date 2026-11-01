@@ -21,7 +21,7 @@ import { framedByShell, listenForHostSignOut } from "@hardscapehouse/design-syst
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
-import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bootCustody, entryAfter, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { demoNote } from "./band-identity.js";
 import { entryStyles, renderEntry, type EntryView, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
@@ -215,7 +215,7 @@ export class DispatchBoardApp extends HHElement {
       this.#onSignOut();
       return;
     } else {
-      this.#entryView = entryUnavailable();
+      this.#entryView = entryAfter(outcome);
       if (outcome.kind === "front-door") this.#custody.toFrontDoor();
     }
     this.requestUpdate();
@@ -327,7 +327,7 @@ export class DispatchBoardApp extends HHElement {
     }
     return demo
       ? html`<hos-app-header demo compact product-name="Dispatch">${tools}</hos-app-header>`
-      : html`<hos-app-header compact product-name="Dispatch">${tools}</hos-app-header>`;
+      : html`<hos-app-header compact word="Sign in" product-name="Dispatch">${tools}</hos-app-header>`;
   }
 
   private renderSignedIn(): TemplateResult {
@@ -350,7 +350,7 @@ export class DispatchBoardApp extends HHElement {
         ${this.#narrow ? this.#mobileTools() : html``}
         <h1>Dispatch and Load Building</h1>
         <p class="dim">Build the day's loads, crew the trucks and send them out.${demoNote(servedConsoleConfig())}</p>
-        ${renderEntry({ ...this.#entryView, flows: this.#entryFlows() }, { headline: "Who is dispatching?", intro: "Tap a role to open the dispatch board.", coming: false })}
+        ${renderEntry({ ...this.#entryView, flows: this.#entryFlows() }, { headline: "Who is dispatching?", intro: "Tap a role to open the dispatch board.", coming: false, app: "Dispatch Board" })}
       </main>
     `;
   }

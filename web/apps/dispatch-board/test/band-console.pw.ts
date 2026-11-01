@@ -33,3 +33,25 @@ test("a page served no console config still says demo data only", async ({ page 
   await expect(page.locator("hos-app-header")).toHaveAttribute("demo", "");
   await expect(page.locator("hos-app-header .demo-banner")).toHaveCount(1);
 });
+
+// UX-128 round 3 (P3-6): the door of a dealer's own box with no session reads like the other apps' doors: the header
+// does not say "Pick a role" (a demo picker word) and the sign in line is not drawn as a dashed scan stage.
+test("a console box's door says to sign in: no Pick a role header, no dashed stage box around the line", async ({ page }) => {
+  await page.route("**/config.json", (route) => route.fulfill({ json: CONSOLE_CONFIG }));
+  await page.route("https://console.invalid/**", (route) => {
+    const headers = route.request().headers();
+    const cors = {
+      "access-control-allow-origin": headers["origin"] ?? "",
+      "access-control-allow-credentials": "true",
+      "access-control-allow-headers": headers["access-control-request-headers"] ?? "content-type",
+      "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+    };
+    return route.request().method() === "OPTIONS"
+      ? route.fulfill({ status: 204, headers: cors })
+      : route.fulfill({ status: 401, json: { message: "no session" }, headers: cors });
+  });
+  await page.goto("/");
+  await expect(page.locator("p.notice")).toContainText("Sign in to open Dispatch Board.");
+  await expect(page.getByTestId("header-word")).not.toHaveText(/pick a role/i);
+  await expect(page.locator("div.stage")).toHaveCSS("border-top-style", "none");
+});

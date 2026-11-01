@@ -13,7 +13,7 @@ defineConsoleLegs({
     await expect(page.locator("[data-branch]")).toBeVisible();
   },
   unavailable: async (page) => {
-    await expect(page.getByText("The demo way in is not available on this box.")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Sign in to open Yard Pick.")).toBeVisible({ timeout: 20_000 });
     await expect(page.locator("hh-field-frame")).not.toHaveAttribute("signed-in", "");
   },
 });

@@ -15,8 +15,13 @@ defineConsoleLegs({
     await closeAccountMenu(page);
     await expect(page.getByRole("button", { name: "Sales", exact: true })).toHaveCount(0);
   },
+  offline: async (page) => {
+    await expect(page.getByText("The server is not answering just now. Counter Till will try again on its own.")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/demo roles|sign in/i)).toHaveCount(0);
+  },
   unavailable: async (page) => {
-    await expect(page.getByText("The demo roles could not be loaded", { exact: false })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Sign in to open Counter Till.", { exact: false })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/demo roles/i)).toHaveCount(0);
     await openAccountMenu(page);
     await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
     await closeAccountMenu(page);

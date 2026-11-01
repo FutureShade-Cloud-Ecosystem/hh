@@ -157,9 +157,9 @@ export function servedConsoleConfig(): ConsoleRuntimeConfig | null {
   return served;
 }
 
-/** The entry view an app shows while it has no session and the demo cards do not apply: its existing unavailable state. */
+/** The entry view an app shows on a dealer's own box while it has no session: its own sign in state, not a failure. */
 export function entryUnavailable(): EntryView {
-  return { flows: { kind: "unavailable", status: null }, busy: false, message: null };
+  return { flows: { kind: "signin" }, busy: false, message: null };
 }
 
 // ── custody ───────────────────────────────────────────────────────────────
@@ -168,6 +168,26 @@ export type AppStart =
   | { kind: "ready"; entry: AppEntry }
   | { kind: "front-door"; why: "no_session" | "forbidden" | "wrong_role" | "config" | "persona_refused" | "ended" }
   | { kind: "unavailable"; reason: "offline" | "unavailable" | "rate_limited" };
+
+/**
+ * The entry view for a custody outcome that is not ready. A front-door outcome means the person is being sent to
+ * sign in; an unavailable one means the session is untouched and the custody retries, so it reads as a blip.
+ */
+export function entryAfter(outcome: Exclude<AppStart, { kind: "ready" }>): EntryView {
+  if (outcome.kind === "unavailable") {
+    return { flows: { kind: "offline", reason: outcome.reason }, busy: false, message: null };
+  }
+  return entryUnavailable();
+}
+
+/**
+ * The offline reason for an app that read the status of a failed start: no status means the call never got an
+ * answer (lost signal), 429 is a throttle, anything else is a server that is not answering.
+ */
+export function reasonForStatus(status: number | undefined): "offline" | "unavailable" | "rate_limited" {
+  if (status === undefined) return "offline";
+  return status === 429 ? "rate_limited" : "unavailable";
+}
 
 export interface BootDeps {
   sessions: SessionStore;

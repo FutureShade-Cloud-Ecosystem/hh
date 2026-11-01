@@ -289,6 +289,7 @@ export class HosAppHeader extends HHElement {
     productName: { attribute: 'product-name' },
     compact: { type: Boolean, reflect: true },
     framed: { type: Boolean },
+    word: {},
   };
 
   /** The centred role name; the default word when empty or unsigned. */
@@ -307,6 +308,8 @@ export class HosAppHeader extends HHElement {
   declare compact: boolean;
   /** Framed by the Work shell: the band renders nothing. Read once at boot, from the frame's address. */
   declare framed: boolean;
+  /** The centre word while nobody is signed in, when the demo's "Pick a role" is wrong (a dealer's own box); blank keeps the default. */
+  declare word: string;
 
   constructor() {
     super();
@@ -318,6 +321,7 @@ export class HosAppHeader extends HHElement {
     this.productName = '';
     this.compact = false;
     this.framed = framedByShell();
+    this.word = '';
   }
 
   /** Whether light DOM children claim the theme slot by name. */
@@ -400,7 +404,7 @@ export class HosAppHeader extends HHElement {
   render(): Template {
     if (this.framed) return html``;
     const signedIn = this.signedIn === true;
-    const word = signedIn && this.roleLabel !== '' ? this.roleLabel : DEFAULT_WORD;
+    const word = signedIn && this.roleLabel !== '' ? this.roleLabel : this.word.trim() !== '' ? this.word.trim() : DEFAULT_WORD;
     const dealer = this.dealerName.trim();
     const surface = this.productName.trim();
     // The separator sits BETWEEN the buttons and the slotted controls: with
