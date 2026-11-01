@@ -62,7 +62,7 @@ func intPool(t *testing.T) *pgxpool.Pool {
 	// Row 0.54: the leg leaves the shared database as it found it (registered before the leg's own
 	// cleanups below, so the sweep runs after them).
 	legsweep.Register(t, pool)
-	restoreSeededRows(t, pool, "warranty_policy", "warranty_vendor_profiles")
+	legsweep.RestoreSeededRows(t, pool, "warranty_policy", "warranty_vendor_profiles")
 
 	// - W5-B: FIXTURES RESTORE WHAT THEY TOUCH -
 	// Every integration test here captures claims and most of them settle one. Before Wave 5 that residue was

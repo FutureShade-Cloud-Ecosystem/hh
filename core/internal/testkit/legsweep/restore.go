@@ -1,6 +1,4 @@
-//go:build integration
-
-package jobs
+package legsweep
 
 import (
 	"context"
@@ -11,13 +9,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// restoreSeededRows, row 0.54: job_schedules holds the seeded nightly and interval schedules, and a
-// leg that runs the due-job loop claims whichever schedule is due, moving its next_run_at and last
-// status. The package sweep (legsweep.Register) fails a leg that leaves a seeded row changed, so
-// each leg captures the table whole when its pool opens and writes every row back at its end. The
-// restore is an upsert by primary key of every column; a refused statement fails the leg, naming
-// the table. Rows a leg added are the sweep's to delete, after this cleanup.
-func restoreSeededRows(t *testing.T, pool *pgxpool.Pool, tables ...string) {
+// RestoreSeededRows (row 0.54) captures each named table whole when a leg's pool opens and writes every row back
+// at the leg's end: for seeded rows a leg rewrites in place (warranty's policy and vendor profiles, jobs'
+// schedules, which the due-job loop claims). Register's sweep fails a leg that leaves a seeded row changed, and it
+// deletes rows a leg added; this restores the rows a leg changed. The restore is an upsert by primary key of every
+// column; a refused statement fails the leg, naming the table. Register it after Register, so it runs first.
+func RestoreSeededRows(t *testing.T, pool *pgxpool.Pool, tables ...string) {
 	t.Helper()
 	ctx := context.Background()
 	images := map[string][]string{}

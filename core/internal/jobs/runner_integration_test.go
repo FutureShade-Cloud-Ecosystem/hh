@@ -54,7 +54,7 @@ func jobsPool(t *testing.T) *pgxpool.Pool {
 	// Row 0.54: the leg leaves the shared database as it found it; the sweep is registered before the
 	// restore, so it runs after it.
 	legsweep.Register(t, pool)
-	restoreSeededRows(t, pool, "job_schedules")
+	legsweep.RestoreSeededRows(t, pool, "job_schedules")
 	return pool
 }
 
