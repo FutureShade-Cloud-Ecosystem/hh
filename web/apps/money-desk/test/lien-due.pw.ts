@@ -527,6 +527,38 @@ test("delta: a release whose answer was lost but whose refresh shows it made dro
   expect(held).not.toContain(keys[0]);
 });
 
+test("delta 2: a lost answer whose due list read then fails keeps its key, so the retry replays rather than releases anew", async ({ page, request }) => {
+  await openDue(page, request);
+  const keys: string[] = [];
+  let failReads = false;
+  await page.route(RELEASES, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    keys.push((route.request().postDataJSON() as { idempotency_key: string }).idempotency_key);
+    if (keys.length === 1) {
+      failReads = true;
+      return route.abort();
+    }
+    return route.continue();
+  });
+  await page.route("**/api/v1/ar/holdback/due-to-release**", async (route) => {
+    // Every read after the lost answer fails (the client may retry a read), so the desk truly does not know.
+    if (failReads) {
+      return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "internal error" }) });
+    }
+    return route.continue();
+  });
+  await pressRelease(page);
+  await expect(page.locator("[data-error]").first()).toBeVisible();
+  const held = await page.evaluate(() =>
+    Object.keys(window.sessionStorage)
+      .filter((k) => k.includes("lien-due."))
+      .map((k) => window.sessionStorage.getItem(k) ?? "")
+      .join(""),
+  );
+  expect(keys).toHaveLength(1);
+  expect(held).toContain(keys[0]);
+});
+
 test("fix r3: the key of a release with no answer survives a reload, held beside the other money presses' keys", async ({ page, request }) => {
   await openDue(page, request);
   const keys = await watchReleases(page, "abort");

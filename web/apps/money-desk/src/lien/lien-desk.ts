@@ -477,11 +477,12 @@ export class LienDesk {
       this.#host.repaint();
       await this.#refresh();
       // A job that is no longer due has nothing left to ask about; its refusal then reads at the head of the page.
-      // The refresh then says the outcome is known, so the held key ends with it: a later release of the job, once it
-      // falls due again, is a new press with a new key, never a replay of this one.
+      // When the refresh READ the list and the job is not on it as due, the outcome is known and the held key ends
+      // with it: a later release of the job, once it falls due again, is a new press with a new key, never a replay of
+      // this one. A failed read knows nothing, so the key is kept for the retry it exists for.
       if (!this.#due.groups.some((g) => g.customerJobId === group.customerJobId && g.due)) {
         this.#dueOpen = "";
-        this.#dueKeys().delete(group.customerJobId);
+        if (this.#due.phase === "ready") this.#dueKeys().delete(group.customerJobId);
       }
       this.#host.repaint();
       return;
