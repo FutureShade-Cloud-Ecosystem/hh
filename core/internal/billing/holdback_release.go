@@ -239,7 +239,7 @@ func NewHoldbackReleaseService(repo *Repository) *HoldbackReleaseService {
 	return &HoldbackReleaseService{repo: repo, now: time.Now}
 }
 
-// WithAudit attaches the audit recorder (best effort once the release has committed).
+// WithAudit attaches the audit recorder (the release and its reversal write their rows on their own transaction).
 func (s *HoldbackReleaseService) WithAudit(r audit.Recorder) *HoldbackReleaseService {
 	s.audit = r
 	return s
@@ -274,22 +274,34 @@ func (s *HoldbackReleaseService) Release(ctx context.Context, in HoldbackRelease
 		}
 		in.ActorID = actor.String()
 	}
-	res, err := s.repo.ReleaseHoldback(ctx, in, s.now())
-	if err != nil {
-		return HoldbackReleaseResult{}, err
+	// The audit row is written on the release's own transaction: a failure to write it rolls the release
+	// back, so no release stands without its record. A replay writes nothing, so it records nothing.
+	var record func(ctx context.Context, tx pgx.Tx, res HoldbackReleaseResult) error
+	if s.audit != nil {
+		record = func(ctx context.Context, tx pgx.Tx, res HoldbackReleaseResult) error {
+			a := audit.SensitiveAccess{
+				Action: ActHoldbackReleased, EntityType: "customer_job", EntityID: res.CustomerJobID,
+				ActorID: in.ActorID, Purpose: "HOLDBACK_RELEASE", Reason: "holdback release " + in.IdempotencyKey,
+				Extra: map[string]any{"amount_cents": res.TotalCents},
+			}
+			if tr, ok := s.audit.(interface {
+				RecordTx(ctx context.Context, q audit.Execer, a audit.SensitiveAccess) error
+			}); ok {
+				return tr.RecordTx(ctx, tx, a)
+			}
+			return s.audit.Record(ctx, a)
+		}
 	}
-	if s.audit != nil && !res.Replayed {
-		_ = s.audit.Record(ctx, audit.SensitiveAccess{
-			Action: ActHoldbackReleased, EntityType: "customer_job", EntityID: res.CustomerJobID,
-			ActorID: in.ActorID, Purpose: "HOLDBACK_RELEASE", Reason: "holdback release " + in.IdempotencyKey,
-			Extra: map[string]any{"amount_cents": res.TotalCents},
-		})
-	}
-	return res, nil
+	return s.repo.releaseHoldback(ctx, in, s.now(), record)
 }
 
 // ReleaseHoldback is the repository write: one transaction under the job's lock; a refusal writes nothing.
 func (r *Repository) ReleaseHoldback(ctx context.Context, in HoldbackReleaseInput, now time.Time) (HoldbackReleaseResult, error) {
+	return r.releaseHoldback(ctx, in, now, nil)
+}
+
+// releaseHoldback is ReleaseHoldback with the audit write that rides the transaction (nil writes none).
+func (r *Repository) releaseHoldback(ctx context.Context, in HoldbackReleaseInput, now time.Time, record func(ctx context.Context, tx pgx.Tx, res HoldbackReleaseResult) error) (HoldbackReleaseResult, error) {
 	if r.pool == nil {
 		return HoldbackReleaseResult{}, errNoDB
 	}
@@ -432,6 +444,11 @@ SELECT id::text, invoice_no::text, branch_id::text, holdback_cents
 		}
 		res.Items = append(res.Items, ReleasedInvoice{InvoiceID: inv.id, InvoiceNo: inv.no, BranchID: inv.branch, ReleaseID: releaseID, AmountCents: inv.cents})
 		res.TotalCents += inv.cents
+	}
+	if record != nil {
+		if err := record(txCtx, tx, res); err != nil {
+			return HoldbackReleaseResult{}, fmt.Errorf("holdback release: record the release: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return HoldbackReleaseResult{}, fmt.Errorf("holdback release: commit: %w", err)
