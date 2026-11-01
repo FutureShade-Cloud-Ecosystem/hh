@@ -95,7 +95,10 @@ import (
 // W3 FX-2b moved it to 110: purchasingListAPRevaluations (GET /api/v1/purchasing/ap-revaluations)
 // joined the page shapes; it needs a branch_id query the census does not send, so it sits on the
 // uncovered list with that reason.
-const shapeCensusWantPages = 110
+//
+// W3 FC-1b moved it to 111: billingListFinanceCharges (GET /api/v1/ar/finance-charges) joined the page
+// shapes; it needs a branch_id query the census does not send, so it sits on the uncovered list too.
+const shapeCensusWantPages = 111
 
 // shapeCensusAllowlist names (per the brief) the page shape operations
 // whose served answer already breaks the page shape, each with the reason
@@ -223,6 +226,7 @@ var shapeCensusUncovered = map[string]string{
 	"posListPricingOrders":         "the service requires the branch_id query (internal/pos/pricing_orders.go, Service.ListPricingOrders, the same guard); the same leg split (counter legs 400 (the guard), money and yard legs 403 (the counter till gate))",
 	"posListReturnPickups":         "the service requires the branch_id query (internal/pos/returns.go, Service.ListReturnPickups); the dispatch-board legs (sales_manager, GM, branch_manager) answer 400 (the guard), the counter and money legs 403 (the dispatch-board gate (the route's surface))",
 	"purchasingListAPRevaluations": "the service requires the branch_id query (internal/purchasing/ap_revaluation.go, Service.ListAPRevaluations, purchasing: branch_id is required); the census sends no query string, so the Controller legs the gate admits (general_manager and the financial controller) answer 400 (the guard), every other leg 403 (the leadership tier gate, narrowed to the Controller roles by the handler)",
+	"billingListFinanceCharges":    "the service requires the branch_id query (internal/billing/finance_charge_route.go, FinanceChargeService.branch, billing: branch_id is required); the census sends no query string, so the Controller legs the gate admits (general_manager and the financial controller) answer 400 (the guard), every other leg 403 (the leadership tier gate, narrowed to the Controller roles by the handler)",
 	"purchasingListIncoming":       "the handler requires the product_id query (internal/purchasing/incoming.go, IncomingForProduct, purchasing: product_id is required); all legs 400",
 	"reportingCommissionPreview":   "the service requires the from and to date queries (internal/reporting/commission_service.go, parseWindow (from must be a date (YYYY-MM-DD)) when they are absent); the manager legs the gate admits answer 400 (the guard), the tier 3 legs (inside_sales, yard_team) 403 (the manager home gate (their cells do not reach the route))",
 	"reportingListCommissionRuns":  "the service requires the from and to date queries (internal/reporting/commission_service.go, parseWindow, the same guard); the same leg split (manager legs 400 (the guard), tier 3 legs 403 (the manager home gate))",
