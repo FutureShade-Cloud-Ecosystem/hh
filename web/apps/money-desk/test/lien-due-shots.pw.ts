@@ -45,7 +45,7 @@ for (const size of SIZES) {
       await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
       await expect(page.locator("[data-notice]")).toContainText("Released");
       await take("03", "released");
-      await page.locator("[data-row='released'][data-invoice-no='INV-4101']:visible").getByRole("button", { name: "Reverse" }).click();
+      await page.locator("[data-row='released']:visible").getByRole("button", { name: "Reverse" }).click();
       await expect(page.locator("[data-reverse-panel]")).toBeVisible();
       await page.locator("[data-reverse-panel]").getByRole("button", { name: "Reverse release" }).click();
       await expect(page.locator("[data-error]")).toContainText("Say why");
@@ -78,8 +78,6 @@ for (const size of SIZES) {
       }
       await liensTab(gm, "holdbacks");
       await gm.locator("[data-row='aging'][data-job-no='GLS-2103']:visible").getByRole("button", { name: "Release" }).click();
-      await gm.getByLabel("Co-signer").selectOption({ label: "Financial Controller (demo)" });
-      await gm.getByRole("button", { name: "Confirm release" }).click();
       await expect(gm.locator("[data-job-level-refused]")).toBeVisible();
       await shot(gm, theme, size.width, "09", "old-press-refused");
     });

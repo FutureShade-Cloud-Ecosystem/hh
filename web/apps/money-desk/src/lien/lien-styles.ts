@@ -124,6 +124,8 @@ export const lienStyles = css`
   .li-doors { border-top: 1px solid var(--hh-line); margin-top: var(--hh-s-16); padding-top: var(--hh-s-16); }
   .li-doors h3 { margin: var(--hh-s-12) 0 var(--hh-s-4); }
   .li-doors .li-form { align-items: end; }
+  .li-cards-always .li-invoices { max-width: 28rem; }
+  .li-panel .li-note { margin-bottom: var(--hh-s-12); }
   .li-card-actions { display: flex; justify-content: flex-end; }
   .li-card-actions .btn { width: auto; }
   .li-field textarea[data-field="reverse_reason"] { min-height: 88px; font-family: inherit; font-size: 16px; }
@@ -147,6 +149,8 @@ export const lienStyles = css`
     .li-toolbar .li-field { min-width: 0; flex: 1 1 100%; }
     /* Forms are one column on a phone, so every box has one width and a label never wraps beside another. */
     .li-form { grid-template-columns: minmax(0, 1fr); }
+    .li-facts { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .li-facts dd { margin-bottom: var(--hh-s-8); }
     /* A link inside a card is a button on a phone: a 44 pixel target with its own edge. */
     .li-cards .li-link { display: inline-flex; align-items: center; justify-self: start; padding: 0 var(--hh-s-16); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); text-decoration: none; }
   }
