@@ -23,11 +23,21 @@ func (l *rt2Leg) rt3ReleaseAged(invoiceID, key string, daysAgo int) {
 		l.t.Fatalf("release: %v", err)
 	}
 	day := rt3Today().AddDate(0, 0, -daysAgo)
-	noon := day.Add(12 * time.Hour)
 	mustExec(l.t, context.Background(), l.pool, `
 		UPDATE holdback_ledger SET released_at = $2::date, created_at = $3
-		 WHERE invoice_id = $1::uuid AND entry_type = 'RELEASE'`, invoiceID, day.Format("2006-01-02"), noon)
+		 WHERE invoice_id = $1::uuid AND entry_type = 'RELEASE'`, invoiceID, day.Format("2006-01-02"), rt3InstantOn(day))
 	l.drain()
+}
+
+// rt3InstantOn is an instant inside the house day `day` that has already passed: noon, or now when the leg runs
+// before noon of that day. The readers count a RELEASE row from its created_at up to now(), so an instant later
+// than now (noon of today, before noon) reads as not yet released.
+func rt3InstantOn(day time.Time) time.Time {
+	noon := day.Add(12 * time.Hour)
+	if now := time.Now(); noon.After(now) {
+		return now
+	}
+	return noon
 }
 
 // rt3PriorMonth is the house month before this one, and its last house day.
