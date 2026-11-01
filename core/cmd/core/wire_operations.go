@@ -930,44 +930,17 @@ func (a invcountGLPoster) PostJournal(ctx context.Context, in invcount.GLJournal
 }
 
 // finworldPurchasingComposition builds the purchasing service the way the production wiring does,
-// with the shared pool-level seams: the dealer zone, the vendors projection, the branch directory,
-// the vendor address book and the AP subledger's settlement reader over the ledger. The caller adds
-// the request-shaped seams (stock receiver, landed cost, GL poster, rules) it needs.
+// with the shared pool-level seams: the dealer zone, the vendors projection, the branch directory
+// and the vendor address book. The caller adds the request-shaped seams (stock receiver, landed
+// cost, GL poster, rules) it needs.
 func finworldPurchasingComposition(pool *pgxpool.Pool, log *slog.Logger, auditSvc *audit.Service) *purchasing.Service {
 	return purchasing.NewService(purchasing.NewRepository(pool)).
 		WithZone(newDealerZone(pool)).
 		WithVendors(w4cVendorDirectory{pool: pool}).
-		WithAPPaymentsReader(glPaidAPReader{pool: pool, accountCode: "2100"}).
 		WithAudit(auditSvc).
 		WithLogger(log).
 		WithBranches(item5BranchDirectory{pool: pool}).
 		WithVendorAddresses(item5VendorAddressBook{pool: pool})
-}
-
-// glPaidAPReader satisfies purchasing.APPaymentsReader over the ledger: the net of the
-// PAYMENT-source journals on the trade payables account, the settlements side of the AP subledger.
-// A supplier payment is a PAYMENT journal on the payables account; nothing else posts that
-// combination, so no idempotency-key pattern matching is needed.
-type glPaidAPReader struct {
-	pool        *pgxpool.Pool
-	accountCode string
-}
-
-func (r glPaidAPReader) PaidAPCentsAsOf(ctx context.Context, asOf time.Time) (int64, error) {
-	var paid int64
-	err := r.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(COALESCE(l.debit_cents, 0) - COALESCE(l.credit_cents, 0)), 0)
-		  FROM gl_journal_lines l
-		  JOIN gl_journals j ON j.id = l.journal_id
-		  JOIN gl_accounts a ON a.id = l.account_id
-		 WHERE j.status = 'POSTED'
-		   AND j.source = 'PAYMENT'
-		   AND a.code = $1
-		   AND j.posted_at <= $2`, r.accountCode, asOf).Scan(&paid)
-	if err != nil {
-		return 0, fmt.Errorf("the supplier payment read: %w", err)
-	}
-	return paid, nil
 }
 
 // landedGLPoster satisfies landedcost.GLPoster over glSvc.PostExternal

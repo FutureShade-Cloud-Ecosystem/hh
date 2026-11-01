@@ -509,11 +509,4 @@ var (
 		status: http.StatusServiceUnavailable,
 		msg:    "purchasing: GL seam not wired, refusing to post a bill that would book no journal",
 	}
-
-	// ErrAPPaymentsReaderUnwired mirrors it for the AP subledger read: an open-AP balance that silently
-	// ignores settlements is a wrong number wearing a tie-out's clothes.
-	ErrAPPaymentsReaderUnwired = clientError{
-		status: http.StatusServiceUnavailable,
-		msg:    "purchasing: AP payments reader not wired, refusing an open AP balance that would ignore settlements",
-	}
 )

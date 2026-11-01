@@ -1,8 +1,8 @@
 //go:build integration
 
-// ap_subledger_integration_test.go, the seam read the month walk's AP tie consumes: the posted bill
-// total as of a moment, with the as-of boundary held against the test's own bill so no other
-// writer's state can move the assertion.
+// ap_subledger_integration_test.go, the AP aging's as-of boundary: a posted vendor bill enters the
+// open AP at its posting journal's effective instant, so the reads bracket the test's own bill and
+// no other writer's state can move the assertion.
 package purchasing
 
 import (
@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestIntegration_PostedBillTotalCentsAsOf(t *testing.T) {
+func TestIntegration_APAgingCountsThePostedBill(t *testing.T) {
 	h := newHarness(t)
 	product := h.newProduct(t, "apread")
 	po := h.orderedPO(t, product, 10, 2500)
@@ -22,10 +22,14 @@ func TestIntegration_PostedBillTotalCentsAsOf(t *testing.T) {
 		t.Fatalf("receive: %v", err)
 	}
 
-	// The reads bracket the test's own bill, so every other bill in the window cancels.
-	before, err := h.svc.PostedBillTotalCentsAsOf(h.ctx, time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC))
+	stamp := time.Now()
+	// The reads bracket the test's own bill, so every other open obligation in the window cancels.
+	// The harness wires the GL journal clock as production does, so the bill counts from its
+	// posting journal's effective instant: its posted_at, or, filed late, the end of the month its
+	// document date names. Both sit past the before read.
+	before, err := h.svc.APAging(h.ctx, stamp.Add(time.Minute), BranchReach{Global: true})
 	if err != nil {
-		t.Fatalf("posted bill total before the bill: %v", err)
+		t.Fatalf("aging before the bill: %v", err)
 	}
 
 	bill, err := h.svc.CreateBill(h.ctx, CreateBillRequest{
@@ -42,21 +46,24 @@ func TestIntegration_PostedBillTotalCentsAsOf(t *testing.T) {
 		t.Fatalf("post bill: %v", err)
 	}
 
-	// After the post the bill is in the balance.
-	after, err := h.svc.PostedBillTotalCentsAsOf(h.ctx, time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC))
+	// After the post the bill is in the balance. The harness also wires the landed cost payables,
+	// but this test plants none, so the total moves by the bill alone.
+	after, err := h.svc.APAging(h.ctx, stamp.Add(time.Minute), BranchReach{Global: true})
 	if err != nil {
-		t.Fatalf("posted bill total as of the 15th: %v", err)
+		t.Fatalf("aging after the post: %v", err)
 	}
-	if after != before+25000 {
-		t.Fatalf("posted bill total moved %d, want exactly the bill's 25000", after-before)
+	if after.TotalCents != before.TotalCents+25000 {
+		t.Fatalf("aging moved %d, want exactly the bill's 25000", after.TotalCents-before.TotalCents)
 	}
 
-	// Before the bill's date the read does not count it.
-	early, err := h.svc.PostedBillTotalCentsAsOf(h.ctx, time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC))
+	// Before the bill's document date the read does not count it: the 15th of July sits before the
+	// bill's own 2026-08-01, and so before every instant the bill's journal can count at, posted
+	// now or filed late.
+	early, err := h.svc.APAging(h.ctx, time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC), BranchReach{Global: true})
 	if err != nil {
-		t.Fatalf("posted bill total before the bill date: %v", err)
+		t.Fatalf("aging before the bill date: %v", err)
 	}
-	if early != after-25000 {
-		t.Fatalf("posted bill total before the bill date is %d over the earlier read, want exactly 25000 less", early-after+25000)
+	if early.TotalCents != after.TotalCents-25000 {
+		t.Fatalf("aging before the bill date is %d over the earlier read, want exactly 25000 less", early.TotalCents-after.TotalCents+25000)
 	}
 }
