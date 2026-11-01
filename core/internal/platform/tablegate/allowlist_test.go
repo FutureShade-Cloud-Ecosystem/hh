@@ -209,6 +209,15 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "billing",
+		file:   "core/internal/billing/holdback_release.go",
+		tables: []string{"customers"},
+		// The due to release list names the customer on each row in the same
+		// query (no read per row), so the confirm can say who the money is held
+		// for: the customer's display name, read only.
+		reason: "the holdback due to release read joins customers for the display name of each row in the one query; read only",
+	},
+	{
+		module: "billing",
 		file:   "core/internal/billing/gl_seam.go",
 		tables: []string{"payment_allocations", "payment_reapplications", "payments"},
 		// the file's own doc: ARBalanceCents is the 1100 tie-out's subledger

@@ -632,3 +632,121 @@ test("fix r3: a job over two branches names both, and the confirm names no branc
   await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
   await expect(page.locator("[data-notice]")).toContainText(nb("Released $5,460.00 on lien job GLS-2103: 2 invoices."));
 });
+
+// ---- P058: the customer's name on the confirm, a late lien date named, and RT-3b's two key legs ----
+
+test("p058: the confirm names the customer the core's row names", async ({ page, request }) => {
+  await openDue(page, request);
+  await due(page, "GLS-2105").getByRole("button", { name: "Release" }).click();
+  const words = page.locator("[data-due-panel] [data-confirm-words]");
+  await expect(words).toContainText("for Summit Ridge Builders (");
+  await expect(words).toContainText(nb("lien job GLS-2105"));
+});
+
+test("p058: a lien recorded after the job's last day to preserve says so in neutral words, on record and on the job's panel", async ({ page, request }) => {
+  await openLiens(page, request);
+  // GLS-2105 counts 45 days from 75 days ago, so its last day to preserve was 30 days ago.
+  const lastDay = dayFrom(-30);
+  const recorded = dayFrom(-2);
+  await liensTab(page, "jobs");
+  await page.locator("[data-row='job'][data-job-no='GLS-2105']:visible").getByRole("button", { name: "Open" }).click();
+  const doors = page.locator("[data-doors]");
+  await doors.getByLabel("Lien preserved on").fill(recorded);
+  await doors.getByRole("button", { name: "Record preserved lien" }).click();
+  const sentence = `The recorded date, ${shown(recorded)}, is after the last day to preserve, ${shown(lastDay)}.`;
+  await expect(page.locator("[data-notice]")).toContainText(sentence);
+  await expect(doors.locator("[data-lien-state]")).toContainText(sentence);
+  // Neutral: it states the two dates and does not rule on the lien.
+  await expect(doors.locator("[data-lien-state]")).not.toContainText(/invalid|too late|expired|void/i);
+});
+
+test("p058: a lien recorded on or before the last day to preserve carries no such sentence", async ({ page, request }) => {
+  await openLiens(page, request);
+  await liensTab(page, "jobs");
+  await page.locator("[data-row='job'][data-job-no='GLS-2105']:visible").getByRole("button", { name: "Open" }).click();
+  const doors = page.locator("[data-doors]");
+  await doors.getByLabel("Lien preserved on").fill(dayFrom(-40));
+  await doors.getByRole("button", { name: "Record preserved lien" }).click();
+  await expect(page.locator("[data-notice]")).toContainText(nb("Recorded: a lien was preserved on lien job GLS-2105."));
+  await expect(doors.locator("[data-lien-state]")).toContainText("A lien was preserved on");
+  await expect(doors.locator("[data-lien-state]")).not.toContainText("is after the last day to preserve");
+  await expect(page.locator("[data-notice]")).not.toContainText("is after the last day to preserve");
+});
+
+const heldKeysText = (page: Page) =>
+  page.evaluate(() => {
+    const store = (window as unknown as { __realSession: Storage }).__realSession ?? window.sessionStorage;
+    return Object.keys(store)
+      .filter((k) => k.includes("lien-due."))
+      .map((k) => store.getItem(k) ?? "")
+      .join("");
+  });
+
+test("p058 P3-A: with session storage blocked, a retried release reuses its key", async ({ page, request }) => {
+  // Session storage works for the sign in, then throws on every read and write once the flag is set.
+  await page.addInitScript(() => {
+    const real = window.sessionStorage;
+    (window as unknown as { __realSession: Storage }).__realSession = real;
+    const blocked = new Proxy(real, {
+      get(target, prop) {
+        if ((window as unknown as { __blockStorage?: boolean }).__blockStorage === true) throw new Error("session storage is blocked");
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    Object.defineProperty(window, "sessionStorage", { configurable: true, get: () => blocked });
+  });
+  await openDue(page, request);
+  await page.evaluate(() => {
+    (window as unknown as { __blockStorage: boolean }).__blockStorage = true;
+  });
+  const keys = await watchReleases(page, "abort");
+  await pressRelease(page);
+  await expect(page.locator("[data-error]").first()).toBeVisible();
+  await pressRelease(page);
+  await expect(page.locator("[data-notice]")).toContainText(nb("Released $13,800.00 on lien job GLS-2105: 2 invoices."));
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).toBe(keys[0]);
+});
+
+test("p058 delta 3: a key kept by a failed read is dropped once a later good read shows the job no longer due, so the next release is a new press", async ({ page, request }) => {
+  await openDue(page, request);
+  const keys: string[] = [];
+  const releaseIds: string[] = [];
+  let failReads = false;
+  await page.route(RELEASES, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    keys.push((route.request().postDataJSON() as { idempotency_key: string }).idempotency_key);
+    if (keys.length === 1) {
+      // The core makes the release; the answer is lost, and the reads after it fail.
+      const res = await route.fetch();
+      for (const item of ((await res.json()) as { items: Array<{ release_id: string }> }).items) releaseIds.push(item.release_id);
+      failReads = true;
+      return route.abort();
+    }
+    return route.continue();
+  });
+  await page.route("**/api/v1/ar/holdback/due-to-release**", async (route) => {
+    if (failReads) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "internal error" }) });
+    return route.continue();
+  });
+  await pressRelease(page);
+  await expect(page.locator("[data-error]").first()).toBeVisible();
+  await expect(due(page, "GLS-2105").getByRole("button", { name: "Release" })).toHaveCount(0);
+  // The failed read knows nothing: the key is kept.
+  expect(await heldKeysText(page)).toContain(keys[0]);
+  // A later good read shows the job released, so the key ends.
+  failReads = false;
+  await page.getByRole("button", { name: "Try again" }).first().click();
+  await expect(page.locator("[data-row='due']:visible").first()).toBeVisible();
+  await expect.poll(() => heldKeysText(page)).not.toContain(keys[0]);
+  // The release is reversed elsewhere; the job falls due again, and its next release is a new press with a new key.
+  for (const id of releaseIds) await behind(request, "POST", `/api/v1/ar/holdback/releases/${id}/reversal`, { reason: "reversed at another desk" });
+  await liensTab(page, "jobs");
+  await liensTab(page, "due");
+  await expect(due(page, "GLS-2105").getByRole("button", { name: "Release" })).toBeVisible();
+  await pressRelease(page);
+  await expect(page.locator("[data-notice]")).toContainText(nb("Released $13,800.00 on lien job GLS-2105: 2 invoices."));
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).not.toBe(keys[0]);
+});
