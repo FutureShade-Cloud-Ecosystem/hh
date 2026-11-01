@@ -30,7 +30,7 @@ import type { ShellTanyai } from "@hardscapehouse/shell-chrome/src/shell-tanyai.
 import { generatedTransport } from "@hardscapehouse/shell-chrome/src/tanyai-transport.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
-import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bootCustody, entryAfter, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { bandIdentity, demoNote } from "./band-identity.js";
 import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
@@ -562,7 +562,7 @@ export class MoneyDeskApp extends HHElement {
       this.#onSignOut();
       return;
     } else {
-      this.#entryView = entryUnavailable();
+      this.#entryView = entryAfter(outcome);
       if (outcome.kind === "front-door") this.#custody.toFrontDoor();
     }
     this.requestUpdate();

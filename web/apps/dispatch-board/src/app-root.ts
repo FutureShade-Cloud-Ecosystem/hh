@@ -21,7 +21,7 @@ import { framedByShell, listenForHostSignOut } from "@hardscapehouse/design-syst
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { readDealerName } from "@hardscapehouse/pos-kit/src/tenant-title.js";
-import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bootCustody, entryAfter, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { demoNote } from "./band-identity.js";
 import { entryStyles, renderEntry, type EntryView, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
@@ -215,7 +215,7 @@ export class DispatchBoardApp extends HHElement {
       this.#onSignOut();
       return;
     } else {
-      this.#entryView = entryUnavailable();
+      this.#entryView = entryAfter(outcome);
       if (outcome.kind === "front-door") this.#custody.toFrontDoor();
     }
     this.requestUpdate();

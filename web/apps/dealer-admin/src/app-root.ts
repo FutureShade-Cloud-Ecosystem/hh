@@ -30,10 +30,10 @@ import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard
 import type { DemoFlow } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
-import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bootCustody, entryAfter, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { bandIdentity } from "./band-identity.js";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
-import { signInLine } from "@hardscapehouse/pos-kit/src/ported/entry.js";
+import { offlineLine, signInLine } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { FRAMED_BAND_APP, framedBandSurface } from "./framed-band.js";
 import { DealerApi, type BranchRow, type ResetLink } from "./dealer-api.js";
@@ -407,7 +407,7 @@ export class DealerAdminApp extends HHElement {
   #warranty: WarrantyModel = emptyWarrantyModel();
 
   // The way in: this app's own door, one card per demo role.
-  #entryView: { flows: { kind: "loading" } | { kind: "unavailable" } | { kind: "signin" } | { kind: "ready"; flows: DemoFlow[] }; busy: boolean; message: string | null } = {
+  #entryView: { flows: { kind: "loading" } | { kind: "unavailable" } | { kind: "signin" } | { kind: "offline"; reason: "offline" | "unavailable" | "rate_limited" } | { kind: "ready"; flows: DemoFlow[] }; busy: boolean; message: string | null } = {
     flows: { kind: "loading" },
     busy: false,
     message: null,
@@ -963,7 +963,7 @@ export class DealerAdminApp extends HHElement {
       this.#onSignOut();
       return;
     } else {
-      this.#entryView = entryUnavailable();
+      this.#entryView = entryAfter(outcome);
       if (outcome.kind === "front-door") this.#custody.toFrontDoor();
     }
     this.requestUpdate();
@@ -2331,6 +2331,9 @@ export class DealerAdminApp extends HHElement {
     }
     if (view.flows.kind === "signin") {
       return html`<div class="stage">${signInLine("Dealer Admin", "notice-line")}</div>`;
+    }
+    if (view.flows.kind === "offline") {
+      return html`<div class="stage">${offlineLine("Dealer Admin", view.flows.reason, "notice-line")}</div>`;
     }
     if (view.flows.kind === "unavailable") {
       return html`<div class="stage"><p class="notice-line" role="status">The demo roles could not be loaded. Reload to try again.</p></div>`;

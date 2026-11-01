@@ -10,6 +10,7 @@
 // system under row 563 (take the existing and improve it).
 import { html, nothing, type TemplateResult } from "lit";
 import { servedConsoleConfig } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { offlineLine } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { demoNote } from "./band-identity.js";
 import { hhAddress } from "@hardscapehouse/design-system/src/address.js";
 import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
@@ -462,6 +463,7 @@ export type EntryFlows =
   | { kind: "loading" }
   | { kind: "unavailable" }
   | { kind: "signin" }
+  | { kind: "offline"; reason: "offline" | "unavailable" | "rate_limited" }
   | { kind: "ready"; flows: readonly DemoFlow[] };
 
 export interface EntryView {
@@ -486,7 +488,9 @@ export function renderEntry(view: EntryView): TemplateResult {
   if (view.flows.kind === "loading") {
     body = html`<p class="dim" role="status">Loading the demo.</p>`;
   } else if (view.flows.kind === "signin") {
-    body = html`<p class="dim" role="status">Sign in to open Drive. <a href="/">Go to sign in</a></p>`;
+    body = html`<p class="dim" role="status">Sign in to open Drive. <a href="/" target="_top">Go to sign in</a></p>`;
+  } else if (view.flows.kind === "offline") {
+    body = offlineLine("Drive", view.flows.reason, "dim");
   } else if (view.flows.kind === "unavailable") {
     body = html`<p class="alert alert-error" role="alert">The sign in list could not load. Check your signal and try again.</p>`;
   } else {

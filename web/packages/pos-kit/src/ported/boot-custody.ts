@@ -169,6 +169,17 @@ export type AppStart =
   | { kind: "front-door"; why: "no_session" | "forbidden" | "wrong_role" | "config" | "persona_refused" | "ended" }
   | { kind: "unavailable"; reason: "offline" | "unavailable" | "rate_limited" };
 
+/**
+ * The entry view for a custody outcome that is not ready. A front-door outcome means the person is being sent to
+ * sign in; an unavailable one means the session is untouched and the custody retries, so it reads as a blip.
+ */
+export function entryAfter(outcome: Exclude<AppStart, { kind: "ready" }>): EntryView {
+  if (outcome.kind === "unavailable") {
+    return { flows: { kind: "offline", reason: outcome.reason }, busy: false, message: null };
+  }
+  return entryUnavailable();
+}
+
 export interface BootDeps {
   sessions: SessionStore;
   /** The app's demo account: the controller's surface in demo mode. */

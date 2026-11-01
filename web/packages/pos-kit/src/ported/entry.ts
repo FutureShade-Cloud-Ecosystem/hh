@@ -34,6 +34,7 @@ export type FlowsState =
   | { kind: "unavailable"; status: number | null }
   /** A dealer's own box with no session: nothing failed and there are no demo roles, so the page asks for a sign in. */
   | { kind: "signin" }
+  | { kind: "offline"; reason: "offline" | "unavailable" | "rate_limited" }
   | { kind: "ready"; flows: DemoFlow[] };
 
 export interface EntryView {
@@ -206,8 +207,7 @@ export const entryStyles = css`
     margin: 0 0 var(--hh-s-24);
   }
   .signin-link {
-    display: inline-block;
-    margin-inline-start: var(--hh-s-8);
+    white-space: nowrap;
     color: var(--hh-accent-text);
     font-weight: 600;
   }
@@ -221,7 +221,7 @@ const stage = (content: TemplateResult): TemplateResult => html`<div class="stag
  * yard app says its own thing and shows no Coming list (the front door already carries it).
  */
 export interface EntryCopy {
-  /** The app's name, for the sign in line on a dealer's own box ("Sign in to open the Money Desk."). */
+  /** The app's name, for the sign in line on a dealer's own box ("Sign in to open Money Desk."). */
   readonly app?: string;
   readonly headline?: string;
   readonly intro?: string;
@@ -234,9 +234,24 @@ export interface EntryCopy {
  */
 export function signInLine(app: string | undefined, className = "notice"): TemplateResult {
   return html`<p class=${className} role="status">
-    Sign in to open ${app === undefined ? "this app" : `the ${app}`}.
-    <a class="signin-link" href="/">Go to sign in</a>
+    Sign in to open ${app === undefined ? "this app" : app}.
+    <a class="signin-link" href="/" target="_top">Go to sign in</a>
   </p>`;
+}
+
+/**
+ * The line a dealer's own box shows a signed in person whose app cannot reach the core for now: the session is
+ * untouched and the custody tries again on its own. No demo words, no sign in.
+ */
+export function offlineLine(app: string | undefined, reason: "offline" | "unavailable" | "rate_limited", className = "notice"): TemplateResult {
+  const name = app === undefined ? "This app" : app;
+  const words =
+    reason === "offline"
+      ? `${name} cannot reach the server just now. It will try again on its own.`
+      : reason === "unavailable"
+        ? `The server is not answering just now. ${name} will try again on its own.`
+        : `The server is busy just now. ${name} will try again on its own.`;
+  return html`<p class=${className} role="status">${words}</p>`;
 }
 
 export function renderEntry(view: EntryView, copy: EntryCopy = {}): TemplateResult {
@@ -245,6 +260,9 @@ export function renderEntry(view: EntryView, copy: EntryCopy = {}): TemplateResu
   }
   if (view.flows.kind === "signin") {
     return stage(signInLine(copy.app));
+  }
+  if (view.flows.kind === "offline") {
+    return stage(offlineLine(copy.app, view.flows.reason));
   }
   if (view.flows.kind === "unavailable") {
     // The failures say different things, so the page does not claim more than
