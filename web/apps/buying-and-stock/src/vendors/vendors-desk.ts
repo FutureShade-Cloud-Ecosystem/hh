@@ -64,7 +64,7 @@ export class VendorsDesk implements AreaDesk {
     const vendors = await this.#api.list();
     if (!vendors.ok) {
       this.#phase = "error";
-      this.#error = refusalWords("load", vendors.error, vendors.status);
+      this.#error = refusalWords("load", vendors.error, vendors.status, vendors.code);
       this.#host.repaint();
       return;
     }
@@ -214,7 +214,7 @@ export class VendorsDesk implements AreaDesk {
 
   #fail(result: Failure): void {
     this.#notice = "";
-    this.#error = refusalWords("vendor", result.error, result.status);
+    this.#error = refusalWords("vendor", result.error, result.status, result.code);
   }
 
   /**
@@ -453,7 +453,7 @@ export class VendorsDesk implements AreaDesk {
     this.#host.repaint();
     const found = await this.#api.orderByRef(ref);
     if (found.ok) this.#lookup = found.value;
-    else this.#lookupError = refusalWords("vendor", found.error, found.status);
+    else this.#lookupError = refusalWords("vendor", found.error, found.status, found.code);
     this.#busy = false;
     this.#host.repaint();
   }

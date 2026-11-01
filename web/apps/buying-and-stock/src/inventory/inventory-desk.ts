@@ -105,7 +105,7 @@ export class InventoryDesk {
 
   #loadFailed(result: Extract<Result<unknown>, { ok: false }>): void {
     this.#phase = "error";
-    this.#error = refusalWords("load", result.error, result.status);
+    this.#error = refusalWords("load", result.error, result.status, undefined, result.code);
     this.#repaint();
   }
 
@@ -114,9 +114,9 @@ export class InventoryDesk {
     if (branches.ok) this.#branchNames = new Map(branches.value.map((b) => [b.id, b.name]));
   }
 
-  #fail(action: string, result: { ok: false; error: string; status?: number }): void {
+  #fail(action: string, result: { ok: false; error: string; status?: number; code?: string }): void {
     this.#notice = "";
-    this.#error = refusalWords(this.#words(action), result.error, result.status);
+    this.#error = refusalWords(this.#words(action), result.error, result.status, undefined, result.code);
   }
 
   #clearMessages(): void {
