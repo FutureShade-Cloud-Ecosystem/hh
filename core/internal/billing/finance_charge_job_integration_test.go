@@ -188,11 +188,9 @@ func TestIntegration_W3FC1B_EnablingTheJobMakesTheWorkerRun(t *testing.T) {
 		fcDelete(t, r.pool, "job_schedules", `UPDATE job_schedules SET enabled = $2, next_run_at = $3, last_run_at = $4, last_status = $5, last_error = $6, updated_at = now() WHERE name = $1`,
 			FinanceChargeJobName, wasEnabled, wasNext, wasLast, wasStatus, wasErr)
 	})
-	// Nothing else may be due, or the tick would run it too.
-	var other int
-	if err := r.pool.QueryRow(r.ctx, `SELECT COUNT(*) FROM job_schedules WHERE enabled AND next_run_at IS NOT NULL AND next_run_at <= now() AND name <> $1`, FinanceChargeJobName).Scan(&other); err != nil || other != 0 {
-		t.Fatalf("W3-FC1b red: %d other schedules are due on the shared database (%v), the leg cannot tick in isolation", other, err)
-	}
+	// Nothing else may be due, or the tick would claim and stamp it too: clear the other schedules' slots
+	// for the leg and put each back after.
+	fcQuietOtherSchedules(t, r, FinanceChargeJobName)
 
 	w := r.writer(func() time.Time { return time.Date(2026, 10, 1, 0, 0, 0, 0, fc1Loc()) })
 	runner := jobs.NewRunner(jobs.NewRepository(r.pool), nil).Register(FinanceChargeJobName, func(ctx context.Context) (jobs.Result, error) {
@@ -222,4 +220,35 @@ func TestIntegration_W3FC1B_EnablingTheJobMakesTheWorkerRun(t *testing.T) {
 	if err := r.pool.QueryRow(r.ctx, `SELECT status, rows_written FROM job_runs WHERE job_name = $1 AND created_at > $2 ORDER BY created_at DESC LIMIT 1`, FinanceChargeJobName, baseline).Scan(&status, &written); err != nil || status != "SUCCEEDED" || written != 1 {
 		t.Fatalf("W3-FC1b red: the run record = %s, %d written (%v), want SUCCEEDED with 1", status, written, err)
 	}
+}
+
+// fcQuietOtherSchedules nulls the next slot of every schedule row except the named ones, so a tick in the
+// leg claims nothing else, and restores each row's slot in the leg's cleanup. Another package's legs on
+// the same database (internal/jobs arms every enabled row) can leave a slot due, and a leg must not
+// refuse to run for it. Every statement fails the test loudly.
+func fcQuietOtherSchedules(t *testing.T, r *fcRig, keep ...string) {
+	t.Helper()
+	rows, err := r.pool.Query(r.ctx, `SELECT name, next_run_at FROM job_schedules WHERE next_run_at IS NOT NULL AND NOT (name = ANY($1::text[]))`, keep)
+	if err != nil {
+		t.Fatalf("read the other schedules: %v", err)
+	}
+	saved := map[string]time.Time{}
+	for rows.Next() {
+		var name string
+		var next time.Time
+		if err := rows.Scan(&name, &next); err != nil {
+			t.Fatalf("scan a schedule: %v", err)
+		}
+		saved[name] = next
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read the other schedules: %v", err)
+	}
+	fcDelete(t, r.pool, "job_schedules", `UPDATE job_schedules SET next_run_at = NULL WHERE next_run_at IS NOT NULL AND NOT (name = ANY($1::text[]))`, keep)
+	t.Cleanup(func() {
+		for name, next := range saved {
+			fcDelete(t, r.pool, "job_schedules", `UPDATE job_schedules SET next_run_at = $2 WHERE name = $1`, name, next)
+		}
+	})
 }

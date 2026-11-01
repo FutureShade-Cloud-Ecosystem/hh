@@ -1604,6 +1604,41 @@ type BillingFinanceChargeRunList struct {
 	NextCursor *string                        `json:"next_cursor"`
 }
 
+type BillingFinanceJobEnabledRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+type BillingFinanceJob struct {
+	Name       string     `json:"name"`
+	Enabled    bool       `json:"enabled"`
+	NextRunAt  *time.Time `json:"next_run_at,omitempty"`
+	LastRunAt  *time.Time `json:"last_run_at,omitempty"`
+	LastStatus *string    `json:"last_status,omitempty"`
+	LastError  *string    `json:"last_error,omitempty"`
+}
+
+type BillingFinanceJobList struct {
+	Items      []BillingFinanceJob `json:"items"`
+	NextCursor *string             `json:"next_cursor"`
+}
+
+type BillingFinanceChargeWaiverListItem struct {
+	CustomerId   string     `json:"customer_id"`
+	CustomerName string     `json:"customer_name"`
+	AccountNo    string     `json:"account_no"`
+	Reason       string     `json:"reason"`
+	Active       bool       `json:"active"`
+	WaivedBy     *string    `json:"waived_by,omitempty"`
+	WaivedAt     time.Time  `json:"waived_at"`
+	ClearedBy    *string    `json:"cleared_by,omitempty"`
+	ClearedAt    *time.Time `json:"cleared_at,omitempty"`
+}
+
+type BillingFinanceChargeWaiverList struct {
+	Items      []BillingFinanceChargeWaiverListItem `json:"items"`
+	NextCursor *string                              `json:"next_cursor"`
+}
+
 type BillingFinanceChargeWaiverRequest struct {
 	Reason string `json:"reason"`
 }
