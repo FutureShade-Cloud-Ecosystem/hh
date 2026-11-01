@@ -14,7 +14,7 @@ import { offlineLine } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { demoNote } from "./band-identity.js";
 import { hhAddress } from "@hardscapehouse/design-system/src/address.js";
 import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
-import type { DemoFlow } from "@hardscapehouse/api-client";
+import { isLostSignal, type DemoFlow } from "@hardscapehouse/api-client";
 import type { DriverLine, DriverRun, DriverStop } from "./drive-api.js";
 import {
   ATTESTATION,
@@ -461,7 +461,7 @@ export function renderClose(model: CloseModel): TemplateResult {
 
 export type EntryFlows =
   | { kind: "loading" }
-  | { kind: "unavailable" }
+  | { kind: "unavailable"; failure?: { status?: number; code?: string } }
   | { kind: "signin" }
   | { kind: "offline"; reason: "offline" | "unavailable" | "rate_limited" }
   | { kind: "ready"; flows: readonly DemoFlow[] };
@@ -492,7 +492,10 @@ export function renderEntry(view: EntryView): TemplateResult {
   } else if (view.flows.kind === "offline") {
     body = offlineLine("Drive", view.flows.reason, "dim");
   } else if (view.flows.kind === "unavailable") {
-    body = html`<p class="alert alert-error" role="alert">The sign in list could not load. Check your signal and try again.</p>`;
+    const lost = isLostSignal({ ok: false, ...(view.flows.failure ?? {}) });
+    body = html`<p class="alert alert-error" role="alert">${lost
+      ? "The sign in list could not load. Check your signal and try again."
+      : "The sign in list could not load. The server had a problem. Try again in a moment."}</p>`;
   } else {
     const flow = view.flows.flows.find((f) => f.flow === DRIVER_FLOW);
     body =

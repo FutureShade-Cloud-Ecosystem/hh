@@ -276,7 +276,7 @@ test("a name the door would refuse blocks the sign control, with the words", () 
 // ---- UX-17b & UX-17c: stop groups, load order line, house-zone staleness, and preset failure reasons ----
 import * as driveLogic from "../src/drive-logic.ts";
 import { loadOrderLine, nextStopOf, routeStops } from "../src/drive-logic.ts";
-import { stalenessWords } from "../src/views.ts";
+import { stalenessWords, renderEntry } from "../src/views.ts";
 
 test("preset failure reasons list the five board choices and resolveFailureReason requires free text only for Other, say what", () => {
   assert.deepEqual(driveLogic.FAILURE_REASON_PRESETS, [
@@ -354,4 +354,34 @@ test("stalenessWords includes the last pull clock time in the dealer's house zon
   assert.equal(eveningWords.includes("\u202f"), false);
   assert.equal(eveningWords.includes("\u00a0"), false);
   assert.equal(stalenessWords({ neverPulled: true, ageMs: null }), "Never pulled");
+});
+
+// ---- UX-139: the sign-in list line and a wordless refusal follow the failure ----
+
+function entryText(failure) {
+  const flows = failure === undefined ? { kind: "unavailable" } : { kind: "unavailable", failure };
+  const view = renderEntry({ flows, busy: false, message: null });
+  const walk = (t) => t.strings.map((str, i) => str + (i < t.values.length ? (typeof t.values[i] === "string" ? t.values[i] : t.values[i] && t.values[i].strings ? walk(t.values[i]) : "") : "")).join("");
+  return walk(view);
+}
+
+test("the sign-in list line says check your signal only for a lost signal", () => {
+  const signal = "The sign in list could not load. Check your signal and try again.";
+  const server = "The sign in list could not load. The server had a problem. Try again in a moment.";
+  assert.ok(entryText({}).includes(signal));
+  assert.ok(entryText().includes(signal));
+  assert.ok(entryText({ status: 500 }).includes(server));
+  assert.ok(entryText({ status: 503 }).includes(server));
+  assert.ok(entryText({ code: MALFORMED_SUCCESS_CODE }).includes(server));
+  assert.ok(!entryText({ status: 500 }).includes("Check your signal"));
+});
+
+test("a wordless refusal is not called a server fault or a signal problem", () => {
+  const lead = "That move did not go through.";
+  const refused = `${lead} That was not accepted. Try again in a moment.`;
+  assert.equal(roadsideError("", { status: 409 }, lead), refused);
+  assert.equal(roadsideError("   ", { status: 422 }, lead), refused);
+  assert.equal(roadsideError("", { status: 400 }, "The photo did not send.", { retry: "add it again" }), "The photo did not send. That was not accepted. Add it again in a moment.");
+  assert.equal(roadsideError("", { status: 409 }, lead, { neutral: "Nothing changed." }), "Nothing changed.");
+  assert.equal(roadsideError("", { status: 500 }, lead), `${lead} The server had a problem. Try again in a moment.`);
 });

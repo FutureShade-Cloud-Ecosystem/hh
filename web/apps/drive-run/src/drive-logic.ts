@@ -235,7 +235,7 @@ export function formatGlossaryTime(ts: string | null | undefined, zone: string):
  * not load."). Signal advice follows it only when nothing answered
  * (`isLostSignal`); a server that answered with a fault, or answered success
  * with a body that was not JSON, gets a server line instead, because a
- * driver's signal was not the problem. `neutral` is a sentence that claims
+ * driver's signal was not the problem. A refusal with no sentence of its own (a 4xx) says it was not accepted. `neutral` is a sentence that claims
  * neither, used as it stands. `failure` is the result's status and
  * code, passed as the result carries them.
  */
@@ -257,7 +257,7 @@ export function roadsideError(
   if (status === 403) return "You are not allowed to do that on this run.";
   if (status === 404) return words.notFound ?? "That is no longer on your run.";
   const plain = plainSentence(error);
-  if (plain === "") return fallback();
+  if (plain === "") return words.neutral ?? `${lead} That was not accepted. ${retry.charAt(0).toUpperCase()}${retry.slice(1)} in a moment.`;
   const cased = plain.charAt(0).toUpperCase() + plain.slice(1);
   return /[.!?]$/.test(cased) ? cased : `${cased}.`;
 }
