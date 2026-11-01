@@ -133,6 +133,6 @@ test("The Quote Desk: in console mode a branch that does not resolve never signs
   const guard = failure.indexOf('this.#custody.mode === "console"');
   const demoSignOut = failure.indexOf("this.#controller.signOut()");
   assert.ok(guard !== -1 && demoSignOut !== -1 && guard < demoSignOut, "the console branch must come before the demo sign out");
-  assert.match(root, /#consoleStartFailed\(status: number \| undefined\)/);
+  assert.match(root, /#consoleStartFailed\(status: number \| undefined, code\?: string\)/);
   assert.match(root, /this\.#custody\.retry\("quote-desk"/);
 });

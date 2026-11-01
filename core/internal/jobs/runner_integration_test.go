@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -50,6 +51,10 @@ func jobsPool(t *testing.T) *pgxpool.Pool {
 		return nil
 	}
 	t.Cleanup(pool.Close)
+	// Row 0.54: the leg leaves the shared database as it found it; the sweep is registered before the
+	// restore, so it runs after it.
+	legsweep.Register(t, pool)
+	legsweep.RestoreSeededRows(t, pool, "job_schedules")
 	return pool
 }
 

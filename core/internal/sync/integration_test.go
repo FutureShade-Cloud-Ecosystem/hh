@@ -78,6 +78,7 @@ func intPool(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 	legsweep.Register(t, pool)
+	auditSince := auditMark(t, pool)
 	if err := testkit.Build(context.Background(), testkit.PgxPool(pool)); err != nil {
 		t.Fatalf("fixture build: %v", err)
 	}
@@ -85,7 +86,7 @@ func intPool(t *testing.T) *pgxpool.Pool {
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx, `DELETE FROM tasks WHERE org_id IN ($1::uuid, $2::uuid)`, testkit.OrgNorthID, testkit.OrgSouthID)
 		_, _ = pool.Exec(ctx, `DELETE FROM scope_sequences WHERE scope = 'pick_tasks'`)
-		_, _ = pool.Exec(ctx, `DELETE FROM audit_log WHERE entity_type = 'sync.pick_tasks'`)
+		deleteOwnAudit(t, pool, auditSince, "sync.pick_tasks")
 		_ = testkit.Cleanup(ctx, testkit.PgxPool(pool))
 	})
 	return pool

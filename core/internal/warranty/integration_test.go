@@ -22,6 +22,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -58,6 +59,10 @@ func intPool(t *testing.T) *pgxpool.Pool {
 		fail("integration DB missing warranty schema (migrate + seed hos_wty01 first): %v", err)
 	}
 	t.Cleanup(pool.Close)
+	// Row 0.54: the leg leaves the shared database as it found it (registered before the leg's own
+	// cleanups below, so the sweep runs after them).
+	legsweep.Register(t, pool)
+	legsweep.RestoreSeededRows(t, pool, "warranty_policy", "warranty_vendor_profiles")
 
 	// - W5-B: FIXTURES RESTORE WHAT THEY TOUCH -
 	// Every integration test here captures claims and most of them settle one. Before Wave 5 that residue was
