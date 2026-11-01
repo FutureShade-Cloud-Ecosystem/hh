@@ -335,6 +335,12 @@ func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, st
 	if hasDuplicates(req.InvoiceIDs) {
 		return Payment{}, httpx.BadRequestf("an invoice may be selected only once")
 	}
+	// The shown amount is required here too, whatever the caller (row 0.51): the doors keep their own early
+	// call so the words stay at the door, and a door that forgets it cannot charge the re-quote unseen. This
+	// is before the replay read, the quote, the claim and the gateway.
+	if err := RequireShownAmount(req.ExpectedCents); err != nil {
+		return Payment{}, err
+	}
 
 	// - DIB-415 replay fast path, BEFORE any re-validation of the world -
 	// A replay is by definition the same request, and the same request must get the same answer.
@@ -394,7 +400,7 @@ func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, st
 	// must equal it, or the request is refused here, before an intent is claimed and before the gateway
 	// is touched. Without this the clock (a discount day ending under an open sheet) or a desk payment
 	// could move the amount between the list and the tap and charge more than the button said.
-	if req.ExpectedCents > 0 && req.ExpectedCents != sum {
+	if req.ExpectedCents != sum {
 		return Payment{}, ErrAmountChanged
 	}
 

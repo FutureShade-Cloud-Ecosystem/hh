@@ -43,7 +43,7 @@ func settleRefusedRig(t *testing.T, refuse error) (*settleRefusingStore, *spyGat
 	if err != nil {
 		t.Fatalf("add method: %v", err)
 	}
-	return store, gw, svc, PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID}
+	return store, gw, svc, PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID, ExpectedCents: 5000}
 }
 
 func assertInFlightNotBadRequest(t *testing.T, err error) {
@@ -153,7 +153,7 @@ func TestPay_ChargingWithoutRefStaysInFlightAndNeverRecharges(t *testing.T) {
 	svc := NewService(store, gw)
 	ctx := context.Background()
 	m, _ := svc.AddMethod(ctx, tenantA, AddMethodRequest{Nonce: "n1"})
-	req := PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID}
+	req := PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID, ExpectedCents: 5000}
 	store.intents = map[string]*Intent{idempotencyKey(tenantA, req): {
 		ID: "intent-x", Status: IntentCharging, AmountCents: 5000, CustomerID: tenantA,
 	}}

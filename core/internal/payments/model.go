@@ -55,8 +55,9 @@ type PayRequest struct {
 	PaymentMethodID string   `json:"payment_method_id"` // a stored method ...
 	Nonce           string   `json:"nonce"`             // ... OR add-at-checkout
 	IdempotencyKey  string   `json:"idempotency_key"`
-	// ExpectedCents is the amount the customer's Pay button showed. When it is set the core re-quotes
-	// at the tap and refuses, before any intent is claimed, if its quote differs (ErrAmountChanged).
+	// ExpectedCents is the amount the customer's Pay button showed, in cents, above zero. It is required:
+	// the service refuses a missing one before anything is quoted, claimed or charged, and re-quotes at the
+	// tap and refuses, before any intent is claimed, if its quote differs (ErrAmountChanged).
 	ExpectedCents int64 `json:"expected_cents,omitempty"`
 }
 

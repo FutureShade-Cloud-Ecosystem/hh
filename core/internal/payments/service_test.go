@@ -417,6 +417,7 @@ func TestPay_ApprovesAndSumsExcludingHoldback(t *testing.T) {
 	p, err := svc.Pay(ctx, tenantA, PayRequest{
 		InvoiceIDs:      []string{"inv-1", "inv-2"},
 		PaymentMethodID: m.ID,
+		ExpectedCents:   7000,
 	})
 	if err != nil {
 		t.Fatalf("pay: %v", err)
@@ -457,7 +458,7 @@ func TestPay_DeclinedMapsToErrDeclined(t *testing.T) {
 
 	m, _ := svc.AddMethod(ctx, tenantA, AddMethodRequest{Nonce: "n1"})
 
-	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID})
+	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID, ExpectedCents: 113})
 	if !errors.Is(err, ErrDeclined) {
 		t.Fatalf("expected ErrDeclined, got %v", err)
 	}
@@ -474,7 +475,7 @@ func TestPay_IdempotentReplay(t *testing.T) {
 	ctx := context.Background()
 
 	m, _ := svc.AddMethod(ctx, tenantA, AddMethodRequest{Nonce: "n1"})
-	req := PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID}
+	req := PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID, ExpectedCents: 5000}
 
 	first, err := svc.Pay(ctx, tenantA, req)
 	if err != nil {
@@ -502,7 +503,7 @@ func TestPay_CrossTenantInvoiceIsNotFound(t *testing.T) {
 	m, _ := svc.AddMethod(ctx, tenantA, AddMethodRequest{Nonce: "n1"})
 
 	// Tenant A pays an invoice it does not own -> not-found, never a cross-tenant charge.
-	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID})
+	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID, ExpectedCents: 5000})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for a cross-tenant invoice, got %v", err)
 	}
@@ -520,7 +521,7 @@ func TestPay_NoPayableBalanceRejected(t *testing.T) {
 
 	m, _ := svc.AddMethod(ctx, tenantA, AddMethodRequest{Nonce: "n1"})
 
-	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID})
+	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID, ExpectedCents: 5000})
 	if err == nil || errors.Is(err, ErrDeclined) {
 		t.Fatalf("expected a bad-request (no payable balance), got %v", err)
 	}
@@ -541,7 +542,7 @@ func TestPay_ZeroPayableInSelectionRejectedBeforeCharge(t *testing.T) {
 
 	m, _ := svc.AddMethod(ctx, tenantA, AddMethodRequest{Nonce: "n1"})
 
-	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1", "inv-2"}, PaymentMethodID: m.ID})
+	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1", "inv-2"}, PaymentMethodID: m.ID, ExpectedCents: 5000})
 	var bre httpx.BadRequestError
 	if !errors.As(err, &bre) {
 		t.Fatalf("want httpx.BadRequestError for a zero-payable invoice, got %T %v", err, err)
@@ -566,7 +567,7 @@ func TestPay_NonPayableStatusRejectedBeforeCharge(t *testing.T) {
 
 	m, _ := svc.AddMethod(ctx, tenantA, AddMethodRequest{Nonce: "n1"})
 
-	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1", "inv-2"}, PaymentMethodID: m.ID})
+	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1", "inv-2"}, PaymentMethodID: m.ID, ExpectedCents: 5000})
 	var bre httpx.BadRequestError
 	if !errors.As(err, &bre) {
 		t.Fatalf("want httpx.BadRequestError for a PAID invoice, got %T %v", err, err)
@@ -590,7 +591,7 @@ func TestPay_RemovedMethodIsNotFound(t *testing.T) {
 		t.Fatalf("remove method: %v", err)
 	}
 
-	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID})
+	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1"}, PaymentMethodID: m.ID, ExpectedCents: 5000})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound charging a removed method, got %v", err)
 	}
@@ -611,7 +612,7 @@ func TestPay_DuplicateInvoiceRejected(t *testing.T) {
 
 	m, _ := svc.AddMethod(ctx, tenantA, AddMethodRequest{Nonce: "n1"})
 
-	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1", "inv-1"}, PaymentMethodID: m.ID})
+	_, err := svc.Pay(ctx, tenantA, PayRequest{InvoiceIDs: []string{"inv-1", "inv-1"}, PaymentMethodID: m.ID, ExpectedCents: 5000})
 	if err == nil {
 		t.Fatal("expected a duplicate-invoice rejection")
 	}

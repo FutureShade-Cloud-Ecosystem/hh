@@ -147,7 +147,7 @@ func TestService_RefusesToChargeWithoutTheIntentGuard(t *testing.T) {
 	if svc.GuardedByIntent() {
 		t.Fatal("a store with no intent support must not report the guard as active")
 	}
-	_, err := svc.Pay(t.Context(), "cust", PayRequest{InvoiceIDs: []string{"inv"}, Nonce: "n"})
+	_, err := svc.Pay(t.Context(), "cust", PayRequest{InvoiceIDs: []string{"inv"}, Nonce: "n", ExpectedCents: 1})
 	if err == nil {
 		t.Fatal("a service with no intent guard CHARGED, a payment path with no double-charge guard is " +
 			"not a degraded mode, it is the bug DIB-415 exists to close")

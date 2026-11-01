@@ -420,21 +420,47 @@ func sweepFingerprint(ctx context.Context, pool *pgxpool.Pool, plan *sweepPlan, 
 		parts = append(parts, fmt.Sprintf(`SELECT %d AS i, count(*) AS n, '' AS h FROM %s`, len(names), n))
 		names = append(names, n)
 	}
-	rows, err := pool.Query(ctx, strings.Join(parts, " UNION ALL "))
+	fp := make(map[string]sweepFP, len(names))
+	err := sweepRead(ctx, pool, strings.Join(parts, " UNION ALL "), func(rows pgx.Rows) error {
+		for rows.Next() {
+			var i int
+			var f sweepFP
+			if err := rows.Scan(&i, &f.n, &f.hash); err != nil {
+				return err
+			}
+			fp[names[i]] = f
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	fp := make(map[string]sweepFP, len(names))
-	for rows.Next() {
-		var i int
-		var f sweepFP
-		if err := rows.Scan(&i, &f.n, &f.hash); err != nil {
-			return nil, err
-		}
-		fp[names[i]] = f
+	return fp, nil
+}
+
+// sweepRead runs one read only query in its own transaction with parallel query off, and hands
+// the rows to scan. The fingerprint and the snapshot are one UNION ALL over every swept table,
+// which Postgres plans as a Parallel Append; its workers need dynamic shared memory, and a
+// server with a small /dev/shm (a CI service container) refuses with SQLSTATE 53100 "could not
+// resize shared memory segment". SET LOCAL max_parallel_workers_per_gather = 0 keeps the same
+// single round trip and the same result, and needs no segment. It was chosen over reading table
+// by table because that would turn one round trip into hundreds. The setting dies with the
+// transaction, so no pooled connection carries it away.
+func sweepRead(ctx context.Context, pool *pgxpool.Pool, sql string, scan func(rows pgx.Rows) error) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
 	}
-	return fp, rows.Err()
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SET LOCAL max_parallel_workers_per_gather = 0`); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, sql)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	return scan(rows)
 }
 
 // sweepSnapshot reads the row keys and row hashes (and, for the restorable tables, the row
@@ -458,30 +484,31 @@ func sweepSnapshot(ctx context.Context, pool *pgxpool.Pool, plan *sweepPlan, onl
 	if len(parts) == 0 {
 		return snap, nil
 	}
-	rows, err := pool.Query(ctx, strings.Join(parts, " UNION ALL "))
+	err := sweepRead(ctx, pool, strings.Join(parts, " UNION ALL "), func(rows pgx.Rows) error {
+		for rows.Next() {
+			var ti int
+			var k, h, img string
+			if err := rows.Scan(&ti, &k, &h, &img); err != nil {
+				return err
+			}
+			name := names[ti]
+			if snap.rows[name] == nil {
+				snap.rows[name] = map[string]string{}
+			}
+			snap.rows[name][k] = h
+			if img != "" {
+				if snap.images[name] == nil {
+					snap.images[name] = map[string]string{}
+				}
+				snap.images[name][k] = img
+			}
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var ti int
-		var k, h, img string
-		if err := rows.Scan(&ti, &k, &h, &img); err != nil {
-			return nil, err
-		}
-		name := names[ti]
-		if snap.rows[name] == nil {
-			snap.rows[name] = map[string]string{}
-		}
-		snap.rows[name][k] = h
-		if img != "" {
-			if snap.images[name] == nil {
-				snap.images[name] = map[string]string{}
-			}
-			snap.images[name][k] = img
-		}
-	}
-	return snap, rows.Err()
+	return snap, nil
 }
 
 // sweepFPDiff lists the tables whose fingerprints differ.
