@@ -34,6 +34,10 @@ type ruleStore interface {
 	ProvinceRule(ctx context.Context, province string) (ProvinceRule, bool, error)
 	JobOverride(ctx context.Context, customerJobID string) (*int, error)
 	LinkCustomerJob(ctx context.Context, lienJobID, customerJobID string) error
+	// LockJobLink takes the lien job's row FOR UPDATE and answers the customer job it is linked to now.
+	LockJobLink(ctx context.Context, lienJobID string) (string, error)
+	// JobHoldsInvoiceRows answers whether the job's ledger holds any invoice level row, on the caller's transaction.
+	JobHoldsInvoiceRows(ctx context.Context, lienJobID string) (bool, error)
 	ProvinceRules(ctx context.Context) ([]ProvinceRule, error)
 	RuleInputs(ctx context.Context, sitePro, customerJobID string) (RuleInputs, error)
 	// InTx runs fn on one transaction (the caller's when one rides ctx), so a change and its audit
@@ -242,19 +246,25 @@ func (s *Service) LinkCustomerJob(ctx context.Context, lienJobID, customerJobID 
 	// holds invoice level retention would let the old job level route (which reads only the link) and RT-3's
 	// release (which reads the job that holds the invoice) each release the same holdback, so both are
 	// refused in the same words. Linking the job it already has is no change.
-	if job.CustomerJobID != "" && customerJobID != job.CustomerJobID {
-		entries, err := s.store.HoldbackEntriesForJob(ctx, lienJobID)
+	//
+	// The check and the write share one transaction behind a row lock on the lien job (0.55): a withhold
+	// books RETENTION on a job only after taking the same row FOR SHARE (LinkedLienJobLocked), so either the
+	// withhold commits first and the check below sees its row, or the move commits first and the withhold
+	// reads the job as no longer linked to the invoice's customer job.
+	if err := s.rules().InTx(ctx, func(ctx context.Context) error {
+		before, err := s.rules().LockJobLink(ctx, lienJobID)
 		if err != nil {
-			return Job{}, err
+			return err
 		}
-		for _, e := range entries {
-			if e.InvoiceID != "" {
-				return Job{}, unprocessable("lien: job %s holds invoice level retention in its ledger, so it cannot be unlinked from its customer job; correct the invoices' holdback first", job.JobNo)
+		if before != "" && customerJobID != before {
+			held, err := s.rules().JobHoldsInvoiceRows(ctx, lienJobID)
+			if err != nil {
+				return err
+			}
+			if held {
+				return unprocessable("lien: job %s holds invoice level retention in its ledger, so it cannot be unlinked from its customer job; correct the invoices' holdback first", job.JobNo)
 			}
 		}
-	}
-	before := job.CustomerJobID
-	if err := s.rules().InTx(ctx, func(ctx context.Context) error {
 		if err := s.rules().LinkCustomerJob(ctx, lienJobID, customerJobID); err != nil {
 			return err
 		}

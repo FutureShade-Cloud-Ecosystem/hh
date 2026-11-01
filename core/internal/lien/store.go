@@ -26,6 +26,9 @@ type lienStore interface {
 	// InsertRetentionOnce books an invoice's positive RETENTION unless one is held, safe under concurrent
 	// callers; it answers the rows written.
 	InsertRetentionOnce(ctx context.Context, e HoldbackEntry) (int64, error)
+	// InsertRetentionOnceIfLinked is InsertRetentionOnce under the lien job's row lock, booking only while the
+	// job is still linked to the customer job (the holdback sync, 0.55).
+	InsertRetentionOnceIfLinked(ctx context.Context, e HoldbackEntry, customerJobID string) (int64, error)
 	HoldbackEntriesForJob(ctx context.Context, jobID string) ([]HoldbackEntry, error)
 	// HoldbackLedger returns every RETENTION/RELEASE row for a branch ("" = all) for the aging + triage roll-up.
 	HoldbackLedger(ctx context.Context, branchID string) ([]HoldbackEntry, error)

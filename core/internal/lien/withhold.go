@@ -30,22 +30,32 @@ type RetentionBooking struct {
 // BookRetention books one RETENTION row for an invoice's withholding on the lien job linked to the
 // invoice's customer job. It answers false (and writes nothing) when no lien job is linked or the
 // amount is not positive. A second call for the same invoice books nothing.
+//
+// Accepted (0.55): the invoice writer decides to withhold with the unlocked HasLinkedLienJob, so a move of
+// the link that commits between that decision and this call leaves the invoice with holdback_cents but no
+// RETENTION row (this answers false). The impossible end state, a ledger row under a job that left the
+// invoice's customer job, cannot happen; a later sync books the invoice onto whatever job is then linked.
 func (s *Service) BookRetention(ctx context.Context, b RetentionBooking) (bool, error) {
 	if b.AmountCents <= 0 || strings.TrimSpace(b.CustomerJobID) == "" {
 		return false, nil
 	}
-	jobID, ok, err := s.repo.LinkedLienJob(ctx, b.CustomerJobID)
-	if err != nil || !ok {
-		return false, err
-	}
-	n, err := s.repo.InsertRetentionOnce(ctx, HoldbackEntry{
-		JobID: jobID, InvoiceID: b.InvoiceID, BranchID: b.BranchID, EntryType: "RETENTION",
-		AmountCents: b.AmountCents, Reason: "withheld on invoice " + b.InvoiceNo,
+	// The pick and the write share one transaction (the invoice's own when it rides ctx), so the share lock
+	// on the lien job's row (0.55) holds until the RETENTION row is in: a move of the job's link waits for
+	// it and then sees the row. Lock order: the lien job row, then the invoice's advisory lock, then insert.
+	var booked bool
+	err := s.repo.InTx(ctx, func(ctx context.Context) error {
+		jobID, ok, err := s.repo.LinkedLienJobLocked(ctx, b.CustomerJobID)
+		if err != nil || !ok {
+			return err
+		}
+		n, err := s.repo.InsertRetentionOnce(ctx, HoldbackEntry{
+			JobID: jobID, InvoiceID: b.InvoiceID, BranchID: b.BranchID, EntryType: "RETENTION",
+			AmountCents: b.AmountCents, Reason: "withheld on invoice " + b.InvoiceNo,
+		})
+		booked = n > 0
+		return err
 	})
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
+	return booked, err
 }
 
 // HasLinkedLienJob answers whether a lien job (a RECEIVABLE one, not closed) is linked to the customer
