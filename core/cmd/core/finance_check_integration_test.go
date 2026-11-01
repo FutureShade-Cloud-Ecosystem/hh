@@ -42,6 +42,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/config"
 	coreid "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
@@ -182,7 +183,10 @@ func TestIntegration_FinanceCheck(t *testing.T) {
 	if len(months) < 1 {
 		t.Fatalf("the check ran for no month at all")
 	}
-	if !months[fmt.Sprintf("%04d-%02d", time.Now().Year(), int(time.Now().Month()))] {
+	// The check reads the month in the dealer's zone, so the expectation does too: the process clock's
+	// month is a month ahead on a month's last evening (the month end class).
+	houseNow := time.Now().In(houseday.Location())
+	if !months[fmt.Sprintf("%04d-%02d", houseNow.Year(), int(houseNow.Month()))] {
 		t.Fatalf("the check did not run for the month the house is trading in:\n%s", out.String())
 	}
 
