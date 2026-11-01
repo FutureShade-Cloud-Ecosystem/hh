@@ -55,13 +55,19 @@ func ja4Plant(t *testing.T) *ja4World {
 		t.Fatalf("open pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	return ja4PlantOn(t, pool)
+}
+
+// ja4PlantOn is ja4Plant on a pool the caller chose.
+func ja4PlantOn(t *testing.T, pool *pgxpool.Pool) *ja4World {
+	t.Helper()
 	w := &ja4World{pool: pool, pay: payments.NewRepository(pool), bill: billing.NewRepository(pool)}
 	w.credit = billing.NewCreditService(w.bill)
 	ctx := context.Background()
 	tag := fmt.Sprintf("JA4D-%d", time.Now().UnixNano())
 	if err := pool.QueryRow(ctx,
-		`INSERT INTO customers (account_no, name, customer_type, credit_limit_cents)
-		 VALUES ($1, $2, 'CONTRACTOR', 5000000) RETURNING id::text`, tag, "JA-4 doors "+tag).Scan(&w.cust); err != nil {
+		`INSERT INTO customers (account_no, name, customer_type, home_branch_id, credit_limit_cents)
+		 VALUES ($1, $2, 'CONTRACTOR', $3::uuid, 5000000) RETURNING id::text`, tag, "JA-4 doors "+tag, trentonBranchID).Scan(&w.cust); err != nil {
 		t.Fatalf("seed the customer: %v", err)
 	}
 	t.Cleanup(func() { w.cleanup(t) })
@@ -82,9 +88,9 @@ func ja4Plant(t *testing.T) *ja4World {
 			jobArg = *job
 		}
 		if err := pool.QueryRow(ctx, `
-INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents,
+INSERT INTO invoices (invoice_no, customer_id, branch_id, org_id, status, issue_date, due_date, subtotal_cents, tax_cents,
                       total_cents, balance_cents, finalized_at, doc_type, job_id)
-VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', current_date - 45, current_date - 15, $4, 0, $4, $4,
+VALUES ($1, $2::uuid, $3::uuid, (SELECT org_id FROM locations WHERE id = $3::uuid), 'FINALIZED', current_date - 45, current_date - 15, $4, 0, $4, $4,
         now() - interval '45 days', 'INVOICE', $5::uuid)
 RETURNING id::text`, tag+suffix, w.cust, trentonBranchID, total, jobArg).Scan(dst); err != nil {
 			t.Fatalf("seed invoice %s: %v", suffix, err)
@@ -115,6 +121,7 @@ func (w *ja4World) cleanup(t *testing.T) {
 		{"payments", `DELETE FROM payments WHERE customer_id = $1::uuid AND reverses_payment_id IS NOT NULL`},
 		{"payments", `DELETE FROM payments WHERE customer_id = $1::uuid`},
 		{"customer_transactions", `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`},
+		{"finance_charge_runs", `DELETE FROM finance_charge_runs WHERE customer_id = $1::uuid`},
 		{"invoice_lines", `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`},
 		{"invoices", `DELETE FROM invoices WHERE customer_id = $1::uuid`},
 		{"customer_jobs", `DELETE FROM customer_jobs WHERE customer_id = $1::uuid`},
@@ -388,4 +395,189 @@ func nsfFeeCents(t *testing.T, w *ja4World) int64 {
 		t.Fatalf("read the NSF fee: %v", err)
 	}
 	return fee
+}
+
+// ja4PlantFresh is ja4Plant on a database of the leg's own, migrated and seeded as CI does, with the
+// branches under one org: the finance charge run charges every customer of a branch and the credit
+// memo door judges the branch's org, so neither can run on the shared gate database without leaving
+// rows behind. The database is dropped when the leg ends.
+func ja4PlantFresh(t *testing.T, suffix string) *ja4World {
+	t.Helper()
+	ctx := context.Background()
+	pool := freshMigratedDB(t, suffix)
+	t.Cleanup(func() {
+		pool.Close()
+		admin, err := pgxpool.New(context.Background(), swapDatabase(mustEnv(t, "DATABASE_URL"), "postgres"))
+		if err != nil {
+			t.Errorf("ja4: connect to drop the leg database: %v", err)
+			return
+		}
+		defer admin.Close()
+		if _, err := admin.Exec(context.Background(), "DROP DATABASE IF EXISTS demoseed_it_"+suffix+" WITH (FORCE)"); err != nil {
+			t.Errorf("ja4: drop the leg database: %v", err)
+		}
+	})
+	body, err := seedFS.ReadFile("dibbits_seed.sql")
+	if err != nil {
+		t.Fatalf("reading the embedded seed: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(body)); err != nil {
+		t.Fatalf("applying the seed: %v", err)
+	}
+	mustExec(t, ctx, pool, `INSERT INTO org (id, slug, name) VALUES ($1, 'ja4-'||$2::text, 'JA4 Org')`, cmRoundNorthOrg, suffix)
+	mustExec(t, ctx, pool, `UPDATE locations SET org_id = $1 WHERE loc_type = 'BRANCH'`, cmRoundNorthOrg)
+	return ja4PlantOn(t, pool)
+}
+
+// ageInvoices moves the planted invoices and their INVOICE ledger rows back by days.
+func (w *ja4World) ageInvoices(t *testing.T, days int) {
+	t.Helper()
+	ja4Exec(t, w.pool, "age the invoices", `
+UPDATE invoices SET issue_date = issue_date - $2::int, due_date = due_date - $2::int,
+       finalized_at = finalized_at - make_interval(days => $2::int), created_at = created_at - make_interval(days => $2::int)
+ WHERE customer_id = $1::uuid`, w.cust, days)
+	ja4Exec(t, w.pool, "age the INVOICE rows", `
+UPDATE customer_transactions SET occurred_at = occurred_at - make_interval(days => $2::int),
+       created_at = created_at - make_interval(days => $2::int)
+ WHERE customer_id = $1::uuid AND txn_type = 'INVOICE'`, w.cust, days)
+}
+
+// memo issues a credit memo of cents against invoiceID through the real memo door (ISSUED).
+func (w *ja4World) memo(t *testing.T, invoiceID string, cents int64, key string) {
+	t.Helper()
+	svc, _ := cmRoundService(t, w.pool)
+	var userID string
+	if err := w.pool.QueryRow(context.Background(), `SELECT id::text FROM users ORDER BY id LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("pick a seeded user: %v", err)
+	}
+	res, err := svc.Issue(staffcontext.ContextWithStaffUserID(context.Background(), userID), billing.CreditMemoRouteRequest{
+		CustomerID: w.cust, BranchID: trentonBranchID, InvoiceID: invoiceID, AmountCents: cents,
+		Reason: "ja4 memo leg", IdempotencyKey: key,
+	}, billing.CreditMemoCaller{OrgID: cmRoundNorthOrg, Scope: staffcontext.ScopeGlobal})
+	if err != nil {
+		t.Fatalf("the credit memo door: %v", err)
+	}
+	if res.Status != billing.CreditMemoIssued {
+		t.Fatalf("the memo is %q, want ISSUED", res.Status)
+	}
+	t.Cleanup(func() {
+		ja4Exec(t, w.pool, "memo journals", `DELETE FROM gl_journals WHERE idempotency_key = $1`, billing.CreditMemoJournalKeyPrefix+res.CreditMemoID)
+	})
+}
+
+// financeCharge runs the prior month's finance charge through the real run and returns this customer's
+// charge invoice and its cents.
+func (w *ja4World) financeCharge(t *testing.T) (string, int64) {
+	t.Helper()
+	zone, err := time.LoadLocation("America/Toronto")
+	if err != nil {
+		t.Fatalf("load the house zone: %v", err)
+	}
+	n := time.Now().In(zone)
+	prior := time.Date(n.Year(), n.Month(), 1, 0, 0, 0, 0, zone).AddDate(0, -1, 0)
+	res, err := newInvoiceWriter(w.pool).RunFinanceCharges(context.Background(), billing.FinanceChargeRequest{
+		BranchID: trentonBranchID, Month: prior.Format("2006-01"),
+	})
+	if err != nil {
+		t.Fatalf("the finance charge run: %v", err)
+	}
+	for _, c := range res.Charges {
+		if c.CustomerID == w.cust {
+			return c.InvoiceID, c.ChargeCents
+		}
+	}
+	t.Fatalf("the finance charge run charged nothing to the planted customer: %+v", res)
+	return "", 0
+}
+
+// tie fails unless the by job aging totals ARBalanceCents at asOf.
+func (w *ja4World) tie(t *testing.T, label string, asOf time.Time) {
+	t.Helper()
+	all, err := w.credit.AgingByJob(context.Background(), asOf, "", "")
+	if err != nil {
+		t.Fatalf("%s: AgingByJob: %v", label, err)
+	}
+	var mine, grand int64
+	for _, r := range all {
+		grand += r.TotalCents
+		if r.CustomerID == w.cust {
+			mine += r.TotalCents
+		}
+	}
+	ar, err := w.bill.ARBalanceCents(context.Background(), asOf, "")
+	if err != nil {
+		t.Fatalf("%s: ARBalanceCents: %v", label, err)
+	}
+	if grand != ar {
+		t.Fatalf("%s: the by job aging totals %d, ARBalanceCents %d (this customer %d)", label, grand, ar, mine)
+	}
+}
+
+// TestIntegration_JA4Doors_MemoChargeReceiptBounceNow (P3-D1): a job memo, a real finance charge run
+// and an overpaid receipt paying both jobs and the charge invoice, then bounced. Every step reads the
+// statement by job equal to the aging by job per job, and the total ties through ARBalanceCents.
+func TestIntegration_JA4Doors_MemoChargeReceiptBounceNow(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4d1now")
+	w.ageInvoices(t, 90)
+	soon := time.Now().Add(time.Hour)
+
+	w.memo(t, w.invA, 4000, "ja4-memo-now-"+w.cust)
+	ja4Want(t, "after the memo", w.agree(t, "after the memo", soon), w, 26000, 20000, 10000)
+	w.tie(t, "after the memo", soon)
+
+	chargeInv, charge := w.financeCharge(t)
+	ja4Want(t, "after the finance charge", w.agree(t, "after the finance charge", soon), w, 26000, 20000, 10000+charge)
+	w.tie(t, "after the finance charge", soon)
+
+	// 60000 for 50000 + the charge: the rest is change on account.
+	ans, err := w.pay.ApplyReceived(context.Background(), payments.ApplyRequest{
+		CustomerID: w.cust, Method: "CHEQUE", IdempotencyKey: "ja4-receipt-now-" + w.cust,
+		InvoiceIDs: []string{w.invA, w.invB, chargeInv}, AmountCents: 60000,
+	})
+	if err != nil {
+		t.Fatalf("the receipt door: %v", err)
+	}
+	change := 60000 - 50000 - charge
+	if ans.OnAccountCents != change {
+		t.Fatalf("the receipt left %d on account, want %d", ans.OnAccountCents, change)
+	}
+	got := w.agree(t, "after the receipt", soon)
+	ja4Want(t, "after the receipt", got, w, -4000, 0, 10000-change)
+	w.tie(t, "after the receipt", soon)
+
+	w.bounce(t, ans.PaymentID, time.Now())
+	got = w.agree(t, "after the bounce", soon)
+	ja4Want(t, "after the bounce", got, w, 26000, 20000, 10000+charge+nsfFeeCents(t, w))
+	w.tie(t, "after the bounce", soon)
+}
+
+// TestIntegration_JA4Doors_MemoChargeReceiptBouncePast: a receipt aged six days and bounced yesterday,
+// then a memo on job B and the finance charge run now. The statement equals the aging per job three
+// days ago (receipt live), twelve hours ago (bounced, before the memo and the charge) and now.
+func TestIntegration_JA4Doors_MemoChargeReceiptBouncePast(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4d1past")
+	w.ageInvoices(t, 90)
+	p, err := w.pay.Pay(context.Background(), w.cust, "CHEQUE", "",
+		[]payments.Allocation{{InvoiceID: w.invA, AmountCents: 15000}, {InvoiceID: w.invB, AmountCents: 5000}})
+	if err != nil {
+		t.Fatalf("the receipt door: %v", err)
+	}
+	w.age(t, p.ID, 6*24*time.Hour)
+	w.bounce(t, p.ID, time.Now().Add(-24*time.Hour))
+	w.memo(t, w.invB, 3000, "ja4-memo-past-"+w.cust)
+	_, charge := w.financeCharge(t)
+	fee := nsfFeeCents(t, w)
+
+	for _, c := range []struct {
+		label   string
+		at      time.Time
+		a, b, x int64
+	}{
+		{"three days ago", time.Now().Add(-3 * 24 * time.Hour), 15000, 15000, 10000},
+		{"twelve hours ago", time.Now().Add(-12 * time.Hour), 30000, 20000, 10000 + fee},
+		{"now", time.Now().Add(time.Hour), 30000, 17000, 10000 + fee + charge},
+	} {
+		ja4Want(t, c.label, w.agree(t, c.label, c.at), w, c.a, c.b, c.x)
+		w.tie(t, c.label, c.at)
+	}
 }
