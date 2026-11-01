@@ -3,6 +3,8 @@
 // config is served to the top window only, so the front door frame under it keeps its demo picker.
 import { expect, test, useConsole } from "./fixtures";
 
+const assembled = (process.env["WS_DIST"] ?? "") !== "";
+
 const CONSOLE_CONFIG = {
   mode: "console",
   org: "acme-stone",
@@ -58,6 +60,29 @@ test(`a console box serves its config to every frame: dealer band, no second ban
   for (const frame of frames) {
     await expect(frame.locator("hh-shell-header")).toHaveCount(0);
     await expect(frame.locator("body")).not.toContainText("Demo data only");
+    // Round 2 (UX-128): on the real bundles the framed app never says "demo roles", and it is the app's own page.
+    if (assembled) {
+      await expect(frame.locator("body")).not.toContainText(/demo roles/i);
+      await expect.poll(async () => frame.evaluate(() => (document.body?.querySelector(":scope > *:not(script)")?.tagName ?? "").toLowerCase())).toContain("-");
+    }
   }
+});
+
+// A framed app that meets a console box with no session reads the sign in line (the person is sent to sign in), never
+// the demo roles. Only the real bundles carry the door; the link takes the whole window (target _top).
+test(`${appId} on a console box with no session: sign in line, link takes the whole window, no demo roles`, async ({ page, shellUrl }) => {
+  test.skip(!assembled, "WS_DIST names an assembled dist for this leg");
+  const launch = (await (await fetch(`${shellUrl}/launch.json`)).json()) as Record<string, string>;
+  const path = launch[appId];
+  expect(path).toBeTruthy();
+  await page.route("**/config.json", (route) => route.fulfill({ json: CONSOLE_CONFIG }));
+  await page.route("https://console.invalid/**", (route) => route.abort());
+  // the app sends a person with no session to the front door at the origin root: hold that move so the line can be read
+  await page.route(`${shellUrl}/`, (route) => route.abort());
+  await page.goto(`${shellUrl}${path}`);
+  const line = page.getByText(`Sign in to open`, { exact: false });
+  await expect(line).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("body")).not.toContainText(/demo roles/i);
+  await expect(page.locator("a.signin-link")).toHaveAttribute("target", "_top");
 });
 }

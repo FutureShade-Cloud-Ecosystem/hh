@@ -2,7 +2,7 @@
 // Every demo-page message stays exactly as it was.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { entryUnavailable } from "./boot-custody.ts";
+import { entryAfter, entryUnavailable } from "./boot-custody.ts";
 import { renderEntry } from "./entry.ts";
 
 /** A lit template as the words it prints: strings and values joined, nested templates flattened. */
@@ -24,7 +24,7 @@ test("a console box with no session gets its own sign in state, not the unavaila
 test("the sign in state names the app, links to the box's front door and says nothing of demo roles", () => {
   const door = renderEntry(entryUnavailable(), { app: "Money Desk" });
   const text = flat(door);
-  assert.match(text, /Sign in to open the Money Desk\./);
+  assert.match(text, /Sign in to open Money Desk\./);
   assert.match(squash(door), /href="\/"/);
   assert.doesNotMatch(text, /demo/i);
   assert.doesNotMatch(text, /Reload/);
@@ -50,4 +50,27 @@ test("every demo page message is exactly as it was", () => {
     flat(renderEntry(view({ kind: "ready", flows: [] }))),
     "The demo sign-in answered with no roles: there is nothing to tap.",
   );
+});
+
+// Round 2: only a person being sent to sign in reads the sign in line; a blip reads the offline line.
+test("each front-door outcome gives the sign in state", () => {
+  for (const why of ["no_session", "forbidden", "wrong_role", "config", "persona_refused", "ended"]) {
+    assert.equal(entryAfter({ kind: "front-door", why }).flows.kind, "signin", why);
+  }
+});
+
+test("each unavailable outcome gives the offline state with its reason, and the page says nothing of demo roles or sign in", () => {
+  const lines = {
+    offline: /Money Desk cannot reach the server just now\. It will try again on its own\./,
+    unavailable: /The server is not answering just now\. Money Desk will try again on its own\./,
+    rate_limited: /The server is busy just now\. Money Desk will try again on its own\./,
+  };
+  for (const reason of ["offline", "unavailable", "rate_limited"]) {
+    const view = entryAfter({ kind: "unavailable", reason });
+    assert.deepEqual(view.flows, { kind: "offline", reason });
+    const text = flat(renderEntry(view, { app: "Money Desk" }));
+    assert.match(text, lines[reason], reason);
+    assert.doesNotMatch(text, /demo|sign in|reload/i, reason);
+  }
+  assert.match(flat(renderEntry(entryAfter({ kind: "unavailable", reason: "offline" }))), /^This app cannot reach the server/);
 });

@@ -18,3 +18,8 @@ test("the demo roles words stay on the unavailable state only", () => {
   assert.doesNotMatch(signin, /demo/i);
   assert.match(door, /The demo roles could not be loaded\. Reload to try again\./);
 });
+
+test("Round 2: the offline state is typed and drawn by the shared offline line, with no demo words", () => {
+  assert.match(source, /\{ kind: "offline"; reason: "offline" \| "unavailable" \| "rate_limited" \}/);
+  assert.match(door, /view\.flows\.kind === "offline"[\s\S]*offlineLine\("Dealer Admin"/);
+});

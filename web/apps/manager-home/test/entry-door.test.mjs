@@ -17,7 +17,7 @@ const view = (flows) => ({ flows, busy: false, message: null });
 
 test("the sign in state names Manager Home, links to the front door and never says demo", () => {
   const door = renderEntry(view({ kind: "signin" }));
-  assert.match(text(door), /^Sign in to open the Manager Home\./);
+  assert.match(text(door), /^Sign in to open Manager Home\./);
   assert.match(markup(door), /href="\/"/);
   assert.doesNotMatch(text(door), /demo/i);
 });
@@ -33,4 +33,13 @@ test("the demo page messages are exactly as they were", () => {
     "This deployment does not serve the demo sign-in, so there are no role cards to tap.",
   );
   assert.equal(text(renderEntry(view({ kind: "ready", flows: [] }))), "The demo sign-in answered with no roles: there is nothing to tap.");
+});
+
+test("Round 2: the offline state says it cannot reach the server, with no demo roles and no sign in", () => {
+  for (const reason of ["offline", "unavailable", "rate_limited"]) {
+    const door = renderEntry(view({ kind: "offline", reason }));
+    assert.match(text(door), /Manager Home|The server/, reason);
+    assert.match(text(door), /will try again on its own|It will try again on its own/, reason);
+    assert.doesNotMatch(text(door), /demo|sign in|reload/i, reason);
+  }
 });

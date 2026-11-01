@@ -23,6 +23,8 @@ export interface ConsoleLegs {
   branchPath?: string;
   /** What the app shows with no session and no front door at the origin root: its unavailable entry. */
   unavailable: (page: Page) => Promise<void>;
+  /** What a signed in person sees when the core cannot be reached (the branch read answers 503): the offline line, never a sign in or demo roles. Defaults to nothing checked. */
+  offline?: (page: Page) => Promise<void>;
 }
 
 const authStub = (): string => `http://127.0.0.1:${process.env["CW_AUTH_STUB"]}`;
@@ -188,7 +190,7 @@ export function defineConsoleLegs(legs: ConsoleLegs): void {
       });
       await page.route(`${world()}${branchPath}**`, (route) => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"Service Unavailable"}' }));
       await page.goto(`${appUrl()}/`);
-      await legs.unavailable(page);
+      await legs.offline?.(page);
       await page.waitForTimeout(2500); // the custody's watch runs every two seconds: it must not read this as an end
       expect(deletes).toEqual([]);
       expect((await peek(request)).cookie).toBe(true); // the console session is still there
