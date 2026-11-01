@@ -7,8 +7,10 @@ package till
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5"
 )
@@ -207,8 +209,34 @@ func (g *HoldAwareCreditGate) Check(ctx context.Context, customerID string, orde
 			}
 		}
 	}
+	blk := g.limitBreak(ctx, customerID, orderTotalCents, openBalanceCents, creditLimitCents, termsAreCredit, branchID)
+	// The approved override waives the LIMITS only (the job's own and the customer's), never a hold
+	// above and never a read that failed: an unavailable exposure still denies the account tender.
+	//
+	// No door passes an approved override today: both the POS ring and the quote conversion pass
+	// false, so this branch is unreachable in production. It is built anyway: Check returns nil, and
+	// OverriddenLimit (below) says WHICH limit was waived, the job's own or the customer's, in words
+	// and in data, for the door that passes one to record.
+	if hasApprovedOverride && blk != nil && blk.Policy == identity.PolicyCredit {
+		return nil
+	}
+	return blk
+}
+
+// limitBreak is the limit check with no override: the block the sale would meet, or nil. It reads the
+// customer's whole exposure and, when the sale is on a job that carries its own limit, the job's.
+func (g *HoldAwareCreditGate) limitBreak(ctx context.Context, customerID string, orderTotalCents, openBalanceCents, creditLimitCents int64, termsAreCredit bool, branchID string) *identity.ActionBlocked {
 	if g.exposure == nil || !termsAreCredit || customerID == "" {
-		return identity.CheckCredit(orderTotalCents, openBalanceCents, creditLimitCents, termsAreCredit, branchID, hasApprovedOverride)
+		blk := identity.CheckCredit(orderTotalCents, openBalanceCents, creditLimitCents, termsAreCredit, branchID, false)
+		if blk != nil && blk.Policy == identity.PolicyCredit {
+			// Say which limit, as the exposure path does; the old gate has only the customer's.
+			blk.Data = map[string]string{
+				"limit_scope":  LimitScopeCustomer,
+				"credit_limit": dollars(creditLimitCents),
+				"open_balance": dollars(openBalanceCents),
+			}
+		}
+		return blk
 	}
 	// The one exposure reader. A read that fails denies the account tender, the hold read's posture.
 	unavailable := &identity.ActionBlocked{
@@ -221,13 +249,18 @@ func (g *HoldAwareCreditGate) Check(ctx context.Context, customerID string, orde
 	if err != nil {
 		return unavailable
 	}
-	// An approved override still works as today: it waives the limits below, not a hold above.
-	if hasApprovedOverride {
-		return nil
-	}
 	if jobID := saleJobFrom(ctx); jobID != "" {
 		ownLimit, jobExposure, _, err := g.exposure.JobPosition(ctx, tx, customerID, jobID)
 		if err != nil {
+			if errors.Is(err, customer.ErrNotFound) {
+				// The doors' fence refuses a job that is not the customer's earlier; this is only the
+				// fallback, and it says so rather than reading as an outage.
+				return &identity.ActionBlocked{
+					Policy:   identity.PolicyCOD,
+					BranchID: branchID,
+					Detail:   "this job is not the customer's; account tender denied (cash or card only)",
+				}
+			}
 			return unavailable
 		}
 		if ownLimit != nil && jobExposure+orderTotalCents > *ownLimit {
@@ -241,6 +274,29 @@ func (g *HoldAwareCreditGate) Check(ctx context.Context, customerID string, orde
 		return limitBlock(LimitScopeCustomer, branchID, exposure, orderTotalCents, creditLimitCents)
 	}
 	return blk
+}
+
+// OverriddenLimit is what an approved override waives: the limit the sale would have broken, said in
+// words and in data (Data["limit_scope"] is "job" or "customer", with the figures, and
+// Data["overridden"] is "true"). It returns nil when the sale breaks no limit, so nothing was
+// waived. It is a note for the audit, never a block: Check still returns nil for an approved override.
+// A door that passes an approved override calls it beside Check and records the answer.
+func (g *HoldAwareCreditGate) OverriddenLimit(ctx context.Context, customerID string, orderTotalCents, openBalanceCents, creditLimitCents int64, termsAreCredit bool, branchID string) *identity.ActionBlocked {
+	blk := g.limitBreak(ctx, customerID, orderTotalCents, openBalanceCents, creditLimitCents, termsAreCredit, branchID)
+	if blk == nil || blk.Policy != identity.PolicyCredit {
+		return nil
+	}
+	data := make(map[string]string, len(blk.Data)+1)
+	for k, v := range blk.Data {
+		data[k] = v
+	}
+	data["overridden"] = "true"
+	return &identity.ActionBlocked{
+		Policy:   identity.PolicyCredit,
+		BranchID: branchID,
+		Detail:   "an approved override waives this: " + blk.Detail,
+		Data:     data,
+	}
 }
 
 // compile-time guard: the gate must expose exactly the widened credit-gate shape.
