@@ -37,9 +37,9 @@ for (const size of SIZES) {
         await page.getByRole("button", { name: "Theme: Light" }).click();
       }
       await liensTab(page, "due");
-      await expect(due("GLS-2100")).toBeVisible();
+      await expect(due("GLS-2105")).toBeVisible();
       await take("01", "list");
-      await due("GLS-2100").getByRole("button", { name: "Release" }).click();
+      await due("GLS-2105").getByRole("button", { name: "Release" }).click();
       await expect(page.locator("[data-due-panel]")).toBeVisible();
       await take("02", "release-asks-first");
       await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
@@ -56,7 +56,7 @@ for (const size of SIZES) {
       await take("05", "reversed");
 
       await liensTab(page, "jobs");
-      await page.locator("[data-row='job'][data-job-no='GLS-2100']:visible").getByRole("button", { name: "Open" }).click();
+      await page.locator("[data-row='job'][data-job-no='GLS-2105']:visible").getByRole("button", { name: "Open" }).click();
       await expect(page.locator("[data-doors]")).toBeVisible();
       await take("06", "doors");
       await page.locator("[data-doors]").getByLabel("Lien preserved on").fill(dayFrom(-2));
@@ -65,7 +65,7 @@ for (const size of SIZES) {
       await expect(page.locator("[data-lien-state]")).toContainText("has not been discharged");
       await take("07", "lien-recorded");
       await liensTab(page, "due");
-      await expect(due("GLS-2100")).toContainText("Blocked by a preserved lien");
+      await expect(due("GLS-2105")).toContainText("Blocked by a preserved lien");
       await take("08", "blocked");
 
       // The General Manager is another person: a page of their own.

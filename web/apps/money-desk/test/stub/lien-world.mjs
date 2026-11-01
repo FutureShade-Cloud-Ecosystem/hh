@@ -47,6 +47,7 @@ export const IDS = {
   job3: "10b00000-0000-4000-8000-000000000003",
   job4: "10b00000-0000-4000-8000-000000000004",
   job5: "10b00000-0000-4000-8000-000000000005",
+  job6: "10b00000-0000-4000-8000-000000000006",
   cjA: "c70b0000-0000-4000-8000-0000000000a1",
   cjB: "c70b0000-0000-4000-8000-0000000000b1",
   cjC: "c70b0000-0000-4000-8000-0000000000c1",
@@ -111,8 +112,8 @@ function render(kind, version, data) {
 }
 
 function linked(world) {
-  // The lien jobs a customer job's holdback counts from: the pool deck wall job and the Fieldstone patio job.
-  world.jobs.find((j) => j.id === IDS.job5).customer_job_id = IDS.cjA;
+  // The lien jobs a customer job's holdback counts from: the Summit Ridge walkway job and the Fieldstone patio job.
+  world.jobs.find((j) => j.id === IDS.job6).customer_job_id = IDS.cjA;
   world.jobs.find((j) => j.id === IDS.job3).customer_job_id = IDS.cjB;
   return world;
 }
@@ -142,6 +143,7 @@ function fresh() {
       job(IDS.job4, "GLS-2104", "", IDS.branch2, "Wall block supply, Granite Run Quarry subcontract", 3_200_000, 1000, 50, "SUBSTANTIALLY_PERFORMED", "PAYABLE", 40),
       job(IDS.job1, "GLS-2101", IDS.customerA, IDS.branch1, "Pool deck pavers and drainage, Summit Ridge Builders", 18_600_000, 1000, 70, "SUBSTANTIALLY_PERFORMED", "RECEIVABLE", 80),
       job(IDS.job2, "GLS-2102", IDS.customerA, IDS.branch2, "Retaining wall and coping, Ridgeview Outdoor Living", 9_250_000, 700, 130, "SUBSTANTIALLY_PERFORMED", "RECEIVABLE", 140),
+      job(IDS.job6, "GLS-2105", IDS.customerA, IDS.branch1, "Walkway and steps, Summit Ridge Builders", 15_000_000, 1000, 75, "SUBSTANTIALLY_PERFORMED", "RECEIVABLE", 90),
       job(IDS.job5, "GLS-2100", IDS.customerB, IDS.branch1, "Walkway, Heronfield Stone", 5_000_000, 1000, 150, "RELEASED", "RECEIVABLE", 160),
     ],
     entries: [
@@ -149,6 +151,8 @@ function fresh() {
       entry(IDS.job1, uuid("a1", 2), "RETENTION", 1_020_000, 40),
       entry(IDS.job2, uuid("a1", 3), "RETENTION", 647_500, 100),
       entry(IDS.job3, uuid("a1", 4), "RETENTION", 336_000, 12),
+      entry(IDS.job6, uuid("a2", 1), "RETENTION", 630_000, 66),
+      entry(IDS.job6, uuid("a2", 2), "RETENTION", 750_000, 41),
       entry(IDS.job4, uuid("a1", 5), "RETENTION", 290_000, 38),
       entry(IDS.job5, uuid("a1", 6), "RETENTION", 500_000, 120),
       entry(IDS.job5, "", "RELEASE", 500_000, 20, { gl_journal_id: uuid("7a", 1), released_at: dayFrom(-20) }),
@@ -160,11 +164,13 @@ function fresh() {
       { invoice_id: uuid("a1", 7), invoice_no: "INV-3301", customer_id: IDS.customerA, branch_id: IDS.branch1, holdback_cents: 420_000, finalized_at: at(3) },
       { invoice_id: uuid("a1", 8), invoice_no: "INV-3302", customer_id: IDS.customerB, branch_id: IDS.branch1, holdback_cents: 126_000, finalized_at: at(2) },
     ],
-    // The held invoices of the customer jobs the Controller releases, in the order the core reads them.
+    // The held invoices of the customer jobs the Controller releases, in the order the core reads them. Each one's
+    // RETENTION sits on the ledger of the lien job its row names (the same invoice id, customer and amount), and that
+    // lien job is linked to the customer job; INV-4301 is the one held invoice whose customer job has no lien job.
     dueInvoices: [
-      { invoice_id: uuid("a2", 1), invoice_no: "INV-4101", customer_id: IDS.customerA, customer_job_id: IDS.cjA, branch_id: IDS.branch1, holdback_cents: 840_000 },
-      { invoice_id: uuid("a2", 2), invoice_no: "INV-4102", customer_id: IDS.customerA, customer_job_id: IDS.cjA, branch_id: IDS.branch1, holdback_cents: 1_020_000 },
-      { invoice_id: uuid("a2", 3), invoice_no: "INV-4201", customer_id: IDS.customerB, customer_job_id: IDS.cjB, branch_id: IDS.branch1, holdback_cents: 336_000 },
+      { invoice_id: uuid("a2", 1), invoice_no: "INV-4101", customer_id: IDS.customerA, customer_job_id: IDS.cjA, branch_id: IDS.branch1, holdback_cents: 630_000 },
+      { invoice_id: uuid("a2", 2), invoice_no: "INV-4102", customer_id: IDS.customerA, customer_job_id: IDS.cjA, branch_id: IDS.branch1, holdback_cents: 750_000 },
+      { invoice_id: uuid("a1", 4), invoice_no: "INV-4201", customer_id: IDS.customerB, customer_job_id: IDS.cjB, branch_id: IDS.branch1, holdback_cents: 336_000 },
       { invoice_id: uuid("a2", 4), invoice_no: "INV-4301", customer_id: IDS.customerB, customer_job_id: IDS.cjC, branch_id: IDS.branch1, holdback_cents: 120_000 },
     ],
     // One row per invoice released: { id, invoice_id, customer_job_id, amount_cents, key, reversed }.
@@ -191,7 +197,7 @@ function fresh() {
     ],
     // The people the core would resolve as not active: the roster cannot say, the release can.
     inactive: [IDS.formerPayrec],
-    nextJob: 6,
+    nextJob: 7,
     nextDoc: 1,
     nextJournal: 2,
     nextDeadline: 8,

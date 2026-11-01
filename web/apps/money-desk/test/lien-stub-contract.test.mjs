@@ -144,10 +144,10 @@ test("the jobs answer the contract's page, newest first, with one branch's rows 
   const all = await get(IDS.controller, "/api/v1/lien/jobs");
   assert.equal(all.status, 200);
   holds("LienJobPage", all.json);
-  assert.equal(all.json.items.length, 5);
+  assert.equal(all.json.items.length, 6);
   assert.deepEqual(
     all.json.items.map((j) => j.job_no),
-    ["GLS-2103", "GLS-2104", "GLS-2101", "GLS-2102", "GLS-2100"],
+    ["GLS-2103", "GLS-2104", "GLS-2101", "GLS-2102", "GLS-2105", "GLS-2100"],
   );
   const mine = await get(IDS.payrec, `/api/v1/lien/jobs?branch_id=${IDS.branch2}`);
   assert.deepEqual(mine.json.items.map((j) => j.job_no), ["GLS-2104", "GLS-2102"]);
@@ -181,7 +181,7 @@ test("the triage and the aging read the same ledger: oldest first, badges and re
   assert.equal(aging.status, 200);
   holds("LienAgingRowPage", aging.json);
   // GLS-2100 is fully released and is dropped; the rest are oldest first.
-  assert.deepEqual(aging.json.items.map((r) => r.job_no), ["GLS-2102", "GLS-2101", "GLS-2104", "GLS-2103"]);
+  assert.deepEqual(aging.json.items.map((r) => r.job_no), ["GLS-2102", "GLS-2105", "GLS-2101", "GLS-2104", "GLS-2103"]);
   const byJob = Object.fromEntries(aging.json.items.map((r) => [r.job_no, r]));
   assert.equal(byJob["GLS-2101"].outstanding_cents, 1_860_000);
   assert.equal(byJob["GLS-2101"].oldest_days, 62);
@@ -196,7 +196,7 @@ test("the triage and the aging read the same ledger: oldest first, badges and re
   holds("LienTriageItemPage", triage.json);
   assert.deepEqual(
     triage.json.items.map((t) => [t.job_no, t.badge]),
-    [["GLS-2102", "OVERDUE"], ["GLS-2101", "RELEASE_DUE"], ["GLS-2104", "PAYABLE_MANUAL"], ["GLS-2103", "AGING"]],
+    [["GLS-2102", "OVERDUE"], ["GLS-2105", "RELEASE_DUE"], ["GLS-2101", "RELEASE_DUE"], ["GLS-2104", "PAYABLE_MANUAL"], ["GLS-2103", "AGING"]],
   );
   // The notes are the core's own words (core/internal/lien/aging.go).
   for (const t of triage.json.items) assert.ok(coreSource.includes(t.note), `the core has no triage note "${t.note}"`);
@@ -428,7 +428,7 @@ test("due to release answers the contract per invoice: the judgement the core gi
   holds("BillingHoldbackDueToRelease", res.json);
   const a = byJob(res.json.items, IDS.cjA);
   assert.deepEqual(a.map((r) => r.invoice_no), ["INV-4101", "INV-4102"]);
-  assert.ok(a.every((r) => r.due === true && r.lien_job_no === "GLS-2100" && r.blocked_kind === undefined));
+  assert.ok(a.every((r) => r.due === true && r.lien_job_no === "GLS-2105" && r.blocked_kind === undefined));
   const b = byJob(res.json.items, IDS.cjB);
   assert.equal(b[0].due, false);
   assert.equal(b[0].blocked_kind, "NOT_DUE");
@@ -440,7 +440,7 @@ test("due to release answers the contract per invoice: the judgement the core gi
   assert.equal(c[0].blocked_reason, "no lien job is linked to this job, so there is no preservation period to count");
   assert.ok(coreSource.includes(c[0].blocked_reason));
   // Only what is due counts toward a branch's total.
-  assert.deepEqual(res.json.branches, [{ branch_id: IDS.branch1, due_cents: 1_860_000 }]);
+  assert.deepEqual(res.json.branches, [{ branch_id: IDS.branch1, due_cents: 1_380_000 }]);
   // A role the guards wall reads nothing.
   assert.equal((await get(IDS.sales, "/api/v1/ar/holdback/due-to-release")).status, 403);
 });
@@ -455,8 +455,8 @@ test("the release is the Controller's, refuses in the core's words, posts the wh
   const done = await release(CONTROLLER, { customer_job_id: IDS.cjA, idempotency_key: key });
   assert.equal(done.status, 201);
   holds("BillingHoldbackRelease", done.json);
-  assert.equal(done.json.total_cents, 1_860_000);
-  assert.deepEqual(done.json.items.map((i) => [i.invoice_no, i.amount_cents]), [["INV-4101", 840_000], ["INV-4102", 1_020_000]]);
+  assert.equal(done.json.total_cents, 1_380_000);
+  assert.deepEqual(done.json.items.map((i) => [i.invoice_no, i.amount_cents]), [["INV-4101", 630_000], ["INV-4102", 750_000]]);
   assert.equal(done.json.replayed, false);
   const again = await release(CONTROLLER, { customer_job_id: IDS.cjA, idempotency_key: key });
   assert.equal(again.status, 200);
@@ -470,20 +470,20 @@ test("the release is the Controller's, refuses in the core's words, posts the wh
 test("a preserved lien blocks the release, and the lien doors record, replace and discharge it in the core's words", async () => {
   await reset();
   const preserve = (as, id, body) => call(as, "POST", `/api/v1/lien/jobs/${id}/preserved-lien`, body);
-  refused(await preserve(CONTROLLER, IDS.job5, {}), 422, "lien: preserved_on is required (a date, YYYY-MM-DD)", "is required (a date, YYYY-MM-DD)");
-  refused(await preserve(CONTROLLER, IDS.job5, { preserved_on: "soon" }), 422, 'lien: preserved_on "soon" is not a date (YYYY-MM-DD)', "is not a date (YYYY-MM-DD)");
-  assert.equal((await preserve(IDS.payrec, IDS.job5, { preserved_on: dayFrom(-3) })).status, 403);
-  assert.equal((await preserve(CONTROLLER, IDS.job5.replace("10b0", "99b0"), { preserved_on: dayFrom(-3) })).status, 404);
-  const done = await preserve(CONTROLLER, IDS.job5, { preserved_on: dayFrom(-3), note: "filed at the registry" });
+  refused(await preserve(CONTROLLER, IDS.job6, {}), 422, "lien: preserved_on is required (a date, YYYY-MM-DD)", "is required (a date, YYYY-MM-DD)");
+  refused(await preserve(CONTROLLER, IDS.job6, { preserved_on: "soon" }), 422, 'lien: preserved_on "soon" is not a date (YYYY-MM-DD)', "is not a date (YYYY-MM-DD)");
+  assert.equal((await preserve(IDS.payrec, IDS.job6, { preserved_on: dayFrom(-3) })).status, 403);
+  assert.equal((await preserve(CONTROLLER, IDS.job6.replace("10b0", "99b0"), { preserved_on: dayFrom(-3) })).status, 404);
+  const done = await preserve(CONTROLLER, IDS.job6, { preserved_on: dayFrom(-3), note: "filed at the registry" });
   assert.equal(done.status, 200);
   holds("LienJob", done.json);
   assert.equal(done.json.lien_preserved_on, dayFrom(-3));
   assert.equal(done.json.lien_preserved_note, "filed at the registry");
   const blocked = byJob(await dueRows(), IDS.cjA)[0];
   assert.equal(blocked.blocked_kind, "LIEN_PRESERVED");
-  assert.equal(blocked.blocked_reason, `a lien was preserved on lien job GLS-2100 on ${dayFrom(-3)} and has not been discharged, so the holdback stays held until it is discharged or settled`);
+  assert.equal(blocked.blocked_reason, `a lien was preserved on lien job GLS-2105 on ${dayFrom(-3)} and has not been discharged, so the holdback stays held until it is discharged or settled`);
   assert.ok(coreSource.includes("and has not been discharged, so the holdback stays held until it is discharged or settled"));
-  const discharge = (body) => call(CONTROLLER, "POST", `/api/v1/lien/jobs/${IDS.job5}/preserved-lien/discharge`, body);
+  const discharge = (body) => call(CONTROLLER, "POST", `/api/v1/lien/jobs/${IDS.job6}/preserved-lien/discharge`, body);
   refused(await discharge({ discharged_on: dayFrom(-9) }), 422, `lien: a lien preserved on ${dayFrom(-3)} cannot be discharged on ${dayFrom(-9)}, before it`, "cannot be discharged on");
   refused(await call(CONTROLLER, "POST", `/api/v1/lien/jobs/${IDS.job3}/preserved-lien/discharge`, { discharged_on: dayFrom(0) }), 422, "lien: no lien was preserved on job GLS-2103, so there is nothing to discharge", "so there is nothing to discharge");
   const cleared = await discharge({ discharged_on: dayFrom(0), note: "settled" });
@@ -530,7 +530,7 @@ test("a reversal is the Controller's, needs a reason, puts the holdback back onc
   assert.equal(done.status, 200);
   holds("BillingHoldbackReversal", done.json);
   assert.equal(done.json.release_id, id);
-  assert.equal(done.json.restored_cents, 840_000);
+  assert.equal(done.json.restored_cents, 630_000);
   refused(await reverse(CONTROLLER, id, { reason: "again" }), 409, "that release has already been reversed");
   // The reversed invoice is held again and is on the list; the other is still released.
   assert.deepEqual(byJob(await dueRows(), IDS.cjA).map((r) => r.invoice_no), ["INV-4101"]);
@@ -542,4 +542,38 @@ test("the old job level press is refused in the core's words on a job linked to 
   refused(res, 422, "lien: job GLS-2103 is linked to a customer job, so its holdback is released by the Controller's holdback release (POST /api/v1/ar/holdback/releases), once its preservation period has run out, and not by this job level release", "so its holdback is released by the Controller's holdback release (POST /api/v1/ar/holdback/releases), once its preservation period has run out, and not by this job level release");
   const jobs = (await get(CONTROLLER, "/api/v1/lien/jobs")).json.items;
   assert.equal(jobs.find((j) => j.job_no === "GLS-2103").customer_job_id, IDS.cjB);
+});
+
+test("the stub tells one story: every due invoice's retention sits on the lien job its row names, which is the customer's own and is linked to the customer job", async () => {
+  await reset();
+  const rows = await dueRows();
+  const jobs = (await get(CONTROLLER, "/api/v1/lien/jobs")).json.items;
+  const aging = (await get(CONTROLLER, "/api/v1/lien/holdback/aging")).json.items;
+  const named = rows.filter((r) => r.lien_job_id !== undefined);
+  assert.ok(named.length >= 3, "the due rows that name a lien job are read");
+  for (const r of named) {
+    const job = jobs.find((j) => j.id === r.lien_job_id);
+    assert.ok(job !== undefined, `lien job ${r.lien_job_no} is on the Jobs tab`);
+    assert.equal(job.job_no, r.lien_job_no);
+    assert.equal(job.customer_job_id, r.customer_job_id, `${r.invoice_no}: the lien job is linked to the row's customer job`);
+    assert.equal(job.customer_id, r.customer_id, `${r.invoice_no}: the lien job is the same customer's`);
+    assert.equal(job.branch_id, r.branch_id, `${r.invoice_no}: the lien job is at the same branch`);
+  }
+  // The Holdbacks tab agrees on the amount: what the lien job holds is what its due rows add up to (nothing is released yet).
+  for (const no of new Set(named.map((r) => r.lien_job_no))) {
+    const due = named.filter((r) => r.lien_job_no === no).reduce((n, r) => n + r.holdback_cents, 0);
+    const held = aging.find((a) => a.job_no === no);
+    assert.ok(held !== undefined, `${no} is on the Holdbacks tab`);
+    assert.equal(held.outstanding_cents, due, `${no}: the Holdbacks tab and Due to release hold the same amount`);
+  }
+  // A held invoice's amount sits under one lien job only: no other job holds the same sum for the same customer.
+  const dueTotals = new Map();
+  for (const r of named) dueTotals.set(r.lien_job_no, (dueTotals.get(r.lien_job_no) ?? 0) + r.holdback_cents);
+  for (const [no, total] of dueTotals) {
+    const twins = aging.filter((a) => a.job_no !== no && a.outstanding_cents === total);
+    assert.deepEqual(twins, [], `${no}: no other job holds the same ${total} cents`);
+  }
+  // The one row without a lien job says so and names none.
+  const loose = rows.filter((r) => r.lien_job_id === undefined);
+  assert.deepEqual(loose.map((r) => r.blocked_kind), ["NO_LIEN_JOB"]);
 });
