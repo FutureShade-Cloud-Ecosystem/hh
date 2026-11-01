@@ -464,10 +464,12 @@ export function dueConfirmWords(g: DueGroup, total: string | null, about: string
 
 /**
  * The total of one job's due holdback, only where the core's own figure is that total: the list's due total is
- * per branch, so it is the job's when the job is the only one due at its branch. Nothing is added up here.
+ * per branch, so it is the job's when every invoice of the job is at that one branch and no other due job has an
+ * invoice there. Nothing is added up here.
  */
 export function dueTotalOf(groups: readonly DueGroup[], totals: readonly BillingHoldbackBranchDue[], g: DueGroup): string | null {
-  const here = groups.filter((x) => x.due && x.branchId === g.branchId);
+  if (!g.rows.every((r) => r.branch_id === g.branchId)) return null;
+  const here = groups.filter((x) => x.due && x.rows.some((r) => r.branch_id === g.branchId));
   if (here.length !== 1) return null;
   const row = totals.find((t) => t.branch_id === g.branchId);
   return row === undefined ? null : formatMoney(row.due_cents);

@@ -332,6 +332,22 @@ test("the core's total is named only where it is the job's own: the sole due job
   assert.equal(dueTotalOf(one, [], one[0]), null);
 });
 
+test("the core's total is not named for a job split across two branches", () => {
+  const split = groupDue([dueRow({ lien_job_no: "GLS-1", branch_id: "b1" }), dueRow({ invoice_id: "i2", invoice_no: "INV-2", lien_job_no: "GLS-1", branch_id: "b2", holdback_cents: 500000 })]);
+  const totals = [{ branch_id: "b1", due_cents: 840000 }, { branch_id: "b2", due_cents: 500000 }];
+  assert.equal(dueTotalOf(split, totals, split[0]), null);
+});
+
+test("the core's total is not named when another due job has an invoice at the same branch", () => {
+  const two = groupDue([
+    dueRow({ lien_job_no: "GLS-1", branch_id: "b1" }),
+    dueRow({ invoice_id: "i2", customer_job_id: "cj2", invoice_no: "INV-2", lien_job_no: "GLS-2", branch_id: "b2" }),
+    dueRow({ invoice_id: "i3", customer_job_id: "cj2", invoice_no: "INV-3", lien_job_no: "GLS-2", branch_id: "b1" }),
+  ]);
+  const totals = [{ branch_id: "b1", due_cents: 1680000 }, { branch_id: "b2", due_cents: 840000 }];
+  assert.equal(dueTotalOf(two, totals, two[0]), null);
+});
+
 test("a job whose holdback is held on invoices is the one the due list names", () => {
   const groups = groupDue([dueRow({ lien_job_no: "GLS-1" }), dueRow({ invoice_id: "i2", customer_job_id: "cj2", invoice_no: "INV-2", lien_job_no: "GLS-3", due: false, blocked_kind: "NOT_DUE" })]);
   assert.equal(heldOnInvoices(groups, "GLS-1"), true);
