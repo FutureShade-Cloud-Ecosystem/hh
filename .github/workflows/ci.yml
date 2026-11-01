@@ -205,9 +205,11 @@ jobs:
         run: go test ./... -count=1 -p 1 -timeout 30m
       - name: Evening guard, the date sensitive unit packages
         # Item 55's guard: the date sensitive legs rerun every run with the clock pinned inside
-        # the evening window (half past UTC midnight, where the UTC day has rolled over and the
-        # house zone is still on the dealer's previous evening), so a daytime run can never
-        # again hide the UTC day class. The pin is a go build overlay that shifts the wall
+        # the month end window: half past UTC midnight on the 1st of the most recent month whose
+        # instant has passed (scripts/evening-guard/shift.sh). There the UTC day has rolled over
+        # while the house zone is still on the dealer's previous evening (the day class), and the
+        # UTC month has rolled over while the house month is still the previous one (the month
+        # class), so a daytime or mid month run can never again hide either. The pin is a go build overlay that shifts the wall
         # clock only (scripts/evening-guard/prepare.sh); monotonic clocks, timers and deadlines
         # are untouched. prepare.sh also snapshots the active toolchain outside the module
         # cache and hands back a wrapper go pinned to it, because a runner's active toolchain
@@ -652,18 +654,20 @@ jobs:
           docker rm -f -v hh-evening-guard-pg >/dev/null 2>&1 || true
           trap 'docker rm -f -v hh-evening-guard-pg >/dev/null 2>&1 || true' EXIT
           ../scripts/evening-guard/prepare.sh "$RUNNER_TEMP/evening-guard"
-          target="$(date -u +%s)"
-          # The most recent half past UTC midnight that has already passed, never the
-          # one still ahead of the real clock. A pin ahead of the real clock keeps this
-          # libfaketime build's Postgres from firing its SIGALRM timeouts at all
+          # The pin is half past UTC midnight on the 1st of the most recent month whose instant
+          # has already passed, never one still ahead of the real clock. A pin ahead of the real
+          # clock keeps this libfaketime build's Postgres from firing its SIGALRM timeouts at all
           # (statement_timeout, lock_timeout and the deadlock detector ride the same
           # timer), so the purchasing deadlock legs wait out their own deadlines
           # instead of answering the contention sentinel: every CI failure of this
           # step reached it inside the only window whose pin sits ahead of the real
           # clock, before half past UTC midnight. Pinned behind the real clock every
-          # timer fires on time, and the guard keeps the same evening window, anchored
-          # to the most recent half past midnight instead of the current UTC day's.
-          target=$(( (target - 1800) / 86400 * 86400 + 1800 ))
+          # timer fires on time. That instant is a month boundary and so also a day boundary:
+          # the UTC month and day have rolled over while the house zone is still on the
+          # previous month's last evening, so the month class and the day class are both
+          # covered (a daily pin never reached the month class, which is how the month end
+          # specs went red on a month's last evening).
+          target="$(../scripts/evening-guard/shift.sh target)"
           pin="$(date -u -d "@$target" '+%Y-%m-%d %H:%M:%S')"
           # The same digest pinned mirror the services above use (the registries with pull
           # limits refuse the runners), so the guard pulls what the jobs already pull; the
