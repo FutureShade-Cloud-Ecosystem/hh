@@ -9,7 +9,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { servedConsoleConfig } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { demoNote } from "../band-identity.js";
-import type { Branch, IdentityStaffMember, LienAgingRow, LienDocument, LienJob, LienTriageItem } from "@hardscapehouse/api-client";
+import type { BillingHoldbackBranchDue, Branch, IdentityStaffMember, LienAgingRow, LienDocument, LienJob, LienTriageItem } from "@hardscapehouse/api-client";
 import { dueWords, type BannerView } from "../compliance/compliance-logic.js";
 import { bannerStrip, branchName, empty, loadFailed, loading, messages, pill, tabsNav } from "./lien-kit.js";
 import {
@@ -21,7 +21,10 @@ import {
   directionLine,
   directionWord,
   documentStatusWord,
+  type DueGroup,
   documentTone,
+  dueStateWords,
+  dueTone,
   heldNowWords,
   holdingWords,
   jobStatusTone,
@@ -37,7 +40,15 @@ import {
 } from "./lien-logic.js";
 import { bpsWords, formatMoney } from "./lien-money.js";
 
-export type LienTab = "triage" | "jobs" | "holdbacks" | "documents";
+export type LienTab = "triage" | "due" | "jobs" | "holdbacks" | "documents";
+
+/** The due to release list as the core answered it: the customer jobs grouped, and the due totals by branch. */
+export interface DueModel {
+  readonly phase: "ready" | "error";
+  readonly groups: readonly DueGroup[];
+  readonly totals: readonly BillingHoldbackBranchDue[];
+  readonly error: string;
+}
 
 export interface ReleaseModel {
   readonly jobId: string;
@@ -58,6 +69,7 @@ export interface LiensModel {
   readonly jobs: readonly LienJob[];
   readonly triage: readonly LienTriageItem[];
   readonly aging: readonly LienAgingRow[];
+  readonly due: DueModel;
   readonly branches: readonly Branch[];
   readonly selectedJob: string | null;
   readonly newJob: boolean;
@@ -88,6 +100,7 @@ function stamp(iso: string | undefined): string {
 function tabs(model: LiensModel): TemplateResult {
   return tabsNav("Lien views", "li-tab", model.tab, [
     { id: "triage", label: "Triage", count: model.triage.length === 0 ? null : model.triage.length },
+    { id: "due", label: "Due to release", count: model.due.groups.filter((g) => g.due).length === 0 ? null : model.due.groups.filter((g) => g.due).length },
     { id: "jobs", label: "Jobs", count: null },
     { id: "holdbacks", label: "Holdbacks", count: null },
     { id: "documents", label: "Documents", count: null },
@@ -144,6 +157,85 @@ function triage(model: LiensModel): TemplateResult {
           `}
     </section>
   `;
+}
+
+// ---- due to release ---------------------------------------------------------------------------------
+
+function dueInvoices(g: DueGroup): TemplateResult {
+  return html`<ul class="li-invoices">${g.rows.map((r) => html`<li data-invoice-no=${r.invoice_no}><span class="li-mono">${r.invoice_no}</span> <span class="li-amt">${formatMoney(r.holdback_cents)}</span></li>`)}</ul>`;
+}
+
+function dueState(g: DueGroup): TemplateResult {
+  return html`
+    <div data-due-state>${pill(dueTone(g), dueStateWords(g))}</div>
+    ${g.due || g.reason === "" ? nothing : html`<span class="li-sub" data-due-reason>${noteWords(g.reason)}</span>`}
+  `;
+}
+
+const lastDayWords = (g: DueGroup): string => (g.lastDay === "" ? "No date" : dueWords(g.lastDay));
+
+function dueRow(model: LiensModel, g: DueGroup): TemplateResult {
+  return html`
+    <tr data-row="due" data-customer-job=${g.customerJobId} data-lien-job=${g.lienJobNo}>
+      <td><strong class="li-mono">${g.lienJobNo === "" ? "No lien job" : g.lienJobNo}</strong><span class="li-sub">${branchName(model.branches, g.branchId)}</span></td>
+      <td>${dueInvoices(g)}</td>
+      <td class="li-nowrap" data-last-day>${lastDayWords(g)}</td>
+      <td>${dueState(g)}</td>
+      <td>${dueAction(model, g)}</td>
+    </tr>
+  `;
+}
+
+function dueCard(model: LiensModel, g: DueGroup): TemplateResult {
+  return html`
+    <li class="li-card" data-row="due" data-customer-job=${g.customerJobId} data-lien-job=${g.lienJobNo}>
+      <div class="li-card-top"><strong class="li-mono">${g.lienJobNo === "" ? "No lien job" : g.lienJobNo}</strong>${pill(dueTone(g), dueStateWords(g))}</div>
+      ${dueInvoices(g)}
+      <span class="li-sub">${branchName(model.branches, g.branchId)} · Last day to preserve: <span data-last-day>${lastDayWords(g)}</span></span>
+      ${g.due || g.reason === "" ? nothing : html`<span class="li-sub" data-due-reason>${noteWords(g.reason)}</span>`}
+      ${dueAction(model, g)}
+    </li>
+  `;
+}
+
+function dueTotals(totals: readonly BillingHoldbackBranchDue[], branches: readonly Branch[]): TemplateResult {
+  const rows = totals.filter((t) => t.due_cents > 0);
+  return html`<p class="li-summary" data-due-total>${rows.length === 0
+    ? "Nothing is due to release now."
+    : rows.map((t, i) => html`${i === 0 ? "" : "; "}${formatMoney(t.due_cents)} due now${branchName(branches, t.branch_id) === "" ? "" : html` at ${branchName(branches, t.branch_id)}`}`)}</p>`;
+}
+
+function dueTab(model: LiensModel): TemplateResult {
+  const due = model.due;
+  return html`
+    <div class="li-split">
+      <section class="li-panel">
+        <div class="li-panel-head"><h2>Due to release</h2></div>
+        <p class="li-dim">Each customer job's held invoices, the lien job that governs them, the last day a lien can be preserved and where the holdback stands.</p>
+        ${due.phase === "error"
+          ? loadFailed(due.error, "li-reload")
+          : html`
+              ${dueTotals(due.totals, model.branches)}
+              ${due.groups.length === 0
+                ? empty("due", "No holdback is held on an invoice", "Everything held has been released, or nothing is held yet.")
+                : html`
+                    <div class="li-scroll li-hide-narrow">
+                      <table aria-label="Due to release">
+                        <thead><tr><th>Lien job</th><th>Invoices</th><th>Last day to preserve</th><th>State</th><th></th></tr></thead>
+                        <tbody>${due.groups.map((g) => dueRow(model, g))}</tbody>
+                      </table>
+                    </div>
+                    <ul class="li-cards">${due.groups.map((g) => dueCard(model, g))}</ul>
+                  `}
+            `}
+      </section>
+      <div></div>
+    </div>
+  `;
+}
+
+function dueAction(_model: LiensModel, _g: DueGroup): TemplateResult | typeof nothing {
+  return nothing;
 }
 
 // ---- jobs -------------------------------------------------------------------------------------------
@@ -498,7 +590,7 @@ export function renderLiens(model: LiensModel): TemplateResult {
           ? loadFailed(model.error, "li-reload")
           : html`
               ${bannerStrip(model.banner, model.bannerState)} ${tabs(model)} ${messages(model.error, model.notice)}
-              ${model.tab === "triage" ? triage(model) : model.tab === "jobs" ? jobs(model) : model.tab === "holdbacks" ? holdbacks(model) : documents(model)}
+              ${model.tab === "triage" ? triage(model) : model.tab === "due" ? dueTab(model) : model.tab === "jobs" ? jobs(model) : model.tab === "holdbacks" ? holdbacks(model) : documents(model)}
             `}
     </div>
   `;

@@ -3,8 +3,7 @@
 // reversal with a reason, the lien doors (a preserved lien, its discharge, the three dates), and the old job level
 // press saying where the holdback is released now.
 import type { APIRequestContext, Page } from "@playwright/test";
-import { test, expect, openLiens, liensTab, noSidewaysScroll, CONTROLLER_ID, dayFrom } from "./lien-helpers.js";
-import { IDS } from "./stub/lien-world.mjs";
+import { test, expect, openLiens, liensTab, noSidewaysScroll, CONTROLLER_ID, JOB5, dayFrom } from "./lien-helpers.js";
 
 const due = (page: Page, lien: string) => page.locator(`[data-row="due"][data-lien-job="${lien}"]:visible`);
 
@@ -71,7 +70,7 @@ test("item 2: the Controller is asked first, naming the job, the invoices and ea
 test("item 2: what the core refuses is said in the core's sentence, and the list is read again", async ({ page, request }) => {
   await openDue(page, request);
   await due(page, "GLS-2100").getByRole("button", { name: "Release" }).click();
-  await behind(request, "POST", `/api/v1/lien/jobs/${IDS.job5}/preserved-lien`, { preserved_on: dayFrom(-1), note: "filed while the screen was open" });
+  await behind(request, "POST", `/api/v1/lien/jobs/${JOB5}/preserved-lien`, { preserved_on: dayFrom(-1), note: "filed while the screen was open" });
   await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
   await expect(page.locator("[data-error]")).toContainText(`A lien was preserved on lien job GLS-2100 on ${dayFrom(-1)} and has not been discharged, so the holdback stays held until it is discharged or settled.`);
   await expect(due(page, "GLS-2100")).toContainText("Blocked by a preserved lien on GLS-2100");

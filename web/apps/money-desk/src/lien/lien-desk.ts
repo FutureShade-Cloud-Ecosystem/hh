@@ -11,13 +11,14 @@
 // Form fields carry data-field names and are read when the button is pressed; none is bound, and a select is read
 // by the id of its chosen option.
 import { html, type TemplateResult } from "lit";
-import type { Branch, IdentityStaffMember, LienAgingRow, LienDocument, LienJob, LienTriageItem } from "@hardscapehouse/api-client";
+import type { BillingHoldbackDueToRelease, Branch, IdentityStaffMember, LienAgingRow, LienDocument, LienJob, LienTriageItem, Result } from "@hardscapehouse/api-client";
 import { banner, type BannerView } from "../compliance/compliance-logic.js";
 import type { LienApi } from "./lien-api.js";
 import {
   canRelease,
   canWrite,
   cosigners,
+  groupDue,
   jobForm,
   mergeData,
   refusalWords,
@@ -29,7 +30,7 @@ import {
   TEMPLATE_KINDS,
 } from "./lien-logic.js";
 import { formatMoney } from "./lien-money.js";
-import { renderLiens, type LienTab, type LiensModel, type ReleaseModel } from "./lien-views.js";
+import { renderLiens, type DueModel, type LienTab, type LiensModel, type ReleaseModel } from "./lien-views.js";
 
 export interface LienHost {
   readonly repaint: () => void;
@@ -56,6 +57,7 @@ export class LienDesk {
   #jobs: LienJob[] = [];
   #triage: LienTriageItem[] = [];
   #aging: LienAgingRow[] = [];
+  #due: DueModel = { phase: "ready", groups: [], totals: [], error: "" };
   #branches: Branch[] = [];
   #banner: BannerView = banner(null);
   #bannerState = "";
@@ -98,7 +100,7 @@ export class LienDesk {
     this.#phase = "loading";
     this.#error = "";
     this.#host.repaint();
-    const [jobs, triage, aging, branches, review] = await Promise.all([this.#api.jobs(), this.#api.triage(), this.#api.aging(), this.#api.branches(), this.#api.reviewStatus()]);
+    const [jobs, triage, aging, branches, review, due] = await Promise.all([this.#api.jobs(), this.#api.triage(), this.#api.aging(), this.#api.branches(), this.#api.reviewStatus(), this.#api.dueToRelease()]);
     const failed = !jobs.ok ? jobs : !triage.ok ? triage : !aging.ok ? aging : null;
     if (failed !== null && !failed.ok) {
       this.#phase = "error";
@@ -109,10 +111,18 @@ export class LienDesk {
     if (jobs.ok) this.#jobs = jobs.value;
     if (triage.ok) this.#triage = triage.value;
     if (aging.ok) this.#aging = aging.value;
+    this.#setDue(due);
     this.#branches = branches.ok ? branches.value : [];
     this.#setBanner(review.ok ? review.value : null);
     this.#phase = "ready";
     this.#host.repaint();
+  }
+
+  /** The due list is its own read: a role that cannot read it hears the core's refusal on its own tab, not on the whole area. */
+  #setDue(answer: Result<BillingHoldbackDueToRelease>): void {
+    this.#due = answer.ok
+      ? { phase: "ready", groups: groupDue(answer.value.items ?? []), totals: answer.value.branches ?? [], error: "" }
+      : { phase: "error", groups: [], totals: [], error: refusalWords("load", answer.error, answer.status ?? 0) };
   }
 
   #setBanner(status: { state: string; banner_text: string; is_draft: boolean } | null): void {
@@ -128,10 +138,11 @@ export class LienDesk {
 
   /** Reads the three lists again after a write, without a loading screen and without clearing what was just said. */
   async #refresh(): Promise<void> {
-    const [jobs, triage, aging] = await Promise.all([this.#api.jobs(), this.#api.triage(), this.#api.aging()]);
+    const [jobs, triage, aging, due] = await Promise.all([this.#api.jobs(), this.#api.triage(), this.#api.aging(), this.#api.dueToRelease()]);
     if (jobs.ok) this.#jobs = jobs.value;
     if (triage.ok) this.#triage = triage.value;
     if (aging.ok) this.#aging = aging.value;
+    this.#setDue(due);
     if (this.#error === "") {
       const failed = !jobs.ok ? jobs : !triage.ok ? triage : !aging.ok ? aging : null;
       if (failed !== null && !failed.ok) this.#error = refusalWords("load", failed.error, failed.status ?? 0);
@@ -147,7 +158,7 @@ export class LienDesk {
     switch (action) {
       case "li-tab": {
         const tab = control.getAttribute("data-tab");
-        if (tab === "triage" || tab === "jobs" || tab === "holdbacks" || tab === "documents") this.#openTab(tab);
+        if (tab === "triage" || tab === "due" || tab === "jobs" || tab === "holdbacks" || tab === "documents") this.#openTab(tab);
         return true;
       }
       case "li-reload":
@@ -440,6 +451,7 @@ export class LienDesk {
       jobs: this.#jobs,
       triage: this.#triage,
       aging: this.#aging,
+      due: this.#due,
       branches: this.#branches,
       selectedJob: this.#selectedJob,
       newJob: this.#newJob,

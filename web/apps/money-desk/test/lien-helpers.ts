@@ -66,7 +66,7 @@ export async function openCompliance(page: Page, request: APIRequestContext, who
   await expect(page.locator("[data-row='deadline']:visible").first()).toBeVisible();
 }
 
-export async function liensTab(page: Page, id: "triage" | "jobs" | "holdbacks" | "documents"): Promise<void> {
+export async function liensTab(page: Page, id: "triage" | "due" | "jobs" | "holdbacks" | "documents"): Promise<void> {
   await page.locator(`[data-liens] [data-tab-id='${id}']`).click();
 }
 

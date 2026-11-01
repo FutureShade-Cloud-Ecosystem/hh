@@ -109,6 +109,11 @@ export const lienStyles = css`
   .li-confirm { margin: var(--hh-s-12) 0; padding: var(--hh-s-12) var(--hh-s-16); border: 2px solid var(--hh-focus-ring); border-radius: var(--hh-radius-control); font-weight: 700; overflow-wrap: anywhere; }
   .li-summary { margin: 0 0 var(--hh-s-12); font-weight: 600; }
 
+  /* Due to release: the invoices listed one under another, each with its amount on the right. */
+  .li-invoices { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--hh-s-4); }
+  .li-invoices li { display: flex; justify-content: space-between; gap: var(--hh-s-16); }
+  .li-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
   @media (max-width: 900px) {
     .li-split, .li-split-month { grid-template-columns: minmax(0, 1fr); }
   }
