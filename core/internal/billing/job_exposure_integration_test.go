@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"os"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 )
@@ -256,5 +257,41 @@ func TestIntegration_Exposure_OnlyAConvertedQuotesDraftCounts(t *testing.T) {
 	}
 	if _, jobExp, _, _ := rd.JobPosition(ctx, nil, w.cust, w.jobB); jobExp != 40000 {
 		t.Fatalf("a converted quote's DRAFT: job exposure = %d, want 40000", jobExp)
+	}
+}
+
+// JA-3 fix P2: the job limit is read on the caller's open transaction. A pool of ONE connection with
+// the transaction open must answer, not wait for a second connection until its deadline.
+func TestIntegration_Exposure_TheJobLimitReadJoinsTheCallersTransaction(t *testing.T) {
+	pool := intPool(t)
+	w := plantExposureWorld(t, pool)
+	cfg, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Skipf("no DATABASE_URL to build a one connection pool: %v", err)
+	}
+	cfg.MaxConns = 1
+	one, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("one connection pool: %v", err)
+	}
+	t.Cleanup(one.Close)
+	rd := NewExposureReader(one, customer.NewRepository(one))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	tx, err := one.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := rd.CustomerExposure(ctx, tx, w.cust); err != nil {
+		t.Fatalf("customer exposure on the tx: %v", err)
+	}
+	own, _, cl, err := rd.JobPosition(ctx, tx, w.cust, w.jobA)
+	if err != nil {
+		t.Fatalf("job position on the tx waited for a second connection: %v", err)
+	}
+	if own == nil || *own != 300000 || cl != 1000000 {
+		t.Fatalf("job position limits = %v %d, want own 300000 and customer 1000000", own, cl)
 	}
 }

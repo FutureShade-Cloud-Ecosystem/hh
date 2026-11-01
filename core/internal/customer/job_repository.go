@@ -352,15 +352,29 @@ func (r *Repository) JobEffectiveTerms(ctx context.Context, customerID, jobID st
 // min(job limit, customer limit) and sums exposure across the customer's jobs). Both figures are
 // read in one statement so the pair cannot be read at two different instants.
 func (r *Repository) JobLimitForCustomer(ctx context.Context, customerID, jobID string) (jobLimit *int64, customerLimit int64, err error) {
-	if r.pool == nil {
-		return nil, 0, errNoDB
-	}
-	err = r.pool.QueryRow(ctx, `
+	return r.JobLimitForCustomerIn(ctx, nil, customerID, jobID)
+}
+
+// JobLimitForCustomerIn is JobLimitForCustomer on the caller's open transaction when one is given
+// (nil reads on the pool). A credit gate consulted inside a write transaction passes it, so the read
+// joins that connection and the same snapshot and never asks a saturated pool for a second connection
+// while the first is held (the cycle Postgres cannot see).
+func (r *Repository) JobLimitForCustomerIn(ctx context.Context, tx pgx.Tx, customerID, jobID string) (jobLimit *int64, customerLimit int64, err error) {
+	const q = `
 		SELECT j.credit_limit_cents, c.credit_limit_cents
 		  FROM customer_jobs j
 		  JOIN customers c ON c.id = j.customer_id
-		 WHERE j.id = $1 AND j.customer_id = $2`, jobID, customerID).Scan(&jobLimit, &customerLimit)
-	if err != nil {
+		 WHERE j.id = $1 AND j.customer_id = $2`
+	var row pgx.Row
+	switch {
+	case tx != nil:
+		row = tx.QueryRow(ctx, q, jobID, customerID)
+	case r.pool == nil:
+		return nil, 0, errNoDB
+	default:
+		row = r.pool.QueryRow(ctx, q, jobID, customerID)
+	}
+	if err = row.Scan(&jobLimit, &customerLimit); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, 0, ErrNotFound
 		}

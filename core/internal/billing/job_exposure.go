@@ -48,9 +48,11 @@ func (e *ExposureReader) querier(tx pgx.Tx) (rowQuerier, error) {
 }
 
 // JobLimits is the customer module's read of a job's own credit limit beside the customer's.
-// *customer.Repository satisfies it (JobLimitForCustomer).
+// *customer.Repository satisfies it (JobLimitForCustomerIn). The read takes the caller's open
+// transaction (nil reads on the pool), so a gate consulted inside a write transaction asks the pool
+// for no second connection.
 type JobLimits interface {
-	JobLimitForCustomer(ctx context.Context, customerID, jobID string) (jobLimit *int64, customerLimit int64, err error)
+	JobLimitForCustomerIn(ctx context.Context, tx pgx.Tx, customerID, jobID string) (jobLimit *int64, customerLimit int64, err error)
 }
 
 // ExposureReader reads exposure. The zero value is unusable; build it with NewExposureReader.
@@ -111,7 +113,7 @@ func (e *ExposureReader) JobPosition(ctx context.Context, tx pgx.Tx, customerID,
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	ownLimit, customerLimit, err = e.jobs.JobLimitForCustomer(ctx, customerID, jobID)
+	ownLimit, customerLimit, err = e.jobs.JobLimitForCustomerIn(ctx, tx, customerID, jobID)
 	if err != nil {
 		return nil, 0, 0, err
 	}
