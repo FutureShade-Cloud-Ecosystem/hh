@@ -77,18 +77,33 @@ var ErrJobBranchesOutOfReach = errors.New("billing: this job has documents at a 
 // JobBranchesOutOfReachWords is what the caller is told, and it names why.
 const JobBranchesOutOfReachWords = "this job has documents at a branch you cannot see; ask someone who can reach every branch on it"
 
-// JobDocumentBranches reads the distinct branches of the job's invoices and credit memos and of the
-// ledger rows they posted.
+// jobReachFarDay is the as of day of the branch check: later than any document, so the check reads
+// the job's whole account and an earlier as of on the statement can never skip it.
+const jobReachFarDay = "9000-01-01"
+
+// JobDocumentBranches reads the distinct branches of everything the by job statement can put on the
+// job: its invoices and credit memos, and every part the by job read builds for it (the ledger rows,
+// the receipts, voids, reversals, reapplications and bounces split onto it through their allocations,
+// the holdback lines), each at the branch it sits at. The second half is the statement's own read
+// (statementActivityCTE and statementByJobParts) run with the whole book and no date cut, so the check
+// cannot drift from what the statement reads. It is date free.
 func (r *Repository) JobDocumentBranches(ctx context.Context, customerID, jobID string) ([]string, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
+	zone, err := r.zoneFor(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT i.branch_id::text FROM invoices i WHERE i.customer_id = $1::uuid AND i.job_id = $2::uuid AND i.branch_id IS NOT NULL
+		`SELECT i.branch_id::text FROM invoices i WHERE i.customer_id = $1::uuid AND i.job_id = $5::uuid AND i.branch_id IS NOT NULL
 		 UNION
 		 SELECT t.branch_id::text FROM customer_transactions t
 		   JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
-		  WHERE t.customer_id = $1::uuid AND i.job_id = $2::uuid AND t.branch_id IS NOT NULL`, customerID, jobID)
+		  WHERE t.customer_id = $1::uuid AND i.job_id = $5::uuid AND t.branch_id IS NOT NULL
+		 UNION
+		 SELECT x.b FROM (`+statementActivityCTE+statementByJobParts+statementByJobBranches+`) x`,
+		customerID, jobReachFarDay, nil, zone.Name(), jobID)
 	if err != nil {
 		return nil, fmt.Errorf("billing: job document branches: %w", err)
 	}
