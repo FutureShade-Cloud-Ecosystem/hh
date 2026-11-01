@@ -584,7 +584,7 @@ const agingByJobSelect = agingOpenAR + `
 		 GROUP BY o.customer_id
 	)
 	SELECT c.id::text, c.name, c.account_no::text,
-	       COALESCE(i.job_id::text, ''),
+	       CASE WHEN i.job_id IS NULL OR $4::uuid[] IS NULL OR j.branch_id = ANY($4::uuid[]) THEN COALESCE(i.job_id::text, '') ELSE '' END,
 	       CASE WHEN $4::uuid[] IS NULL OR j.branch_id = ANY($4::uuid[]) THEN COALESCE(j.job_no::text, '') ELSE '' END,
 	       CASE WHEN $4::uuid[] IS NULL OR j.branch_id = ANY($4::uuid[]) THEN COALESCE(j.name, '') ELSE '' END,
 	       i.job_id IS NULL,

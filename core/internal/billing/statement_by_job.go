@@ -77,48 +77,6 @@ var ErrJobBranchesOutOfReach = errors.New("billing: this job has documents at a 
 // JobBranchesOutOfReachWords is what the caller is told, and it names why.
 const JobBranchesOutOfReachWords = "this job has documents at a branch you cannot see; ask someone who can reach every branch on it"
 
-// jobReachFarDay is the as of day of the branch check: later than any document, so the check reads
-// the job's whole account and an earlier as of on the statement can never skip it.
-const jobReachFarDay = "9000-01-01"
-
-// JobDocumentBranches reads the distinct branches of everything the by job statement can put on the
-// job: its invoices and credit memos, and every part the by job read builds for it (the ledger rows,
-// the receipts, voids, reversals, reapplications and bounces split onto it through their allocations,
-// the holdback lines), each at the branch it sits at. The second half is the statement's own read
-// (statementActivityCTE and statementByJobParts) run with the whole book and no date cut, so the check
-// cannot drift from what the statement reads. It is date free.
-func (r *Repository) JobDocumentBranches(ctx context.Context, customerID, jobID string) ([]string, error) {
-	if r.pool == nil {
-		return nil, errNoDB
-	}
-	zone, err := r.zoneFor(ctx)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := r.pool.Query(ctx,
-		`SELECT i.branch_id::text FROM invoices i WHERE i.customer_id = $1::uuid AND i.job_id = $5::uuid AND i.branch_id IS NOT NULL
-		 UNION
-		 SELECT t.branch_id::text FROM customer_transactions t
-		   JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
-		  WHERE t.customer_id = $1::uuid AND i.job_id = $5::uuid AND t.branch_id IS NOT NULL
-		 UNION
-		 SELECT x.b FROM (`+statementActivityCTE+statementByJobParts+statementByJobBranches+`) x`,
-		customerID, jobReachFarDay, nil, zone.Name(), jobID)
-	if err != nil {
-		return nil, fmt.Errorf("billing: job document branches: %w", err)
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var b string
-		if err := rows.Scan(&b); err != nil {
-			return nil, fmt.Errorf("billing: scan job document branch: %w", err)
-		}
-		out = append(out, b)
-	}
-	return out, rows.Err()
-}
-
 // JobStatementParties reads the customer's name, its jobs and the contacts a statement goes to.
 func (r *Repository) JobStatementParties(ctx context.Context, customerID string) (JobStatementParties, error) {
 	if r.pool == nil {
@@ -231,12 +189,16 @@ func (s *StatementService) StatementByJob(ctx context.Context, customerID string
 			base.JobID, base.AccountLevel = ln.JobID, ln.JobID == ""
 			// A job homed outside the caller's reach is not named (the customer module hides it too);
 			// the lines in reach and their money stay.
+			// Nor is it identified: its id is left out of the section and its lines too.
 			if ln.JobID != "" && !reach.Allows(parties.JobBranchID[ln.JobID]) {
-				base.JobNo, base.JobName = "", ""
+				base.JobNo, base.JobName, base.JobID = "", "", ""
 			}
 			sec = &base
 			byJob[ln.JobID] = sec
 			order = append(order, ln.JobID)
+		}
+		if sec.JobID == "" && ln.JobID != "" {
+			ln.JobID = ""
 		}
 		sec.Lines = append(sec.Lines, ln)
 		sec.SubtotalCents = ln.BalanceRun

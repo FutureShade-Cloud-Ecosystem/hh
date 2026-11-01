@@ -8,6 +8,7 @@ package billing
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -22,10 +23,21 @@ func TestIntegration_W3P062_JobHomedOutOfReachIsNotNamed(t *testing.T) {
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &st) != nil {
 		t.Fatalf("statement by job: %d %s", rec.Code, rec.Body.String())
 	}
+	if strings.Contains(rec.Body.String(), w.away) {
+		t.Fatalf("the statement by job carries the id of the job homed at Kingston: %s", rec.Body.String())
+	}
 	seenAway, seenSplit := false, false
 	for _, sec := range st.Sections {
-		switch sec.JobID {
-		case w.away:
+		switch {
+		case sec.JobID == "" && !sec.AccountLevel:
+			if sec.JobNo != "" || sec.JobName != "" {
+				t.Fatalf("an unidentified section is also unnamed: %+v", sec)
+			}
+			seenAway = true
+			if sec.SubtotalCents != 5000 || len(sec.Lines) != 1 || sec.Lines[0].JobID != "" {
+				t.Fatalf("the money stays on the visible lines, and the line carries no job id: %+v", sec)
+			}
+		case sec.JobID == w.away:
 			seenAway = true
 			if sec.JobNo != "" || sec.JobName != "" {
 				t.Fatalf("the job homed at Kingston is named to a Trenton manager: %+v", sec)
@@ -33,7 +45,7 @@ func TestIntegration_W3P062_JobHomedOutOfReachIsNotNamed(t *testing.T) {
 			if sec.SubtotalCents != 5000 || len(sec.Lines) != 1 {
 				t.Fatalf("the money stays on the visible lines: %+v", sec)
 			}
-		case w.split:
+		case sec.JobID == w.split:
 			seenSplit = true
 			if sec.JobNo == "" || sec.JobName == "" || sec.SubtotalCents != 30000 {
 				t.Fatalf("a job homed in reach keeps its name: %+v", sec)
@@ -45,6 +57,9 @@ func TestIntegration_W3P062_JobHomedOutOfReachIsNotNamed(t *testing.T) {
 	}
 
 	rec = jobReachGet(mux, ctx, "/api/v1/ar/aging-by-job")
+	if strings.Contains(rec.Body.String(), w.away) {
+		t.Fatalf("the aging by job carries the id of the job homed at Kingston")
+	}
 	var aging struct {
 		Items []AgingJobRow `json:"items"`
 	}
@@ -57,7 +72,13 @@ func TestIntegration_W3P062_JobHomedOutOfReachIsNotNamed(t *testing.T) {
 			got[r.JobID] = r
 		}
 	}
-	away, ok := got[w.away]
+	var away AgingJobRow
+	ok := false
+	for _, r := range aging.Items {
+		if r.CustomerID == w.customer && !r.AccountLevel && r.JobID == "" {
+			away, ok = r, true
+		}
+	}
 	if !ok || away.TotalCents != 5000 {
 		t.Fatalf("the away job's row keeps its money: %+v (found %v)", away, ok)
 	}
