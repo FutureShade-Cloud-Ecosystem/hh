@@ -511,7 +511,7 @@ export class DriveRunApp extends HHElement {
     if (result.ok) {
       this.#entryView = { flows: { kind: "ready", flows: result.value }, busy: false, message: null };
     } else {
-      this.#entryView = { flows: { kind: "unavailable" }, busy: false, message: null };
+      this.#entryView = { flows: { kind: "unavailable", failure: { status: result.status, code: result.code } }, busy: false, message: null };
     }
     this.requestUpdate();
   }
