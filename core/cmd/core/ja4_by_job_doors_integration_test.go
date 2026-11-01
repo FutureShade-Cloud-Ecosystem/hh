@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	staffcontext "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -125,6 +127,36 @@ func (w *ja4World) receipt(t *testing.T) payments.Payment {
 	return p
 }
 
+// bounce takes a receipt back through the real NSF door (till.Service.MarkNSF), dated at `at`.
+func (w *ja4World) bounce(t *testing.T, payID string, at time.Time) {
+	t.Helper()
+	var userID string
+	if err := w.pool.QueryRow(context.Background(), `SELECT id::text FROM users ORDER BY id LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("pick a seeded user: %v", err)
+	}
+	ctx := staffcontext.ContextWithStaff(context.Background(), staffcontext.StaffContext{
+		UserID: userID, Tier: staffcontext.TierManager, Scope: staffcontext.ScopeGlobal, Status: "ACTIVE",
+	})
+	svc := till.NewService(till.NewRepository(w.pool)).WithClock(func() time.Time { return at })
+	if _, err := svc.MarkNSF(ctx, till.NSFInput{PaymentID: payID, Reason: "ja4 bounce leg"}); err != nil {
+		t.Fatalf("the NSF door: %v", err)
+	}
+	// A bounce taken in the past by a test clock has its ledger rows' created_at at the real now (the
+	// column default); live, both are the bounce's instant. Bring them together so the as of reads see
+	// what a live bounce on that day would have written.
+	ja4Exec(t, w.pool, "date the bounce's ledger rows", `UPDATE customer_transactions SET created_at = occurred_at WHERE customer_id = $1::uuid AND created_at > occurred_at`, w.cust)
+	t.Cleanup(func() {
+		for _, q := range []string{
+			`DELETE FROM credit_holds WHERE source_payment_id = $1::uuid`,
+			`DELETE FROM payment_nsf WHERE payment_id = $1::uuid`,
+		} {
+			if _, err := w.pool.Exec(context.Background(), q, payID); err != nil {
+				t.Errorf("cleanup of the bounce: %v", err)
+			}
+		}
+	})
+}
+
 // age moves a payment's rows (and the ledger rows that name it) back by d. Only legal before an undo
 // exists (the reversal guard refuses to move an application a reversal names).
 func (w *ja4World) age(t *testing.T, payID string, d time.Duration) {
@@ -207,7 +239,7 @@ func TestIntegration_JA4Doors_Void(t *testing.T) {
 }
 
 // TestIntegration_JA4Doors_TheWholeSequence: a split receipt taken ten days ago, its reversal two
-// days ago, a re-application of the held money to job A's invoice, then a second receipt voided: the
+// days ago, a re-application of the held money to job A's invoice, then a second receipt voided, then a third receipt bounced: the
 // statement by job and the aging by job agree per job now and five days ago (receipt taken, not yet
 // reversed), and the grand total ties to ARBalanceCents.
 func TestIntegration_JA4Doors_TheWholeSequence(t *testing.T) {
@@ -244,6 +276,17 @@ func TestIntegration_JA4Doors_TheWholeSequence(t *testing.T) {
 	final := w.agree(t, "after the void", asOf)
 	ja4Want(t, "after the void", final, w, 20000, 20000, 10000)
 
+	// A third receipt taken six days ago and bounced yesterday through the NSF door: before the
+	// bounce (three days ago) the receipt credits its jobs, after it (now) the jobs return to what they
+	// owed, and the statement equals the aging per job at each read.
+	p3 := w.receipt(t)
+	w.age(t, p3.ID, 6*24*time.Hour)
+	w.agree(t, "three days ago, receipt taken, bounce not yet", time.Now().Add(-3*24*time.Hour))
+	w.bounce(t, p3.ID, time.Now().Add(-24*time.Hour))
+	w.agree(t, "two days ago, before the bounce", time.Now().Add(-2*24*time.Hour))
+	bounced := w.agree(t, "after the bounce", asOf)
+	ja4Want(t, "after the bounce", bounced, w, 20000, 20000, 10000+nsfFeeCents(t, w))
+
 	all, err := w.credit.AgingByJob(ctx, asOf, "", "")
 	if err != nil {
 		t.Fatalf("AgingByJob: %v", err)
@@ -259,4 +302,40 @@ func TestIntegration_JA4Doors_TheWholeSequence(t *testing.T) {
 	if grand != ar {
 		t.Fatalf("the by job aging totals %d, ARBalanceCents %d", grand, ar)
 	}
+}
+
+// TestIntegration_JA4Doors_Bounce: the 15000 and 5000 receipt bounced through the NSF door. The jobs
+// return to owing what they did before the receipt (the bounce's NSF row is charged back to the jobs
+// by the payment's reversal rows), now; and a receipt aged ten days, bounced two days ago, agrees per
+// job five days ago (before the bounce), the day before yesterday's bounce was taken, and now.
+func TestIntegration_JA4Doors_Bounce(t *testing.T) {
+	w := ja4Plant(t)
+	p := w.receipt(t)
+	w.bounce(t, p.ID, time.Now())
+	got := w.agree(t, "after the bounce", time.Now().Add(time.Hour))
+	ja4Want(t, "after the bounce", got, w, 30000, 20000, 10000+nsfFeeCents(t, w))
+}
+
+func TestIntegration_JA4Doors_BouncePast(t *testing.T) {
+	w := ja4Plant(t)
+	p := w.receipt(t)
+	w.age(t, p.ID, 10*24*time.Hour)
+	w.bounce(t, p.ID, time.Now().Add(-2*24*time.Hour))
+	before := w.agree(t, "five days ago, before the bounce", time.Now().Add(-5*24*time.Hour))
+	ja4Want(t, "five days ago, before the bounce", before, w, 15000, 15000, 10000)
+	after := w.agree(t, "one day ago, after the bounce", time.Now().Add(-24*time.Hour))
+	ja4Want(t, "one day ago, after the bounce", after, w, 30000, 20000, 10000+nsfFeeCents(t, w))
+	now := w.agree(t, "now, after the bounce", time.Now().Add(time.Hour))
+	ja4Want(t, "now, after the bounce", now, w, 30000, 20000, 10000+nsfFeeCents(t, w))
+}
+
+// nsfFeeCents is the fee the bounce charged the customer (account level in the aging).
+func nsfFeeCents(t *testing.T, w *ja4World) int64 {
+	t.Helper()
+	var fee int64
+	if err := w.pool.QueryRow(context.Background(),
+		`SELECT COALESCE(SUM(fee_cents), 0) FROM payment_nsf WHERE customer_id = $1::uuid`, w.cust).Scan(&fee); err != nil {
+		t.Fatalf("read the NSF fee: %v", err)
+	}
+	return fee
 }

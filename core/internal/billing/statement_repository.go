@@ -719,54 +719,71 @@ func (r *Repository) RecordPaylinkDelivery(ctx context.Context, row PaylinkDeliv
 //	payment_void     the REVERSAL allocations under the same payment
 //	payment_reversal the contra allocations of the reversal payment
 //	payment_reapply  the payment_reapplications of the reversed payment
+//	nsf              a bounce: the one NSF ledger row written under the payment's id, credited back by the
+//	                 REVERSAL allocations the NSF door wrote under that payment, so each job returns to
+//	                 owing what it did before the receipt (the receipt's own act keeps its credit)
 //
-// Each act reads as one line per job, dated at the act's first ledger row (a reapplication in several
-// batches reads as one line at its first date), and the act's ledger sum less its shares is left at
-// account level (the unapplied part).
+// Each act reads as one line per job, dated at the act's first ledger row, and the act's ledger sum
+// less its shares is left at account level (the unapplied part).
+//
+// An act whose rows span several days (a reapplication made in two batches) reads as ONE line at its
+// first date, even on a read taken after the second batch. This is an accepted presentation choice:
+// the figures per job are right at every as of day, because the ledger rows are cut by day and the
+// shares by the end of the same day, so no past read mixes the batches; only that line's date is early.
 const statementByJobTail = `
 		, cutoff AS (
 			SELECT (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond' AS at
 		), paytxn AS (
-			SELECT a.* FROM activity a
-			 WHERE a.txn_type = 'PAYMENT' AND a.src_ref IS NOT NULL
-			   AND a.src_type IN ('payment', 'payment_void', 'payment_reversal', 'payment_reapply')
+			SELECT a.occurred_at, a.created_at, a.txn_type, a.amount_cents, a.memo, a.src_id, a.src_ref,
+			       CASE WHEN a.txn_type = 'NSF' THEN 'nsf' ELSE a.src_type END AS act_type
+			  FROM activity a
+			 WHERE a.src_ref IS NOT NULL
+			   AND ((a.txn_type = 'PAYMENT'
+			         AND a.src_type IN ('payment', 'payment_void', 'payment_reversal', 'payment_reapply'))
+			     OR (a.txn_type = 'NSF' AND a.src_type = 'invoice' AND a.job_id IS NULL
+			         AND EXISTS (SELECT 1 FROM payment_allocations pb WHERE pb.payment_id = a.src_ref)))
 		), acts AS (
-			SELECT p.src_type, p.src_ref, MIN(p.occurred_at) AS occurred_at, MIN(p.created_at) AS created_at,
+			SELECT p.act_type, p.src_ref, MIN(p.txn_type) AS txn_type,
+			       MIN(p.occurred_at) AS occurred_at, MIN(p.created_at) AS created_at,
 			       SUM(p.amount_cents) AS amount_cents, MIN(p.memo) AS memo
-			  FROM paytxn p GROUP BY p.src_type, p.src_ref
+			  FROM paytxn p GROUP BY p.act_type, p.src_ref
 		), shares AS (
-			SELECT ac.src_type, ac.src_ref, inv.job_id, SUM(CASE WHEN ac.src_type = 'payment_reversal' THEN pa.amount_cents ELSE -pa.amount_cents END) AS share
+			SELECT ac.act_type, ac.src_ref, inv.job_id,
+			       SUM(CASE WHEN ac.act_type = 'payment_reversal' THEN pa.amount_cents ELSE -pa.amount_cents END) AS share
 			  FROM acts ac
 			  JOIN payment_allocations pa ON pa.payment_id = ac.src_ref
 			   AND pa.created_at <= (SELECT at FROM cutoff)
-			   AND ((ac.src_type = 'payment' AND pa.kind = 'APPLICATION')
-			     OR (ac.src_type = 'payment_void' AND pa.kind = 'REVERSAL')
-			     OR (ac.src_type = 'payment_reversal' AND pa.kind = 'APPLICATION'))
+			   AND ((ac.act_type = 'payment' AND pa.kind = 'APPLICATION')
+			     OR (ac.act_type = 'payment_void' AND pa.kind = 'REVERSAL')
+			     OR (ac.act_type = 'payment_reversal' AND pa.kind = 'APPLICATION')
+			     OR (ac.act_type = 'nsf' AND pa.kind = 'REVERSAL'))
 			  JOIN invoices inv ON inv.id = pa.invoice_id
-			 WHERE ac.src_type <> 'payment_reapply'
-			 GROUP BY ac.src_type, ac.src_ref, inv.job_id
+			 WHERE ac.act_type <> 'payment_reapply'
+			 GROUP BY ac.act_type, ac.src_ref, inv.job_id
 			UNION ALL
-			SELECT ac.src_type, ac.src_ref, inv.job_id, -SUM(ra.amount_cents)
+			SELECT ac.act_type, ac.src_ref, inv.job_id, -SUM(ra.amount_cents)
 			  FROM acts ac
 			  JOIN payment_reapplications ra ON ra.payment_id = ac.src_ref
 			   AND ra.created_at <= (SELECT at FROM cutoff)
 			  JOIN invoices inv ON inv.id = ra.invoice_id
-			 WHERE ac.src_type = 'payment_reapply'
-			 GROUP BY ac.src_type, ac.src_ref, inv.job_id
+			 WHERE ac.act_type = 'payment_reapply'
+			 GROUP BY ac.act_type, ac.src_ref, inv.job_id
+		), leftover AS (
+			SELECT ac.occurred_at, ac.created_at, ac.txn_type, ac.memo,
+			       ac.amount_cents - COALESCE(sh.net, 0) AS amount_cents
+			  FROM acts ac
+			  LEFT JOIN (SELECT s.act_type, s.src_ref, SUM(s.share) AS net FROM shares s GROUP BY s.act_type, s.src_ref) sh
+			    ON sh.act_type = ac.act_type AND sh.src_ref = ac.src_ref
 		), parts AS (
 			SELECT a.occurred_at, a.created_at, a.txn_type, a.amount_cents, a.invoice_no, a.memo, a.job_id
 			  FROM activity a
-			 WHERE NOT (a.txn_type = 'PAYMENT' AND a.src_ref IS NOT NULL
-			        AND a.src_type IN ('payment', 'payment_void', 'payment_reversal', 'payment_reapply'))
+			 WHERE NOT EXISTS (SELECT 1 FROM paytxn p WHERE p.src_id = a.src_id)
 			UNION ALL
-			SELECT ac.occurred_at, ac.created_at, 'PAYMENT', s.share, '', ac.memo, s.job_id
-			  FROM acts ac JOIN shares s ON s.src_type = ac.src_type AND s.src_ref = ac.src_ref
+			SELECT ac.occurred_at, ac.created_at, ac.txn_type, s.share, '', ac.memo, s.job_id
+			  FROM acts ac JOIN shares s ON s.act_type = ac.act_type AND s.src_ref = ac.src_ref
 			UNION ALL
-			SELECT ac.occurred_at, ac.created_at, 'PAYMENT',
-			       ac.amount_cents - COALESCE((SELECT SUM(s.share) FROM shares s WHERE s.src_type = ac.src_type AND s.src_ref = ac.src_ref), 0),
-			       '', ac.memo, NULL::uuid
-			  FROM acts ac
-			 WHERE ac.amount_cents - COALESCE((SELECT SUM(s.share) FROM shares s WHERE s.src_type = ac.src_type AND s.src_ref = ac.src_ref), 0) <> 0
+			SELECT l.occurred_at, l.created_at, l.txn_type, l.amount_cents, '', l.memo, NULL::uuid
+			  FROM leftover l WHERE l.amount_cents <> 0
 		)
 		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, COALESCE(job_id::text, '')
 		  FROM parts
