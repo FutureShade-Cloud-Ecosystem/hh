@@ -41,7 +41,7 @@ import {
   TEMPLATE_KINDS,
 } from "./lien-logic.js";
 import { formatMoney } from "./lien-money.js";
-import { newKey } from "../ar/held-keys.js";
+import { HeldKeys, newKey } from "../ar/held-keys.js";
 import { renderLiens, type DueModel, type ErrorAt, type LienTab, type LiensModel, type ReleasedPress, type ReleaseModel } from "./lien-views.js";
 
 export interface LienHost {
@@ -89,7 +89,11 @@ export class LienDesk {
   #dueOpen = "";
   #reversing = "";
   #released: ReleasedPress[] = [];
-  readonly #dueKeys = new Map<string, string>();
+  // The release key is held the way the other money presses hold theirs (src/ar/held-keys.ts): in the session mirror,
+  // one record per signed in user under its own namespace, so it outlives a reload. One entry per customer job.
+  #dueKeys(): HeldKeys {
+    return new HeldKeys(this.#host.userId(), undefined, "lien-due.");
+  }
   // The roster is read once, the first time a release opens, and kept.
   #people: IdentityStaffMember[] | null = null;
   #busy = false;
@@ -450,15 +454,16 @@ export class LienDesk {
   async #confirmDue(): Promise<void> {
     const group = this.#due.groups.find((g) => g.customerJobId === this.#dueOpen);
     if (group === undefined || this.#busy || !canReleaseDue(this.#host.roleCode())) return;
-    const key = this.#dueKeys.get(group.customerJobId) ?? newKey();
-    this.#dueKeys.set(group.customerJobId, key);
+    const keys = this.#dueKeys();
+    const key = keys.get(group.customerJobId) ?? newKey();
+    keys.set(group.customerJobId, key);
     this.#busy = true;
     this.#clearMessages();
     this.#host.repaint();
     const answer = await this.#api.releaseDue(group.customerJobId, key);
     this.#busy = false;
     if (!answer.ok) {
-      if ((answer.status ?? 0) >= 400 && (answer.status ?? 0) < 500) this.#dueKeys.delete(group.customerJobId);
+      if ((answer.status ?? 0) >= 400 && (answer.status ?? 0) < 500) this.#dueKeys().delete(group.customerJobId);
       this.#failAt("due", refusalWords("due-release", answer.error, answer.status ?? 0));
       this.#host.repaint();
       await this.#refresh();
@@ -467,7 +472,7 @@ export class LienDesk {
       this.#host.repaint();
       return;
     }
-    this.#dueKeys.delete(group.customerJobId);
+    this.#dueKeys().delete(group.customerJobId);
     const done = answer.value;
     const made = done.items ?? [];
     this.#notice = releasedDueWords(group.label, formatMoney(done.total_cents), made.length, done.replayed);
