@@ -168,15 +168,18 @@ func (r *Repository) SetCreditChangeThresholds(ctx context.Context, branchID str
 // settled-after column on the document, or a created_at index on the allocation so a settled
 // document can be skipped without a rebuild) are schema changes, and the migration numbers are a
 // shared space, so they are a lead's call, not this query's.
-const agingSelect = `
+// agingOpenAR is the open_ar CTE of agingSelect, shared with the by job aging (ar_by_job.go) so the
+// two read ONE definition of what is owed and when it ages. Its job_id column is the invoice's job
+// (JA-2), NULL for a document with no job and for every non-invoice movement (account level).
+const agingOpenAR = `
 	WITH open_ar AS (
-		SELECT q.customer_id, q.branch_id, x.bal, x.due_date
+		SELECT q.customer_id, q.branch_id, q.job_id, x.bal, x.due_date
 		  FROM (
-		SELECT r.customer_id, r.branch_id,
+		SELECT r.customer_id, r.branch_id, r.job_id,
 		       r.raw - LEAST(r.holdback_cents, GREATEST(r.raw, 0)) AS net,
 		       r.rel_cents, r.rel_due, r.due_date
 		  FROM (
-		SELECT i.customer_id, i.branch_id,
+		SELECT i.customer_id, i.branch_id, i.job_id,
 		       invoice_released_cents_as_of(i.id, $6::timestamptz) AS rel_cents,
 		       GREATEST(invoice_released_on(i.id, $6::timestamptz) + GREATEST(i.due_date - i.issue_date, 0), i.due_date) AS rel_due,
 		       CASE WHEN $7::bool THEN GREATEST(i.holdback_cents, 0)
@@ -202,7 +205,7 @@ const agingSelect = `
 		        (q.net - LEAST(q.rel_cents, GREATEST(q.net, 0)), q.due_date),
 		        (LEAST(q.rel_cents, GREATEST(q.net, 0)), q.rel_due)) AS x(bal, due_date)
 		UNION ALL
-		SELECT ct.customer_id, ct.branch_id,
+		SELECT ct.customer_id, ct.branch_id, NULL::uuid AS job_id,
 		       SUM(ct.amount_cents) AS bal,
 		       MIN((ct.occurred_at AT TIME ZONE $5::text)::date) AS due_date
 		  FROM customer_transactions ct
@@ -211,7 +214,9 @@ const agingSelect = `
 		   AND ($7::bool OR ct.created_at <= $6::timestamptz)
 		 GROUP BY ct.customer_id, ct.branch_id, ct.source_type, COALESCE(ct.source_ref_id, ct.id)
 		HAVING SUM(ct.amount_cents) <> 0
-	)
+	)`
+
+const agingSelect = agingOpenAR + `
 	SELECT c.id::text, c.name, c.account_no::text, COALESCE(c.home_branch_id::text,''),
 	       c.payment_terms_days, c.credit_limit_cents,
 	       COALESCE(SUM(i.bal) FILTER (WHERE $1::date <= i.due_date), 0),
@@ -564,4 +569,58 @@ func (r *Repository) WorklistFacts(ctx context.Context, asOf time.Time, branchID
 		return nil, err
 	}
 	return facts, nil
+}
+
+// agingByJobSelect: $1..$7 are agingSelect's, $8 is the job filter (” = every row).
+const agingByJobSelect = agingOpenAR + `
+	SELECT c.id::text, c.name, c.account_no::text,
+	       COALESCE(i.job_id::text, ''), COALESCE(j.job_no::text, ''), COALESCE(j.name, ''),
+	       i.job_id IS NULL,
+	       COALESCE(SUM(i.bal) FILTER (WHERE $1::date <= i.due_date), 0),
+	       COALESCE(SUM(i.bal) FILTER (WHERE $1::date >  i.due_date AND $1::date <= i.due_date + 30), 0),
+	       COALESCE(SUM(i.bal) FILTER (WHERE $1::date >  i.due_date + 30 AND $1::date <= i.due_date + 60), 0),
+	       COALESCE(SUM(i.bal) FILTER (WHERE $1::date >  i.due_date + 60 AND $1::date <= i.due_date + 90), 0),
+	       COALESCE(SUM(i.bal) FILTER (WHERE $1::date >  i.due_date + 90), 0),
+	       COALESCE(SUM(i.bal), 0)
+	  FROM customers c
+	  JOIN open_ar i ON i.customer_id = c.id
+	  LEFT JOIN customer_jobs j ON j.id = i.job_id
+	 WHERE i.bal <> 0
+	   AND $2::int IS NOT NULL
+	   AND ($3 = '' OR i.branch_id = $3::uuid)
+	   AND ($4::uuid[] IS NULL OR i.branch_id = ANY($4::uuid[]))
+	   AND ($8 = '' OR i.job_id = NULLIF($8, '')::uuid)
+	 GROUP BY c.id, c.name, c.account_no, i.job_id, j.job_no, j.name
+	HAVING COALESCE(SUM(i.bal), 0) <> 0
+	 ORDER BY c.name, c.id, i.job_id NULLS FIRST`
+
+// AgingByJobRowsIn is AgingRowsIn grouped by job, inside a branch reach. jobID "" returns every job.
+func (r *Repository) AgingByJobRowsIn(ctx context.Context, asOf time.Time, bucketDays int, branchID string, reach BranchReach, jobID string) ([]AgingJobRow, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if bucketDays <= 0 {
+		bucketDays = 60
+	}
+	zone, err := r.zoneFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	day := houseClockIn(zone, asOf)
+	today := houseClockIn(zone, time.Now())
+	rows, err := r.pool.Query(ctx, agingByJobSelect, day, bucketDays, branchID, reach.SQLArg(), zone.Name(), asOf, onOrAfterHouseDay(day, today), jobID)
+	if err != nil {
+		return nil, fmt.Errorf("billing: aging by job rows: %w", err)
+	}
+	defer rows.Close()
+	var out []AgingJobRow
+	for rows.Next() {
+		var a AgingJobRow
+		if err := rows.Scan(&a.CustomerID, &a.CustomerName, &a.AccountNo, &a.JobID, &a.JobNo, &a.JobName, &a.AccountLevel,
+			&a.CurrentCents, &a.Days30Cents, &a.Days60Cents, &a.Days60To90Cents, &a.Days90PlusCents, &a.TotalCents); err != nil {
+			return nil, fmt.Errorf("billing: scan aging by job row: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }

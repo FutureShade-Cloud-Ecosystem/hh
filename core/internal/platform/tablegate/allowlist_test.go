@@ -186,7 +186,7 @@ var allowlist = []allowlistEntry{
 	{
 		module: "billing",
 		file:   "core/internal/billing/credit_repository.go",
-		tables: []string{"credit_holds", "customers", "orders", "payment_allocations", "payment_reapplications", "payments"},
+		tables: []string{"credit_holds", "customer_jobs", "customers", "orders", "payment_allocations", "payment_reapplications", "payments"},
 		writes: []string{"credit_holds"},
 		// the file's own header, restating the module note: billing WRITES
 		// credit_holds, deliberate and documented in migration 0104, the
@@ -196,7 +196,7 @@ var allowlist = []allowlistEntry{
 		// as-of instant inside the one aging query, from the dated acts
 		// that moved it: the payments module's allocations, contra
 		// allocations and reapplications.
-		reason: "AR credit gates place and read holds (documented in migration 0104, stated in the file header), read the customer and order facts the gates decide on, and the as-of aging rebuild reads the dated payment acts per document in the one aging query; read only",
+		reason: "AR credit gates place and read holds (documented in migration 0104, stated in the file header), read the customer and order facts the gates decide on, and the as-of aging rebuild reads the dated payment acts per document in the one aging query, and the by job aging (JA-4) names each job by its number and name; read only",
 	},
 	{
 		module: "billing",
