@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
@@ -237,9 +238,46 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 // house zone, so the date shown must be too, or a late evening sale prints a day after its cut off.
 func statementLineDate(zone houseday.Zone, at time.Time) time.Time { return houseClockIn(zone, at) }
 
+// statementFixedWords are the words a customer's statement uses for the ledger writes that carry a clerk's
+// free text or an internal id in their memo. The ledger keeps the full memo for staff; a customer document
+// never prints it (item 254). The writers' memo prefixes are the key because the credit rows share a source
+// type and a transaction type with ordinary invoice rows. A fixed give back memo ("... early payment discount
+// given back") carries no clerk text and passes through unchanged.
+var statementFixedWords = []struct{ prefix, words string }{
+	{"voided receipt: ", "Payment voided"},
+	{"reversal: ", "Payment reversed"},
+	{"re-applied from a reversed payment: ", "Payment applied"},
+	{"NSF reversal of payment ", "Returned payment"},
+	{"NSF reversal: ", "Returned payment"},
+	{"credit memo applied: ", "Credit memo applied"},
+	{"credit applied to ", "Credit applied"},
+	{"credit application reversed: ", "Credit application reversed"},
+	{"credit memo restored: ", "Credit memo restored"},
+}
+
+// statementMemoWords is the customer safe reading of a ledger memo.
+func statementMemoWords(txnType, memo string) string {
+	if strings.HasSuffix(memo, "early payment discount given back") {
+		return memo
+	}
+	for _, f := range statementFixedWords {
+		if strings.HasPrefix(memo, f.prefix) {
+			return f.words
+		}
+	}
+	// The credit memo line reads "#CM-n, reverses <invoice> (<reason>)": the document numbers are the
+	// account's own and stay, the bracketed reason is the clerk's and goes.
+	if txnType == "CREDIT_MEMO" {
+		if i := strings.Index(memo, " ("); i >= 0 {
+			return memo[:i]
+		}
+	}
+	return memo
+}
+
 // statementDescription turns a subledger row into a line a customer can read without a glossary.
 func statementDescription(txnType, memo string) string {
-	if memo != "" {
+	if memo = statementMemoWords(txnType, memo); memo != "" {
 		return memo
 	}
 	switch txnType {
