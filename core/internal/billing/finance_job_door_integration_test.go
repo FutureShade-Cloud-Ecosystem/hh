@@ -85,7 +85,7 @@ func fcJobRigNew(t *testing.T) *fcJobRig {
 		}
 		rows = append(rows, s)
 	}
-	var priorRuns []string
+	priorRuns := []string{}
 	prs, err := r.pool.Query(r.ctx, `SELECT id::text FROM job_runs WHERE job_name = ANY($1::text[])`, []string{FinanceChargeJobName, fcApJobName})
 	if err != nil {
 		t.Fatalf("read the prior job runs: %v", err)
