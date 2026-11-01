@@ -49,8 +49,10 @@ test("a shortage resolves end to end and the count drops", async ({ page }) => {
   const bearer = await mint(page, "yard-manager");
   const pick = await staffGet(page, bearer, `/api/v1/yard/picks/${taskId}`);
   expect(pick.status).toBe(200);
-  const history = ((pick.body as { shortages?: Array<{ description?: string; resolved_at?: string | null; resolution?: string }> }).shortages ?? []);
-  const cleared = history.find((s) => s.resolved_at);
+  const history = ((pick.body as { shortages?: Array<{ note?: string; resolved_at?: string | null; resolution?: string }> }).shortages ?? []);
+  // The cleared shortage by its own seeded note, never the first resolved row the pick happens to hold.
+  const cleared = history.find((s) => s.note === clearedWords);
+  expect(cleared, "the core's pick read holds the cleared shortage").toBeDefined();
   expect(cleared?.resolved_at, "the core records the shortage as resolved").toBeTruthy();
   expect(cleared?.resolution).toBe("Backordered the shortfall; the order keeps the short line open. Customer ok with Thursday");
   // Back on the landing, the queue's own count dropped: 2 became 1.

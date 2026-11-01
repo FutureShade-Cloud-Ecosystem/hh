@@ -74,16 +74,17 @@ test("needs you counts the seed: two open shortages, one receiving difference, a
   // world's clock moves. So the leg reads what the core counts for this caller and holds the
   // widget to it: the same count on the row, and no row at all when the core counts none (a
   // count of zero is absent by design, never shown).
-  const stale = core.counts.get("tasks.stale_picks") ?? 0;
-  if (stale > 0) {
-    await expect(needs.locator("[data-needs='tasks.stale_picks'] .needs-count")).toHaveText(String(stale));
-  } else {
-    await expect(needs.locator("[data-needs='tasks.stale_picks']")).toHaveCount(0);
-  }
-  // The widget's total is the core's total plus the weights row the app joins when the core
-  // measures it (weights-logic.ts mergeWeights).
+  // A pick can cross its deadline between the core read above and the page's own read, so the
+  // screen's count is held to the core's count read on either side of it.
+  const staleBefore = core.counts.get("tasks.stale_picks") ?? 0;
+  const staleRow = needs.locator("[data-needs='tasks.stale_picks']");
+  const shown = (await staleRow.count()) === 0 ? 0 : Number(await staleRow.locator(".needs-count").textContent());
+  const staleAfter = (await needsFromCore(page)).counts.get("tasks.stale_picks") ?? 0;
+  expect([staleBefore, staleAfter], "the stale picks row shows the core's count (absent when none)").toContain(shown);
+  // The widget's total is the core's total, with the stale count the screen shows, plus the weights
+  // row the app joins when the core measures it (weights-logic.ts mergeWeights).
   const weighed = weights?.state === "ok" && weights.number !== null && weights.number > 0 ? weights.number : 0;
-  await expect(needs.locator(".needs-total")).toHaveText(new RegExp(`^${core.total + weighed} waiting · `));
+  await expect(needs.locator(".needs-total")).toHaveText(new RegExp(`^${core.total - staleBefore + shown + weighed} waiting · `));
   // The hero carries a measured figure for the dealer's day, never a dash.
   await expect(page.locator("[data-widget='hero.deliveries'] .figure")).not.toHaveText("-");
 });
@@ -100,16 +101,22 @@ test("the weights row follows the core's own answer: the measured count, or the 
   const needs = page.locator("[data-widget='needs.you']");
   const measured = needs.locator("[data-needs='weights.pending']");
   const unsourced = needs.locator("[data-unsourced='weights.pending']");
-  if (tile?.state === "ok" && tile.number !== null && tile.number > 0) {
-    await expect(measured).toHaveCount(1);
-    await expect(measured.locator(".needs-count")).toHaveText(String(tile.number));
+  // The app's own mapping (weights-api.ts): ok, unwired, error and hidden are read as given, and any
+  // other state is read as error, so it is the words row too.
+  if (tile?.state === "ok") {
+    if (tile.number !== null && tile.number > 0) {
+      await expect(measured).toHaveCount(1);
+      await expect(measured.locator(".needs-count")).toHaveText(String(tile.number));
+    } else {
+      await expect(measured).toHaveCount(0);
+    }
     await expect(unsourced).toHaveCount(0);
-  } else if (tile?.state === "unwired" || tile?.state === "error") {
+  } else if (tile?.state === "hidden") {
+    await expect(measured).toHaveCount(0);
+    await expect(unsourced).toHaveCount(0);
+  } else {
     await expect(unsourced).toHaveCount(1);
     await expect(unsourced.locator(".needs-count")).toHaveCount(0);
     await expect(measured).toHaveCount(0);
-  } else {
-    await expect(measured).toHaveCount(0);
-    await expect(unsourced).toHaveCount(0);
   }
 });
