@@ -3,6 +3,8 @@
 // config is served to the top window only, so the front door frame under it keeps its demo picker.
 import { expect, test, useConsole } from "./fixtures";
 
+const assembled = (process.env["WS_DIST"] ?? "") !== "";
+
 const CONSOLE_CONFIG = {
   mode: "console",
   org: "acme-stone",
@@ -39,7 +41,8 @@ test("a shell served no console config stays DEMO", async ({ page, shellUrl }) =
 // UX-127: every frame is served the console config too (the door frame and a framed app). The shell band names
 // the dealer with no DEMO, a framed app wears no second band, and its page copy has no "Demo data only". The
 // copy check bites on the real desk bundles (WS_DIST names an assembled dist); the composed fixture pages have none.
-test("a console box serves its config to every frame: dealer band, no second band, no demo-data words", async ({ page, shellUrl }) => {
+for (const appId of ["buying-and-stock", "manager-home"]) {
+test(`a console box serves its config to every frame: dealer band, no second band, no demo-data words (${appId})`, async ({ page, shellUrl }) => {
   await useConsole(page, shellUrl);
   await page.route("**/config.json", (route) => route.fulfill({ json: CONSOLE_CONFIG }));
   await page.route("https://console.invalid/**", (route) => route.abort());
@@ -50,12 +53,79 @@ test("a console box serves its config to every frame: dealer band, no second ban
   await expect(band).toContainText("Acme Stone");
   await expect(band.getByText(/^demo$/i)).toHaveCount(0);
   await page.locator("hh-shell-header button.selector").click();
-  await page.locator('hh-shell-header .panel .mi[data-app="buying-and-stock"]').click();
-  await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-current-app", "buying-and-stock");
+  await page.locator(`hh-shell-header .panel .mi[data-app="${appId}"]`).click();
+  await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-current-app", appId);
   const frames = page.frames().filter((f) => f !== page.mainFrame());
   expect(frames.length).toBeGreaterThan(0);
   for (const frame of frames) {
     await expect(frame.locator("hh-shell-header")).toHaveCount(0);
     await expect(frame.locator("body")).not.toContainText("Demo data only");
+    // Round 2 (UX-128): on the real bundles the framed app never says "demo roles", and it is the app's own page.
+    if (assembled) {
+      await expect(frame.locator("body")).not.toContainText(/demo roles/i);
+      await expect.poll(async () => frame.evaluate(() => (document.body?.querySelector(":scope > *:not(script)")?.tagName ?? "").toLowerCase())).toContain("-");
+    }
   }
 });
+
+// A framed app that meets a console box with no session reads the sign in line (the person is sent to sign in), never
+// the demo roles. Only the real bundles carry the door; the link takes the whole window (target _top).
+test(`${appId} on a console box with no session: sign in line, link takes the whole window, no demo roles`, async ({ page, shellUrl }) => {
+  test.skip(!assembled, "WS_DIST names an assembled dist for this leg");
+  const launch = (await (await fetch(`${shellUrl}/launch.json`)).json()) as Record<string, string>;
+  const path = launch[appId];
+  expect(path).toBeTruthy();
+  await page.route("**/config.json", (route) => route.fulfill({ json: CONSOLE_CONFIG }));
+  // the console answers "no session" (a refused call would read as offline, which is another line)
+  await page.route("https://console.invalid/**", (route) => {
+    const origin = route.request().headers()["origin"] ?? "";
+    const cors = { "access-control-allow-origin": origin, "access-control-allow-credentials": "true", "access-control-allow-headers": route.request().headers()["access-control-request-headers"] ?? "content-type", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS" };
+    return route.request().method() === "OPTIONS" ? route.fulfill({ status: 204, headers: cors }) : route.fulfill({ status: 401, json: { message: "no session" }, headers: cors });
+  });
+  // The app renders the sign in line and leaves for the front door at the origin root in the same turn, so a poll cannot
+  // be trusted to see it. Round 3, two deterministic parts: (1) an init script records the line from a MutationObserver
+  // on every shadow root (it fires in the microtask after the render, before the page can leave) into local storage,
+  // which the front door page under the same origin keeps; (2) the leave itself is the outcome: the navigation to the
+  // origin root is asserted as a request, and held until the leg has seen it.
+  await page.addInitScript(() => {
+    const scan = (): void => {
+      let line = "";
+      let target = "";
+      let all = "";
+      const walk = (root: Document | ShadowRoot): void => {
+        const link = root.querySelector(".signin-link");
+        if (link) {
+          line = (link.parentElement?.textContent ?? "").replace(/\s+/g, " ").trim();
+          target = link.getAttribute("target") ?? "";
+        }
+        all += root.textContent ?? "";
+        for (const el of Array.from(root.querySelectorAll("*"))) if (el.shadowRoot) walk(el.shadowRoot);
+      };
+      walk(document);
+      if (line !== "") window.localStorage.setItem("ux128-seen", JSON.stringify({ line, target, demo: /demo roles/i.test(all) }));
+    };
+    const original = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init: ShadowRootInit): ShadowRoot {
+      const root = original.call(this, init);
+      new MutationObserver(scan).observe(root, { childList: true, subtree: true, characterData: true });
+      return root;
+    };
+  });
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let asked = 0;
+  await page.route(`${shellUrl}/`, async (route) => {
+    asked += 1;
+    await gate;
+    await route.fulfill({ contentType: "text/html", body: "<!doctype html><title>front door</title><p>front door</p>" });
+  });
+  await page.goto(`${shellUrl}${path}`);
+  await expect.poll(() => asked, { timeout: 20_000 }).toBeGreaterThan(0); // the app left for the front door
+  release();
+  await expect(page).toHaveTitle("front door");
+  const seen = await page.evaluate(() => JSON.parse(window.localStorage.getItem("ux128-seen") ?? "{}"));
+  expect(seen).toMatchObject({ target: "_top", demo: false, line: expect.stringMatching(/^Sign in to open .+\. Go to sign in$/) });
+});
+}

@@ -37,7 +37,7 @@ import {
 import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
-import { bootCustody, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bootCustody, entryAfter, reasonForStatus, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { bandIdentity } from "./band-identity.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import {
@@ -759,7 +759,7 @@ export class CounterTillApp extends HHElement {
       void this.#signOut();
       return;
     }
-    this.#flowsState = { kind: "unavailable", status: null };
+    this.#flowsState = entryAfter(outcome).flows;
     if (outcome.kind === "front-door") this.#custody.toFrontDoor();
     this.requestUpdate();
   }
@@ -772,11 +772,11 @@ export class CounterTillApp extends HHElement {
   async #consoleStartFailed(status: number | undefined): Promise<void> {
     if (status === 401 || status === 403) {
       await this.#custody.leave();
-      this.#flowsState = { kind: "unavailable", status: null };
+      this.#flowsState = { kind: "signin" };
       this.requestUpdate();
       return;
     }
-    this.#flowsState = { kind: "unavailable", status: null };
+    this.#flowsState = { kind: "offline", reason: reasonForStatus(status) };
     this.requestUpdate();
     this.#custody.retry("counter-till", (outcome) => this.#onRecovered(outcome));
   }
@@ -1307,7 +1307,7 @@ export class CounterTillApp extends HHElement {
                 data-branches=${JSON.stringify(this.#branchChoices.map((row) => ({ id: row.id, name: row.name })))}
                 action-label="Open the Counter Till"
               ></hh-branch-chooser>`
-            : renderEntry({ flows: entryFlows, busy: this.#busy, message: this.#message })}
+            : renderEntry({ flows: entryFlows, busy: this.#busy, message: this.#message }, { app: "Counter Till" })}
       </main>
       <!-- The feedback widget: the shared panel, opened by the bar's Feedback
            button (trigger external: no floating pill, so nothing of the
