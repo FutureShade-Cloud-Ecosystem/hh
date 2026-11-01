@@ -68,17 +68,20 @@ for (const size of SIZES) {
       await expect(due("GLS-2100")).toContainText("Blocked by a preserved lien");
       await take("08", "blocked");
 
-      await openLiens(page, request, "general_manager");
+      // The General Manager is another person: a page of their own.
+      const gm = await page.context().newPage();
+      await gm.setViewportSize(size);
+      await openLiens(gm, request, "general_manager");
       if (theme === "charcoal") {
-        await page.locator("hh-shell-header button.account").click();
-        await page.getByRole("button", { name: "Theme: Light" }).click();
+        await gm.locator("hh-shell-header button.account").click();
+        await gm.getByRole("button", { name: "Theme: Light" }).click();
       }
-      await liensTab(page, "holdbacks");
-      await page.locator("[data-row='aging'][data-job-no='GLS-2103']:visible").getByRole("button", { name: "Release" }).click();
-      await page.getByLabel("Co-signer").selectOption({ label: "Financial Controller (demo)" });
-      await page.getByRole("button", { name: "Confirm release" }).click();
-      await expect(page.locator("[data-job-level-refused]")).toBeVisible();
-      await take("09", "old-press-refused");
+      await liensTab(gm, "holdbacks");
+      await gm.locator("[data-row='aging'][data-job-no='GLS-2103']:visible").getByRole("button", { name: "Release" }).click();
+      await gm.getByLabel("Co-signer").selectOption({ label: "Financial Controller (demo)" });
+      await gm.getByRole("button", { name: "Confirm release" }).click();
+      await expect(gm.locator("[data-job-level-refused]")).toBeVisible();
+      await shot(gm, theme, size.width, "09", "old-press-refused");
     });
   }
 }

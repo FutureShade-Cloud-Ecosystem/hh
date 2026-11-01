@@ -223,7 +223,7 @@ function dueTotals(totals: readonly BillingHoldbackBranchDue[], branches: readon
 function dueTab(model: LiensModel): TemplateResult {
   const due = model.due;
   return html`
-    <div class="li-split">
+    <div class="li-due">
       <section class="li-panel">
         <div class="li-panel-head"><h2>Due to release</h2></div>
         <p class="li-dim">Each customer job's held invoices, the lien job that governs them, the last day a lien can be preserved and where the holdback stands.</p>
@@ -245,7 +245,7 @@ function dueTab(model: LiensModel): TemplateResult {
                   `}
             `}
       </section>
-      <div>${model.dueOpen === null ? nothing : duePanel(model, model.dueOpen)}${model.reversing === null ? nothing : reversePanel(model, model.reversing)}${releasedList(model)}</div>
+      ${model.dueOpen === null ? nothing : duePanel(model, model.dueOpen)}${model.reversing === null ? nothing : reversePanel(model, model.reversing)}${releasedList(model)}
     </div>
   `;
 }
@@ -520,7 +520,9 @@ function releasePanel(model: LiensModel, release: ReleaseModel): TemplateResult 
         <dt>Held</dt><dd>${amount === "" ? "Nothing held now." : amount}</dd>
         ${row === undefined ? nothing : html`<dt>Oldest</dt><dd>${ageWords(row.oldest_days)}, ${bucketWord(row.bucket)}</dd>`}
       </dl>
-      ${!model.canRelease
+      ${model.jobLevelRefused
+        ? html`<div class="li-actions"><button type="button" class="btn btn-secondary" data-action="li-release-close">Close</button></div>`
+        : !model.canRelease
         ? html`
             <p class="li-note">${refusalWords("release", "", 403)}</p>
             <div class="li-actions"><button type="button" class="btn btn-secondary" data-action="li-release-close">Close</button></div>

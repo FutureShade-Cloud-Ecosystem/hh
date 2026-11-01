@@ -110,11 +110,17 @@ export const lienStyles = css`
   .li-summary { margin: 0 0 var(--hh-s-12); font-weight: 600; }
 
   /* Due to release: the invoices listed one under another, each with its amount on the right. */
+  .li-due { display: grid; gap: var(--hh-s-16); }
+  .li-due .li-panel { margin-bottom: 0; }
+  .li-invoices .li-mono { white-space: nowrap; }
   .li-invoices { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--hh-s-4); }
   .li-invoices li { display: flex; justify-content: space-between; gap: var(--hh-s-16); }
   .li-cards.li-cards-always { display: grid; }
   .li-doors { border-top: 1px solid var(--hh-line); margin-top: var(--hh-s-16); padding-top: var(--hh-s-16); }
-  .li-doors h3 { margin-top: var(--hh-s-12); }
+  .li-doors h3 { margin: var(--hh-s-12) 0 var(--hh-s-4); }
+  .li-doors .li-form { align-items: end; }
+  .li-cards-always .btn { justify-self: start; }
+  .li-field textarea[data-field="reverse_reason"] { min-height: 88px; font-family: inherit; font-size: 16px; }
   .li-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
   @media (max-width: 900px) {
