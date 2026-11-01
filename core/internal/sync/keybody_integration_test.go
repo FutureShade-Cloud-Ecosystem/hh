@@ -25,9 +25,7 @@ const (
 func TestKeyLedgerPostgresSlots(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM sync_op_hashes WHERE org_id IN ($1::uuid, $2::uuid)`, testkit.OrgNorthID, testkit.OrgSouthID)
-	})
+	cleanOwnLedgerRows(t, pool)
 	led := sync.NewPgKeyLedger(pool)
 	north := sync.ScopeFilter{OrgID: testkit.OrgNorthID, Actor: "fxstaff-any"}
 	south := sync.ScopeFilter{OrgID: testkit.OrgSouthID, Actor: "fxstaff-any"}
@@ -66,9 +64,9 @@ func TestKeyBodyPilotEndToEnd(t *testing.T) {
 	f := newPilot(t)
 	ctx := context.Background()
 	f.engine.WithKeyLedger(sync.NewPgKeyLedger(f.pool))
+	since := cleanOwnLedgerRows(t, f.pool)
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(ctx, `DELETE FROM sync_op_hashes WHERE org_id IN ($1::uuid, $2::uuid)`, testkit.OrgNorthID, testkit.OrgSouthID)
-		_, _ = f.pool.Exec(ctx, `DELETE FROM audit_log WHERE entity_type = 'sync.pick_tasks'`)
+		_, _ = f.pool.Exec(ctx, `DELETE FROM audit_log WHERE entity_type = 'sync.pick_tasks' AND created_at >= $1`, since)
 	})
 
 	create := syncOp{client: newKey(901), kind: "create", payload: map[string]any{"order_id": testkit.OrderAlphaPickID}}

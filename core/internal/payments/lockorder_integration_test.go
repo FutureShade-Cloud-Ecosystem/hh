@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"os"
 	"strings"
 	"testing"
@@ -67,6 +68,7 @@ func newLORig(t *testing.T, size int32) *loRig {
 		return p
 	}
 	r := &loRig{t: t, pool: open(size), obs: open(2)}
+	legsweep.Register(t, r.obs)
 	r.repo = payments.NewRepository(r.pool)
 	r.suffix = fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000)
 	if err := r.obs.QueryRow(ctx, `SELECT id::text FROM locations WHERE loc_type='BRANCH' LIMIT 1`).Scan(&r.branchID); err != nil {

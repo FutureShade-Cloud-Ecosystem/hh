@@ -9,6 +9,9 @@ package sync_test
 import (
 	"context"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
@@ -17,9 +20,28 @@ import (
 
 func cleanLedger(t *testing.T, f *the169Fixture) {
 	t.Helper()
+	cleanOwnLedgerRows(t, f.pool)
+}
+
+// cleanOwnLedgerRows removes the North and South ledger rows the leg writes,
+// and only those: rows created from the database's clock at registration on,
+// which it returns for the leg's other cleanups.
+// Rows other packages' legs left in the shared gate database are not this
+// leg's to delete (the package guard counts them before and after).
+func cleanOwnLedgerRows(t *testing.T, pool *pgxpool.Pool) time.Time {
+	t.Helper()
+	var since time.Time
+	if err := pool.QueryRow(context.Background(), `SELECT clock_timestamp()`).Scan(&since); err != nil {
+		t.Fatalf("read the database clock: %v", err)
+	}
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM sync_op_hashes WHERE org_id IN ($1::uuid, $2::uuid)`, testkit.OrgNorthID, testkit.OrgSouthID)
+		if _, err := pool.Exec(context.Background(),
+			`DELETE FROM sync_op_hashes WHERE org_id IN ($1::uuid, $2::uuid) AND created_at >= $3`,
+			testkit.OrgNorthID, testkit.OrgSouthID, since); err != nil {
+			t.Errorf("clean the leg's ledger rows: %v", err)
+		}
 	})
+	return since
 }
 
 func d30Push(t *testing.T, f *the169Fixture, op apigen.SyncPushOperation) apigen.SyncPushResult {
