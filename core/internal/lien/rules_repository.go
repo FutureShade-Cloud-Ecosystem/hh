@@ -210,6 +210,40 @@ func (r *Repository) LinkCustomerJob(ctx context.Context, lienJobID, customerJob
 	return nil
 }
 
+// LockJobLink takes a lien job's row FOR UPDATE and answers the customer job it is linked to ("" when none).
+// It is the first lock of a link change; a withhold takes the same row FOR SHARE first (LinkedLienJobLocked).
+func (r *Repository) LockJobLink(ctx context.Context, lienJobID string) (string, error) {
+	q, err := r.q(ctx)
+	if err != nil {
+		return "", err
+	}
+	var id *string
+	err = q.QueryRow(ctx, `SELECT customer_job_id::text FROM lien_jobs WHERE id = $1 FOR UPDATE`, lienJobID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errJobNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("lien: lock the lien job's link: %w", err)
+	}
+	if id == nil {
+		return "", nil
+	}
+	return *id, nil
+}
+
+// JobHoldsInvoiceRows answers whether a lien job's ledger holds any row that names an invoice.
+func (r *Repository) JobHoldsInvoiceRows(ctx context.Context, lienJobID string) (bool, error) {
+	q, err := r.q(ctx)
+	if err != nil {
+		return false, err
+	}
+	var held bool
+	if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM holdback_ledger WHERE job_id = $1 AND invoice_id IS NOT NULL)`, lienJobID).Scan(&held); err != nil {
+		return false, fmt.Errorf("lien: read the job's invoice level rows: %w", err)
+	}
+	return held, nil
+}
+
 // ProvinceRules lists every province's rule, by province code.
 func (r *Repository) ProvinceRules(ctx context.Context) ([]ProvinceRule, error) {
 	if tx := customer.CallerTx(ctx); tx == nil && r.pool == nil {

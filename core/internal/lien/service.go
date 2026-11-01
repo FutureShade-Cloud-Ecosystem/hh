@@ -119,14 +119,17 @@ func (s *Service) SyncHoldbacks(ctx context.Context, jobID string) (SyncResult, 
 			continue
 		}
 		// The guard is the ledger's own: the invoice's retention is booked once, however many syncs run.
-		n, err := s.store.InsertRetentionOnce(ctx, HoldbackEntry{
+		// The link was read above without a lock, so the booking takes the lien job's row FOR SHARE and
+		// rechecks the link in the same statement (0.55): a move of the link that committed in between books
+		// nothing here. Lock order as the withhold's: the lien job row, the invoice's advisory lock, the insert.
+		n, err := s.store.InsertRetentionOnceIfLinked(ctx, HoldbackEntry{
 			JobID:       jobID,
 			InvoiceID:   inv.InvoiceID,
 			BranchID:    job.BranchID,
 			EntryType:   "RETENTION",
 			AmountCents: amount,
 			Reason:      "synced from invoice " + inv.InvoiceNo,
-		})
+		}, job.CustomerJobID)
 		if err != nil {
 			return SyncResult{}, err
 		}

@@ -32,6 +32,38 @@ func (r *Repository) LinkedLienJob(ctx context.Context, customerJobID string) (s
 	return id, true, nil
 }
 
+// LinkedLienJobLocked answers LinkedLienJob's job after taking its row FOR SHARE on the caller's transaction,
+// so a move of its link (LockJobLink, FOR UPDATE) waits for the transaction and a withhold booking on the
+// job is never one whose link moved away under it. Shares are compatible, so withholds do not queue behind
+// one another. When the candidate's link moved before the lock was won, the pick is made again.
+func (r *Repository) LinkedLienJobLocked(ctx context.Context, customerJobID string) (string, bool, error) {
+	q, err := r.q(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	for attempt := 0; attempt < 8; attempt++ {
+		id, ok, err := r.LinkedLienJob(ctx, customerJobID)
+		if err != nil || !ok {
+			return "", false, err
+		}
+		var locked string
+		err = q.QueryRow(ctx, `
+			SELECT id::text FROM lien_jobs
+			 WHERE id = $1::uuid AND customer_job_id = $2::uuid
+			   AND status <> 'CLOSED'
+			   AND COALESCE(metadata->>'holdback_direction', 'RECEIVABLE') = 'RECEIVABLE'
+			   FOR SHARE`, id, customerJobID).Scan(&locked)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue // the link moved while the lock was awaited
+		}
+		if err != nil {
+			return "", false, fmt.Errorf("lien: lock the lien job linked to a customer job: %w", err)
+		}
+		return locked, true, nil
+	}
+	return "", false, fmt.Errorf("lien: the lien job linked to a customer job kept moving")
+}
+
 // LinkedLienJobs answers EVERY open RECEIVABLE lien job linked to a customer job, oldest first. More than one
 // may be linked; RT-3 judges them all (LinkedLienJob names only the oldest).
 func (r *Repository) LinkedLienJobs(ctx context.Context, customerJobID string) ([]string, error) {
@@ -107,6 +139,36 @@ func (r *Repository) JobHoldingInvoice(ctx context.Context, invoiceID string) (s
 		return "", false, fmt.Errorf("lien: the job holding an invoice's retention: %w", err)
 	}
 	return id, true, nil
+}
+
+// InsertRetentionOnceIfLinked is InsertRetentionOnce for a caller that read the lien job's link earlier (the
+// holdback sync). On one transaction it takes the lien job's row FOR SHARE with the link rechecked in the
+// same statement, and books only if the job is still linked to the invoice's customer job; otherwise it
+// books nothing and answers 0. The order is the withhold's (the lien job row, then the invoice's advisory
+// lock, then the insert), so a move of the link (FOR UPDATE on the same row first) waits for the booking and
+// then refuses, or commits first and the booking is skipped (0.55).
+func (r *Repository) InsertRetentionOnceIfLinked(ctx context.Context, e HoldbackEntry, customerJobID string) (int64, error) {
+	var n int64
+	err := r.InTx(ctx, func(ctx context.Context) error {
+		q, err := r.q(ctx)
+		if err != nil {
+			return err
+		}
+		var locked string
+		err = q.QueryRow(ctx, `
+			SELECT id::text FROM lien_jobs
+			 WHERE id = $1::uuid AND customer_job_id = $2::uuid
+			   FOR SHARE`, e.JobID, customerJobID).Scan(&locked)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // the link moved after the sync read it: nothing is booked on this job
+		}
+		if err != nil {
+			return fmt.Errorf("lien: lock the lien job the sync books on: %w", err)
+		}
+		n, err = r.InsertRetentionOnce(ctx, e)
+		return err
+	})
+	return n, err
 }
 
 // InsertRetentionOnce books an invoice's RETENTION unless the invoice already has a positive one.
