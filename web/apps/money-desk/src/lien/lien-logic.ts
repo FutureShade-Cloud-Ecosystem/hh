@@ -7,8 +7,9 @@
 // The merge fields are the core's own template keys (core/internal/lien/template.go); the original asked for them
 // as a line of JSON, which a bookkeeper should not have to write. The co-signer was a window.prompt for a user id
 // and a typed role; it is a pick from the roster here, and the core resolves the co-signer's authority itself.
-import type { LienJobInput } from "@hardscapehouse/api-client";
-import { parseAmountToCents, parsePercentToBps } from "./lien-money.js";
+import type { BillingHoldbackBranchDue, BillingHoldbackDueRow, LienJob, LienJobInput, LienPreservationDatesInput } from "@hardscapehouse/api-client";
+import { dueWords } from "../compliance/compliance-logic.js";
+import { formatMoney, parseAmountToCents, parsePercentToBps } from "./lien-money.js";
 
 export type Tone = "stop" | "watch" | "good" | "plain";
 
@@ -48,6 +49,21 @@ export function jobStatusTone(status: string): Tone {
   if (status === "SUBSTANTIALLY_PERFORMED") return "watch";
   return "plain";
 }
+
+/** A lien that was preserved and not discharged keeps the holdback held, whatever else the job's status says. */
+export function lienActive(job: Pick<LienJob, "lien_preserved_on" | "lien_discharged_on">): boolean {
+  return job.lien_preserved_on !== undefined && job.lien_preserved_on !== "" && (job.lien_discharged_on === undefined || job.lien_discharged_on === "");
+}
+
+export function jobStatusWordFor(job: Pick<LienJob, "status" | "lien_preserved_on" | "lien_discharged_on">): string {
+  return lienActive(job) ? "Lien preserved" : jobStatusWord(job.status);
+}
+
+export function jobStatusToneFor(job: Pick<LienJob, "status" | "lien_preserved_on" | "lien_discharged_on">): Tone {
+  return lienActive(job) ? "stop" : jobStatusTone(job.status);
+}
+
+export const LIEN_HELD_LINE = "A lien is preserved on this job, so its retention stays held until the lien is discharged.";
 
 const DIRECTION: Record<string, string> = { RECEIVABLE: "Receivable", PAYABLE: "Payable" };
 export const directionWord = (direction: string): string => wordsFrom(DIRECTION, direction);
@@ -198,7 +214,7 @@ export function jobForm(values: JobFormValues): JobFormResult {
   if (contract === null) return { ok: false, field: "contract", words: "The contract amount is dollars and cents, like 125,000.00." };
   const bps = parsePercentToBps(values.percent);
   if (bps === null) {
-    return { ok: false, field: "percent", words: "The holdback percent is a number from 0.01 to 100, like 10 or 7.5. Leave it blank for the core's default." };
+    return { ok: false, field: "percent", words: "The holdback percent is a number from 0.01 to 100, like 10 or 7.5. Leave it blank for the default." };
   }
   for (const [field, text] of [["perf", values.perf.trim()], ["supply", values.supply.trim()]] as const) {
     if (text !== "" && !validDay(text)) return { ok: false, field, words: "Dates are written yyyy-mm-dd." };
@@ -250,11 +266,46 @@ export function releaseConfirmWords(jobNo: string, amount: string): string {
 
 const WHO_RELEASES = "the General Manager, co-signed by a Financial Controller or Payables and Receivables";
 
+/** Every written day inside a sentence reads the way the columns read it, so one screen has one date style. */
+export function displayDays(text: string): string {
+  return text.replace(/\b\d{4}-\d{2}-\d{2}\b/g, (day) => dueWords(day));
+}
+
+/**
+ * A job or invoice code keeps its hyphen on one line: the hyphen inside a code becomes a non breaking one, so a
+ * sentence never breaks "GLS-" from "2100". Applied where words are drawn, never to what is compared or sent.
+ */
+export function nonBreaking(text: string): string {
+  return text.replace(/\b([A-Z][A-Z0-9]*)-(?=\d)/g, "$1\u2011");
+}
+
 function sentence(message: string): string {
-  const trimmed = message.replace(/^(lien|compliance): /, "").trim();
+  const trimmed = displayDays(message.replace(/^(lien|compliance): /, "")).trim();
   if (trimmed === "") return "";
   const cap = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
   return /[.!?]$/.test(cap) ? cap : `${cap}.`;
+}
+
+// The core's job level release and its move refusal name routes and use one verb for two acts. The screen keeps the
+// core's sentences and changes only those words.
+const JOB_LEVEL_ROUTE = "by the Controller's holdback release (POST /api/v1/ar/holdback/releases)";
+
+/** Whether the core refused the old job level release because the holdback is held on invoices. */
+export function jobLevelRefusedWords(message: string): boolean {
+  return message.includes(JOB_LEVEL_ROUTE);
+}
+
+const NEW_RELEASE = "press Release again to start a new release";
+
+function rewritten(message: string): string {
+  return message
+    .replace(JOB_LEVEL_ROUTE, "from Due to release by the Financial Controller")
+    .replace("and not by this job level release", "and not here")
+    .replace("cannot be unlinked from its customer job", "cannot be moved or unlinked from its customer job")
+    // The core's replay refusals talk of a key the person never sees; pressing Release again starts a new release.
+    .replace("release the holdback again with a new key", NEW_RELEASE)
+    .replace("a key names one release, use a new key", NEW_RELEASE)
+    .replace("use a new key", NEW_RELEASE);
 }
 
 /**
@@ -265,13 +316,15 @@ function sentence(message: string): string {
 export function refusalWords(action: string, message: string, status: number): string {
   const lower = message.toLowerCase().trim();
   const generic = lower === "" || lower === "forbidden";
+  if (action === "due-release" && status === 403 && generic) return "Releasing a due holdback is for the Financial Controller.";
+  if (action === "due-reverse" && status === 403 && generic) return "Reversing a release is for the Financial Controller.";
   if (status === 403 && generic) {
     return action === "release"
       ? `Releasing a holdback is for ${WHO_RELEASES}.`
       : "That is for the Financial Controller or the General Manager.";
   }
   if (generic && status === 0) return "The liens did not answer. Reload to try again.";
-  const words = sentence(message);
+  const words = sentence(rewritten(message));
   if (words === "") return "The liens did not answer. Reload to try again.";
   if (action === "release" && status === 403 && lower.includes("gatekeeper must be")) return `${words} Releasing is the General Manager's, co-signed by a Financial Controller or Payables and Receivables.`;
   return words;
@@ -326,4 +379,193 @@ const COSIGNER_ROLES = ["FINANCIAL_CONTROLLER", "PAYABLES_RECEIVABLES"];
  */
 export function cosigners<T extends { user_id: string; role_code: string }>(roster: readonly T[], releasingId: string): T[] {
   return roster.filter((p) => COSIGNER_ROLES.includes(p.role_code.toUpperCase()) && p.user_id !== releasingId);
+}
+
+
+// ---- RT-3b: due to release ----------------------------------------------------------------------------
+
+/** Who releases a due holdback: the core's own answer is the Financial Controller (RoleCodeFinancialController). */
+export function canReleaseDue(roleCode: string): boolean {
+  return roleCode.toLowerCase() === "financial_controller";
+}
+
+/** One customer job's held invoices with the one judgement the core gave them (the core judges per customer job). */
+export interface DueGroup {
+  readonly customerJobId: string;
+  readonly branchId: string;
+  readonly rows: readonly BillingHoldbackDueRow[];
+  readonly label: string;
+  readonly lienJobNo: string;
+  readonly due: boolean;
+  readonly kind: string;
+  readonly reason: string;
+  readonly releasableOn: string;
+  readonly lastDay: string;
+}
+
+/** The rows grouped by customer job, in the order the core sent them. No figure is added up. */
+export function groupDue(rows: readonly BillingHoldbackDueRow[]): DueGroup[] {
+  const order: string[] = [];
+  const by = new Map<string, BillingHoldbackDueRow[]>();
+  for (const row of rows) {
+    const held = by.get(row.customer_job_id);
+    if (held === undefined) {
+      order.push(row.customer_job_id);
+      by.set(row.customer_job_id, [row]);
+    } else {
+      held.push(row);
+    }
+  }
+  return order.map((id) => {
+    const mine = by.get(id) ?? [];
+    const first = mine[0] as BillingHoldbackDueRow;
+    const lienJobNo = first.lien_job_no ?? "";
+    return {
+      customerJobId: id,
+      branchId: first.branch_id,
+      rows: mine,
+      label: lienJobNo !== "" ? `lien job ${lienJobNo}` : `the customer job with ${mine.map((r) => r.invoice_no).join(", ")}`,
+      lienJobNo,
+      due: first.due,
+      kind: first.blocked_kind ?? "",
+      reason: first.blocked_reason ?? "",
+      releasableOn: first.releasable_on ?? "",
+      lastDay: first.last_day_to_preserve ?? "",
+    };
+  });
+}
+
+/** The branches a job's invoices sit at, each once, in the order of its rows (a job can hold invoices at more than one). */
+export function dueBranchIds(g: DueGroup): string[] {
+  return [...new Set(g.rows.map((r) => r.branch_id))];
+}
+
+/** The state of a customer job's holdback, in words a bookkeeper can act on. */
+export function dueStateWords(g: DueGroup): string {
+  if (g.due) return "Due now";
+  switch (g.kind) {
+    case "NOT_DUE":
+      return `Not due until ${dueWords(g.releasableOn)}`;
+    case "LIEN_PRESERVED":
+      return `Blocked by a preserved lien on ${g.lienJobNo}`;
+    case "NO_DATE":
+      return "No date to count from";
+    case "NO_LIEN_JOB":
+      return "No lien job linked";
+    default:
+      return "Not due";
+  }
+}
+
+export function dueTone(g: DueGroup): Tone {
+  if (g.due) return "good";
+  return g.kind === "NOT_DUE" ? "watch" : "stop";
+}
+
+/**
+ * The question the Controller is asked first: the total the core gave for the job (when the list names it), the
+ * invoice count and the customer job, then each invoice with its own amount, and what the press does.
+ */
+export function dueConfirmWords(g: DueGroup, total: string | null, about: string): string {
+  const invoices = g.rows.map((r) => `${r.invoice_no} (${formatMoney(r.holdback_cents)})`).join(", ");
+  const count = `${g.rows.length} ${g.rows.length === 1 ? "invoice" : "invoices"}`;
+  const who = about === "" ? g.label : `${about}, ${g.label}`;
+  const what = total === null ? `Release the holdback held on ${count} for ${who}` : `Release ${total} held on ${count} for ${who}`;
+  return `${what}: ${invoices}. The whole holdback of the job is released at once and a journal is posted to the ledger.`;
+}
+
+/**
+ * The total of one job's due holdback, only where the core's own figure is that total: the list's due total is
+ * per branch, so it is the job's when every invoice of the job is at that one branch and no other due job has an
+ * invoice there. Nothing is added up here.
+ */
+export function dueTotalOf(groups: readonly DueGroup[], totals: readonly BillingHoldbackBranchDue[], g: DueGroup): string | null {
+  if (!g.rows.every((r) => r.branch_id === g.branchId)) return null;
+  const here = groups.filter((x) => x.due && x.rows.some((r) => r.branch_id === g.branchId));
+  if (here.length !== 1) return null;
+  const row = totals.find((t) => t.branch_id === g.branchId);
+  return row === undefined ? null : formatMoney(row.due_cents);
+}
+
+/** Whether the job's holdback is held on invoices: the core's due list carries rows for the lien job. */
+export function heldOnInvoices(groups: readonly DueGroup[], jobNo: string): boolean {
+  return jobNo !== "" && groups.some((g) => g.lienJobNo === jobNo);
+}
+
+export function releasedDueWords(label: string, total: string, invoices: number, replayed: boolean): string {
+  const count = `${invoices} ${invoices === 1 ? "invoice" : "invoices"}`;
+  return replayed ? `That release was already made: ${total} on ${label}, ${count}.` : `Released ${total} on ${label}: ${count}.`;
+}
+
+/** One press is reversed whole: every invoice of it goes back to being held, with one reason on each. */
+export function reversedWords(label: string, invoices: ReadonlyArray<{ readonly invoiceNo: string; readonly amount: string }>): string {
+  const each = invoices.map((i) => `${i.invoiceNo} (${i.amount})`);
+  const list = each.length <= 1 ? each.join("") : `${each.slice(0, -1).join(", ")} and ${each[each.length - 1]}`;
+  return `Reversed the release on ${label}: ${list} ${each.length === 1 ? "is" : "are"} held back again.`;
+}
+
+export const RELEASED_HEADING = "Released in this session";
+export const RELEASED_LINE = "Releases made on this page since it opened. Reverse one here if it was a mistake: all of its invoices go back to being held, with your reason on the record.";
+export const PARTLY_REVERSED_LINE = "Some of its invoices are held again and some are not. Reverse again to finish the rest.";
+
+export function reverseConfirmWords(label: string, invoices: ReadonlyArray<{ readonly invoiceNo: string; readonly amount: string }>): string {
+  const each = invoices.map((i) => `${i.invoiceNo} (${i.amount})`).join(", ");
+  return `Reverse the release on ${label}: ${each}. Each goes back to being held on its invoice and a reversing journal is posted to the ledger.`;
+}
+
+export function reverseForm(reason: string): { readonly ok: true; readonly reason: string } | { readonly ok: false; readonly words: string } {
+  const text = reason.trim();
+  return text === "" ? { ok: false, words: "Say why the release is reversed." } : { ok: true, reason: text };
+}
+
+// ---- RT-3b: the lien doors ----------------------------------------------------------------------------
+
+export type DoorResult<T> = { readonly ok: true; readonly body: T } | { readonly ok: false; readonly words: string };
+
+export function preservedForm(day: string, note: string): DoorResult<{ preserved_on: string; note: string }> {
+  const text = day.trim();
+  if (!validDay(text)) return { ok: false, words: "Give the day the lien was preserved, written yyyy-mm-dd." };
+  return { ok: true, body: { preserved_on: text, note: note.trim() } };
+}
+
+export function dischargeForm(day: string, note: string): DoorResult<{ discharged_on: string; note: string }> {
+  const text = day.trim();
+  if (!validDay(text)) return { ok: false, words: "Give the day the lien was discharged, written yyyy-mm-dd." };
+  return { ok: true, body: { discharged_on: text, note: note.trim() } };
+}
+
+/**
+ * The three dates as typed, against the job's own. Only a changed date is sent; a box emptied that held a date
+ * clears it (null); a box that held none and is still empty is left alone.
+ */
+export function datesForm(
+  job: Pick<LienJob, "csp_published_on" | "substantial_perf_date" | "last_supply_date">,
+  typed: { readonly csp: string; readonly perf: string; readonly supply: string },
+): DoorResult<LienPreservationDatesInput> {
+  const body: LienPreservationDatesInput = {};
+  const fields = [
+    ["csp_published_on", job.csp_published_on, typed.csp],
+    ["substantial_perf_date", job.substantial_perf_date, typed.perf],
+    ["last_supply_date", job.last_supply_date, typed.supply],
+  ] as const;
+  for (const [name, held, raw] of fields) {
+    const text = raw.trim();
+    if (text !== "" && !validDay(text)) return { ok: false, words: "Dates are written yyyy-mm-dd." };
+    if (text === (held ?? "")) continue;
+    body[name] = text === "" ? null : text;
+  }
+  if (Object.keys(body).length === 0) return { ok: false, words: "Change at least one date." };
+  return { ok: true, body };
+}
+
+export function recordedPreservedWords(jobNo: string): string {
+  return `Recorded: a lien was preserved on lien job ${jobNo}.`;
+}
+
+export function recordedDischargeWords(jobNo: string): string {
+  return `Recorded: the lien on lien job ${jobNo} was discharged.`;
+}
+
+export function savedDatesWords(jobNo: string): string {
+  return `Saved the dates of lien job ${jobNo}.`;
 }

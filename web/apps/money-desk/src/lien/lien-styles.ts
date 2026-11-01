@@ -36,6 +36,7 @@ export const lienStyles = css`
 
   .li-status { display: inline-flex; align-items: center; gap: var(--hh-s-8); padding: var(--hh-s-2) var(--hh-s-12); border-radius: var(--hh-radius-pill); font-size: 13px; font-weight: 700; border: 1px solid var(--hh-line); white-space: nowrap; }
   .li-status::before { content: ""; width: 8px; height: 8px; border-radius: var(--hh-radius-pill); background: currentColor; }
+  .li-status { background: color-mix(in srgb, currentColor 12%, transparent); }
   .li-status-stop { color: var(--hh-state-stop); border-color: var(--hh-state-stop); }
   .li-status-watch { color: var(--hh-state-watch); border-color: var(--hh-state-watch); }
   .li-status-good { color: var(--hh-state-good); border-color: var(--hh-state-good); }
@@ -68,7 +69,7 @@ export const lienStyles = css`
   .li-filters { display: flex; flex-wrap: wrap; gap: var(--hh-s-4); }
   .li-filter { min-height: 36px; padding: 0 var(--hh-s-12); border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid var(--hh-control-line); font-size: 14px; }
   .li-filter[aria-pressed="true"] { border-color: var(--hh-focus-ring); font-weight: 700; background: var(--hh-row-alt); }
-  .li-link { white-space: nowrap; background: transparent; border: 0; padding: var(--hh-s-4) 0; min-height: 36px; color: var(--hh-accent-text); font-weight: 700; text-decoration: underline; }
+  .li-link { white-space: nowrap; background: transparent; border: 0; padding: var(--hh-s-4) 0; min-height: 44px; color: var(--hh-accent-text); font-weight: 700; text-decoration: underline; }
   .li-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--hh-s-8); margin: var(--hh-s-8) 0 var(--hh-s-12); }
   .li-choice { position: relative; display: grid; gap: var(--hh-s-4); text-align: start; padding: var(--hh-s-12) var(--hh-s-16) var(--hh-s-12) calc(var(--hh-s-16) + 28px); background: var(--hh-card); color: var(--hh-text); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); min-height: 44px; }
   .li-choice::before { content: ""; position: absolute; inset-inline-start: var(--hh-s-16); top: var(--hh-s-16); width: 16px; height: 16px; border-radius: var(--hh-radius-pill); border: 2px solid var(--hh-control-line); box-sizing: border-box; }
@@ -89,10 +90,13 @@ export const lienStyles = css`
   .li-fact { margin: 0 0 var(--hh-s-8); font-weight: 600; overflow-wrap: anywhere; }
   .li-credit { color: var(--hh-text); }
   .li-debit { color: var(--hh-text); }
-  .li-cards { display: none; list-style: none; margin: 0; padding: 0; gap: var(--hh-s-8); }
+  .li-cards { display: none; list-style: none; margin: 0; padding: 0; gap: var(--hh-s-8); min-width: 0; }
   .li-card { display: grid; gap: var(--hh-s-8); padding: var(--hh-s-12) var(--hh-s-16); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); background: var(--hh-card); }
   .li-card[aria-current="true"] { background: var(--hh-row-alt); outline: 2px solid var(--hh-focus-ring); outline-offset: -2px; }
-  .li-card-top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--hh-s-12); }
+  .li-card-top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--hh-s-4) var(--hh-s-12); min-width: 0; }
+  .li-card-top > .li-mono { flex: 0 0 auto; white-space: nowrap; overflow-wrap: normal; max-width: 100%; }
+  .li-card-top > .li-status { white-space: normal; max-width: 100%; min-width: 0; }
+  .li-card { min-width: 0; }
   .li-card-amount { font-weight: 700; font-variant-numeric: tabular-nums; }
   .li-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--hh-s-4) var(--hh-s-24); margin: 0 0 var(--hh-s-12); }
   .li-facts dt { color: var(--hh-text-dim); }
@@ -105,9 +109,32 @@ export const lienStyles = css`
   .li-banner-good { border-color: var(--hh-state-good); }
   .li-banner-stop { border-color: var(--hh-state-stop); }
   .li-pre { margin: 0; padding: var(--hh-s-12) var(--hh-s-16); background: var(--hh-field); color: var(--hh-text); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); font-family: var(--hh-font-mono, ui-monospace, monospace); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; }
-  .li-panel:focus { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
-  .li-confirm { margin: var(--hh-s-12) 0; padding: var(--hh-s-12) var(--hh-s-16); border: 2px solid var(--hh-focus-ring); border-radius: var(--hh-radius-control); font-weight: 700; overflow-wrap: anywhere; }
+  .li-panel:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
+  /* The statement a money press asks about: one tinted box, one line border, as the credit changes asks (CC-2). */
+  .li-statement, .li-confirm { margin: var(--hh-s-12) 0; padding: var(--hh-s-12) var(--hh-s-16); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); background: color-mix(in srgb, var(--hh-accent) 14%, var(--hh-card)); color: var(--hh-text); font-weight: 400; overflow-wrap: anywhere; }
+  .li-statement strong, .li-confirm strong { font-weight: 700; }
   .li-summary { margin: 0 0 var(--hh-s-12); font-weight: 600; }
+
+  /* Due to release: the invoices listed one under another, each with its amount on the right. */
+  .li-due { display: grid; gap: var(--hh-s-16); }
+  .li-due .li-panel { margin-bottom: 0; }
+  .li-invoices .li-mono { white-space: nowrap; }
+  .li-invoices { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--hh-s-4); }
+  .li-invoices li { display: flex; justify-content: space-between; gap: var(--hh-s-16); }
+  .li-cards.li-cards-always { display: grid; }
+  .li-doors { border-top: 1px solid var(--hh-line); margin-top: var(--hh-s-16); padding-top: var(--hh-s-16); }
+  .li-doors h3 { margin: var(--hh-s-12) 0 var(--hh-s-4); }
+  .li-doors .li-form { align-items: end; }
+  /* The released card is laid out like the due list: the job and its state on top, every invoice on a full width line with its amount at the right edge, the total under them at the right. */
+  .li-cards-always .li-card { gap: var(--hh-s-12); padding: var(--hh-s-16) var(--hh-s-20); }
+  .li-cards-always .li-invoices li { padding: var(--hh-s-8) 0; border-top: 1px solid var(--hh-line); }
+  .li-cards-always .li-card-amount { text-align: end; padding-top: var(--hh-s-8); border-top: 1px solid var(--hh-line); font-size: 18px; }
+  .li-field textarea[aria-invalid="true"] { border-color: var(--hh-state-stop); border-width: 2px; }
+  .li-panel .li-note { margin-bottom: var(--hh-s-12); }
+  .li-card-actions { display: flex; justify-content: flex-end; }
+  .li-card-actions .btn { width: auto; }
+  .li-field textarea[data-field="reverse_reason"] { min-height: 88px; font-family: inherit; font-size: 16px; }
+  .li-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
   @media (max-width: 900px) {
     .li-split, .li-split-month { grid-template-columns: minmax(0, 1fr); }
@@ -125,5 +152,11 @@ export const lienStyles = css`
     .li-cards { display: grid; }
     main.li-desk { padding: var(--hh-s-16) var(--hh-s-12) var(--hh-s-40); }
     .li-toolbar .li-field { min-width: 0; flex: 1 1 100%; }
+    /* Forms are one column on a phone, so every box has one width and a label never wraps beside another. */
+    .li-form { grid-template-columns: minmax(0, 1fr); }
+    .li-facts { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .li-facts dd { margin-bottom: var(--hh-s-8); }
+    /* A link inside a card is a button on a phone: a 44 pixel target with its own edge. */
+    .li-cards .li-link { display: inline-flex; align-items: center; justify-self: start; padding: 0 var(--hh-s-16); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); text-decoration: none; }
   }
 `;

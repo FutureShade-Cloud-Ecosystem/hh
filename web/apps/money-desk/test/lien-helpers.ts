@@ -11,6 +11,7 @@ export const PAYREC_ID = "de110000-0000-4000-9000-000000000007";
 export const JOB1 = "10b00000-0000-4000-8000-000000000001";
 export const JOB4 = "10b00000-0000-4000-8000-000000000004";
 export const JOB5 = "10b00000-0000-4000-8000-000000000005";
+export const JOB6 = "10b00000-0000-4000-8000-000000000006";
 export const COCKPIT = "00000000-0000-4000-9000-0000000000d6";
 
 /** A day this many days from the host's own today, written the way the core writes a date. */
@@ -66,7 +67,7 @@ export async function openCompliance(page: Page, request: APIRequestContext, who
   await expect(page.locator("[data-row='deadline']:visible").first()).toBeVisible();
 }
 
-export async function liensTab(page: Page, id: "triage" | "jobs" | "holdbacks" | "documents"): Promise<void> {
+export async function liensTab(page: Page, id: "triage" | "due" | "jobs" | "holdbacks" | "documents"): Promise<void> {
   await page.locator(`[data-liens] [data-tab-id='${id}']`).click();
 }
 
@@ -81,3 +82,15 @@ export async function noSidewaysScroll(page: Page): Promise<void> {
 }
 
 export const test = base;
+
+/** A written day as the screen shows it ("Oct 30, 2026"), cut from the same day dayFrom gives. */
+export function shown(day: string): string {
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const [year, month, date] = day.split("-").map(Number);
+  return `${months[(month ?? 1) - 1]} ${date}, ${year}`;
+}
+
+/** Job and invoice codes keep their hyphen on one line with a non breaking one; this writes a code the way the screen draws it. */
+export function nb(text: string): string {
+  return text.replace(/\b([A-Z][A-Z0-9]*)-(?=\d)/g, "$1\u2011");
+}

@@ -18,6 +18,15 @@
 //   not payable, there is something outstanding; the release then posts one journal and answers a plain date;
 // - the review status answers a draft banner of the core's own words when no row exists.
 //
+// RT-3b adds the holdback release the Controller makes per customer job (core/internal/billing/holdback_release.go):
+// - the due to release read answers one row per held invoice with the judgement the core gives its customer job, the
+//   rule of core/internal/lien/release.go (any undischarged preserved lien refuses first, then any job with no date,
+//   then the latest last day over the linked jobs), and the due total by branch;
+// - the release is the Controller's alone and posts the whole job at once; it replays on its key, and every refusal
+//   but a role or a branch is a 409; the reversal puts one invoice's holdback back and needs a reason;
+// - the lien doors (a preserved lien, its discharge, the three preservation dates) and the old job level release
+//   refusing a lien job that is linked to a customer job.
+//
 // The world is invented and small (Gable Landscape Supply): five jobs across the two yards, the retention held on
 // them aged from days to months, three held invoices to sync, and a calendar of the deadlines the jobs registered.
 // Dates are cut from the host's own day, so no calendar literal is written.
@@ -38,6 +47,10 @@ export const IDS = {
   job3: "10b00000-0000-4000-8000-000000000003",
   job4: "10b00000-0000-4000-8000-000000000004",
   job5: "10b00000-0000-4000-8000-000000000005",
+  job6: "10b00000-0000-4000-8000-000000000006",
+  cjA: "c70b0000-0000-4000-8000-0000000000a1",
+  cjB: "c70b0000-0000-4000-8000-0000000000b1",
+  cjC: "c70b0000-0000-4000-8000-0000000000c1",
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -98,6 +111,13 @@ function render(kind, version, data) {
   return out;
 }
 
+function linked(world) {
+  // The lien jobs a customer job's holdback counts from: the Summit Ridge walkway job and the Fieldstone patio job.
+  world.jobs.find((j) => j.id === IDS.job6).customer_job_id = IDS.cjA;
+  world.jobs.find((j) => j.id === IDS.job3).customer_job_id = IDS.cjB;
+  return world;
+}
+
 function fresh() {
   const at = (ago) => new Date(Date.now() - ago * DAY).toISOString();
   const job = (id, jobNo, customer, branch, description, contract, bps, perfAgo, status, direction, createdAgo) => ({
@@ -123,6 +143,7 @@ function fresh() {
       job(IDS.job4, "GLS-2104", "", IDS.branch2, "Wall block supply, Granite Run Quarry subcontract", 3_200_000, 1000, 50, "SUBSTANTIALLY_PERFORMED", "PAYABLE", 40),
       job(IDS.job1, "GLS-2101", IDS.customerA, IDS.branch1, "Pool deck pavers and drainage, Summit Ridge Builders", 18_600_000, 1000, 70, "SUBSTANTIALLY_PERFORMED", "RECEIVABLE", 80),
       job(IDS.job2, "GLS-2102", IDS.customerA, IDS.branch2, "Retaining wall and coping, Ridgeview Outdoor Living", 9_250_000, 700, 130, "SUBSTANTIALLY_PERFORMED", "RECEIVABLE", 140),
+      job(IDS.job6, "GLS-2105", IDS.customerA, IDS.branch1, "Walkway and steps, Summit Ridge Builders", 15_000_000, 1000, 75, "SUBSTANTIALLY_PERFORMED", "RECEIVABLE", 90),
       job(IDS.job5, "GLS-2100", IDS.customerB, IDS.branch1, "Walkway, Heronfield Stone", 5_000_000, 1000, 150, "RELEASED", "RECEIVABLE", 160),
     ],
     entries: [
@@ -130,6 +151,9 @@ function fresh() {
       entry(IDS.job1, uuid("a1", 2), "RETENTION", 1_020_000, 40),
       entry(IDS.job2, uuid("a1", 3), "RETENTION", 647_500, 100),
       entry(IDS.job3, uuid("a1", 4), "RETENTION", 336_000, 12),
+      entry(IDS.job3, uuid("a3", 1), "RETENTION", 210_000, 12),
+      entry(IDS.job6, uuid("a2", 1), "RETENTION", 630_000, 66),
+      entry(IDS.job6, uuid("a2", 2), "RETENTION", 750_000, 41),
       entry(IDS.job4, uuid("a1", 5), "RETENTION", 290_000, 38),
       entry(IDS.job5, uuid("a1", 6), "RETENTION", 500_000, 120),
       entry(IDS.job5, "", "RELEASE", 500_000, 20, { gl_journal_id: uuid("7a", 1), released_at: dayFrom(-20) }),
@@ -141,6 +165,20 @@ function fresh() {
       { invoice_id: uuid("a1", 7), invoice_no: "INV-3301", customer_id: IDS.customerA, branch_id: IDS.branch1, holdback_cents: 420_000, finalized_at: at(3) },
       { invoice_id: uuid("a1", 8), invoice_no: "INV-3302", customer_id: IDS.customerB, branch_id: IDS.branch1, holdback_cents: 126_000, finalized_at: at(2) },
     ],
+    // The held invoices of the customer jobs the Controller releases, in the order the core reads them. Each one's
+    // RETENTION sits on the ledger of the lien job its row names (the same invoice id, customer and amount), and that
+    // lien job is linked to the customer job; INV-4301 is the one held invoice whose customer job has no lien job.
+    dueInvoices: [
+      { invoice_id: uuid("a2", 1), invoice_no: "INV-4101", customer_id: IDS.customerA, customer_job_id: IDS.cjA, branch_id: IDS.branch1, holdback_cents: 630_000 },
+      { invoice_id: uuid("a2", 2), invoice_no: "INV-4102", customer_id: IDS.customerA, customer_job_id: IDS.cjA, branch_id: IDS.branch1, holdback_cents: 750_000 },
+      { invoice_id: uuid("a1", 4), invoice_no: "INV-4201", customer_id: IDS.customerB, customer_job_id: IDS.cjB, branch_id: IDS.branch1, holdback_cents: 336_000 },
+      // The same customer job's second invoice sits at the other yard: a job split across two branches.
+      { invoice_id: uuid("a3", 1), invoice_no: "INV-4202", customer_id: IDS.customerB, customer_job_id: IDS.cjB, branch_id: IDS.branch2, holdback_cents: 210_000 },
+      { invoice_id: uuid("a2", 4), invoice_no: "INV-4301", customer_id: IDS.customerB, customer_job_id: IDS.cjC, branch_id: IDS.branch1, holdback_cents: 120_000 },
+    ],
+    // One row per invoice released: { id, invoice_id, customer_job_id, amount_cents, key, reversed }.
+    releases: [],
+    nextRelease: 1,
     documents: [],
     deadlines: [
       deadline(1, IDS.job1, "HOLDBACK_RELEASE", 25, "OPEN"),
@@ -162,7 +200,7 @@ function fresh() {
     ],
     // The people the core would resolve as not active: the roster cannot say, the release can.
     inactive: [IDS.formerPayrec],
-    nextJob: 6,
+    nextJob: 7,
     nextDoc: 1,
     nextJournal: 2,
     nextDeadline: 8,
@@ -176,9 +214,9 @@ const internal = () => clientError(500, "internal error");
 const page = (items) => ({ status: 200, body: { items: items.length === 0 ? null : items } });
 
 export function createLienWorld() {
-  let world = fresh();
+  let world = linked(fresh());
   const reset = () => {
-    world = fresh();
+    world = linked(fresh());
   };
 
   const callerOf = (req) => {
@@ -246,6 +284,185 @@ export function createLienWorld() {
     return wire;
   };
 
+  // ---- the preservation rule (core/internal/lien/release.go) ---------------------------------------------
+  const addDays = (iso, n) => dayFrom(n, Date.parse(`${iso}T00:00:00Z`));
+
+  /** One lien job's facts under the rule's preserve days: the latest date that can start the period wins. */
+  function preservationOf(job) {
+    const p = { id: job.id, no: job.job_no, basis: "NONE", basisDate: "", last: "", releasable: "", preserved: job.lien_preserved_on !== undefined && job.lien_discharged_on === undefined, preservedOn: job.lien_preserved_on ?? "" };
+    for (const [date, name] of [[job.csp_published_on, "CSP_PUBLICATION"], [job.substantial_perf_date, "SUBSTANTIAL_PERFORMANCE"], [job.last_supply_date, "COMPLETION"]]) {
+      if (date !== undefined && (p.basisDate === "" || date > p.basisDate)) {
+        p.basis = name;
+        p.basisDate = date;
+      }
+    }
+    if (p.basisDate !== "") {
+      p.last = addDays(p.basisDate, RULE_DAYS);
+      p.releasable = addDays(p.last, 1);
+    }
+    return p;
+  }
+
+  /** THE RULE for a customer job: { kind, msg, gov } with kind "" when the holdback is due. */
+  function judge(customerJobId) {
+    const set = world.jobs.filter((j) => j.customer_job_id === customerJobId).map(preservationOf);
+    if (set.length === 0) return { kind: "NO_LIEN_JOB", msg: "no lien job is linked to this job, so there is no preservation period to count", gov: null };
+    for (const p of set) {
+      if (p.preserved) {
+        return { kind: "LIEN_PRESERVED", gov: p, msg: `a lien was preserved on lien job ${p.no} on ${p.preservedOn} and has not been discharged, so the holdback stays held until it is discharged or settled` };
+      }
+    }
+    for (const p of set) {
+      if (p.basisDate === "") {
+        return { kind: "NO_DATE", gov: p, msg: `lien job ${p.no} has no date to start the preservation period from (the publication of the certificate of substantial performance, the date of substantial performance or the last supply), so the holdback cannot be released` };
+      }
+    }
+    let gov = set[0];
+    for (const p of set.slice(1)) if (p.last > gov.last) gov = p;
+    if (dayFrom(0) <= gov.last) {
+      const basis = gov.basis === "COMPLETION" ? "last supply" : gov.basis === "CSP_PUBLICATION" ? "publication of the certificate of substantial performance" : "substantial performance";
+      return { kind: "NOT_DUE", gov, msg: `the holdback is not due: lien job ${gov.no} counts ${RULE_DAYS} days from ${gov.basisDate} (${basis}), so a lien can be preserved through ${gov.last} and the holdback is releasable from ${gov.releasable}` };
+    }
+    return { kind: "", msg: "", gov };
+  }
+
+  const heldInvoices = (cj) => world.dueInvoices.filter((i) => i.customer_job_id === cj && !world.releases.some((r) => r.invoice_id === i.invoice_id && !r.reversed));
+
+  function dueRows() {
+    const rows = [];
+    const seen = [];
+    for (const inv of world.dueInvoices) if (!seen.includes(inv.customer_job_id)) seen.push(inv.customer_job_id);
+    for (const cj of seen) {
+      const v = judge(cj);
+      for (const inv of heldInvoices(cj)) {
+        const g = v.gov;
+        rows.push({
+          invoice_id: inv.invoice_id,
+          invoice_no: inv.invoice_no,
+          customer_id: inv.customer_id,
+          customer_job_id: cj,
+          ...(g === null ? {} : { lien_job_id: g.id, lien_job_no: g.no, basis: g.basis, ...(g.basisDate === "" ? {} : { basis_date: g.basisDate, last_day_to_preserve: g.last, releasable_on: g.releasable }), preserve_days: RULE_DAYS }),
+          branch_id: inv.branch_id,
+          holdback_cents: inv.holdback_cents,
+          due: v.kind === "",
+          ...(v.kind === "" ? {} : { blocked_kind: v.kind, blocked_reason: v.msg }),
+        });
+      }
+    }
+    return rows;
+  }
+
+  const releasedItem = (r) => {
+    const inv = world.dueInvoices.find((i) => i.invoice_id === r.invoice_id);
+    return { invoice_id: inv.invoice_id, invoice_no: inv.invoice_no, branch_id: inv.branch_id, release_id: r.id, amount_cents: r.amount_cents };
+  };
+
+  /** The routes the Controller's holdback release answers (core/internal/billing/holdback_release_handler.go). */
+  function handleHoldback(method, path, caller, body, q) {
+    if (method === "GET" && path === "/api/v1/ar/holdback/due-to-release") {
+      const branch = q.get("branch_id") ?? "";
+      if (branch !== "" && !UUID.test(branch)) return internal();
+      const items = dueRows().filter((r) => branch === "" || r.branch_id === branch);
+      const totals = [];
+      for (const r of items) {
+        let t = totals.find((x) => x.branch_id === r.branch_id);
+        if (t === undefined) totals.push((t = { branch_id: r.branch_id, due_cents: 0 }));
+        if (r.due) t.due_cents += r.holdback_cents;
+      }
+      return { status: 200, body: { items, branches: totals } };
+    }
+    if (method === "POST" && path === "/api/v1/ar/holdback/releases") {
+      if (caller.role !== "FINANCIAL_CONTROLLER") return clientError(403, "releasing a holdback is the Controller's action");
+      const cj = String(body.customer_job_id ?? "").trim();
+      if (!UUID.test(cj)) return clientError(400, "customer job id must be a uuid");
+      const key = String(body.idempotency_key ?? "").trim();
+      if (key === "") return clientError(400, "an idempotency key is required");
+      const made = world.releases.filter((r) => r.key === key);
+      if (made.length > 0) {
+        if (made.some((r) => r.reversed)) return clientError(409, "the release this idempotency key made was reversed, so nothing stands released; release the holdback again with a new key");
+        if (made[0].customer_job_id !== cj) return clientError(409, "that idempotency key already released the holdback of another job; a key names one release, use a new key");
+        const items = made.filter((r) => !r.reversed).map(releasedItem);
+        return { status: 200, body: { customer_job_id: cj, released_on: dayFrom(0), total_cents: made.filter((r) => !r.reversed).reduce((n, r) => n + r.amount_cents, 0), items, replayed: true } };
+      }
+      const held = heldInvoices(cj);
+      if (held.length === 0) {
+        if (world.releases.some((r) => r.customer_job_id === cj)) return clientError(409, "the holdback of this job has already been released, and no invoice on it withholds any more");
+        return clientError(409, "no open invoice on this job withholds any holdback to release");
+      }
+      const v = judge(cj);
+      if (v.kind !== "") return clientError(409, v.msg);
+      const rows = held.map((inv) => ({ id: uuid("e1", world.nextRelease++), invoice_id: inv.invoice_id, customer_job_id: cj, amount_cents: inv.holdback_cents, key, reversed: false }));
+      world.releases.push(...rows);
+      return { status: 201, body: { customer_job_id: cj, released_on: dayFrom(0), total_cents: rows.reduce((n, r) => n + r.amount_cents, 0), items: rows.map(releasedItem), replayed: false } };
+    }
+    const m = path.match(/^\/api\/v1\/ar\/holdback\/releases\/([^/]+)\/reversal$/);
+    if (method === "POST" && m) {
+      if (caller.role !== "FINANCIAL_CONTROLLER") return clientError(403, "reversing a holdback release is the Controller's action");
+      if (String(body.reason ?? "").trim() === "") return clientError(400, "a reason is required to reverse a release");
+      const row = world.releases.find((r) => r.id === m[1]);
+      if (row === undefined) return clientError(404, "no such holdback release");
+      if (row.reversed) return clientError(409, "that release has already been reversed");
+      row.reversed = true;
+      const inv = world.dueInvoices.find((i) => i.invoice_id === row.invoice_id);
+      return { status: 200, body: { release_id: row.id, invoice_id: inv.invoice_id, invoice_no: inv.invoice_no, restored_cents: row.amount_cents, reversed_on: dayFrom(0) } };
+    }
+    return null;
+  }
+
+  /** The lien doors (core/internal/lien/release.go): the caller and the job first, then the days, in the core's order. */
+  function handleDoors(method, path, body) {
+    const m = path.match(/^\/api\/v1\/lien\/jobs\/([^/]+)\/(preserved-lien\/discharge|preserved-lien|preservation-dates)$/);
+    if (m === null) return null;
+    const door = m[2];
+    if ((door === "preservation-dates") !== (method === "PUT")) return null;
+    if (!UUID.test(m[1])) return internal();
+    const job = world.jobs.find((j) => j.id === m[1]);
+    if (job === undefined) return clientError(404, "lien: job not found");
+    const day = (what, v) => {
+      const t = String(v ?? "").trim();
+      if (t === "") return { error: clientError(422, `lien: ${what} is required (a date, YYYY-MM-DD)`) };
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(t) || Number.isNaN(Date.parse(`${t}T00:00:00Z`)) || new Date(`${t}T00:00:00Z`).toISOString().slice(0, 10) !== t) return { error: clientError(422, `lien: ${what} ${JSON.stringify(t)} is not a date (YYYY-MM-DD)`) };
+      return { day: t };
+    };
+    if (door === "preserved-lien") {
+      const d = day("preserved_on", body.preserved_on);
+      if (d.error) return d.error;
+      job.lien_preserved_on = d.day;
+      const note = String(body.note ?? "").trim();
+      if (note === "") delete job.lien_preserved_note;
+      else job.lien_preserved_note = note;
+      delete job.lien_discharged_on;
+      return { status: 200, body: job };
+    }
+    if (door === "preserved-lien/discharge") {
+      if (job.lien_preserved_on === undefined) return clientError(422, `lien: no lien was preserved on job ${job.job_no}, so there is nothing to discharge`);
+      const d = day("discharged_on", body.discharged_on);
+      if (d.error) return d.error;
+      if (d.day < job.lien_preserved_on) return clientError(422, `lien: a lien preserved on ${job.lien_preserved_on} cannot be discharged on ${d.day}, before it`);
+      job.lien_discharged_on = d.day;
+      return { status: 200, body: job };
+    }
+    const names = ["csp_published_on", "substantial_perf_date", "last_supply_date"];
+    const named = names.filter((n) => Object.prototype.hasOwnProperty.call(body, n));
+    if (named.length === 0) return clientError(422, "lien: name at least one of csp_published_on, substantial_perf_date and last_supply_date (a date, YYYY-MM-DD, or null to clear it)");
+    const next = {};
+    for (const n of named) {
+      const raw = body[n];
+      if (raw === null || String(raw).trim() === "") {
+        next[n] = "";
+        continue;
+      }
+      const d = day(n, raw);
+      if (d.error) return d.error;
+      next[n] = d.day;
+    }
+    for (const [n, v] of Object.entries(next)) {
+      if (v === "") delete job[n];
+      else job[n] = v;
+    }
+    return { status: 200, body: job };
+  }
+
   function registerDeadline(jobId, dueDate) {
     const same = world.deadlines.find((d) => d.job_id === jobId && d.deadline_kind === "HOLDBACK_RELEASE" && d.due_date === dueDate);
     if (same !== undefined) return;
@@ -262,7 +479,8 @@ export function createLienWorld() {
     const isLien = path.startsWith("/api/v1/lien/");
     const isCompliance = path.startsWith("/api/v1/compliance/");
     const isRoster = path === "/api/v1/staff";
-    if (!isLien && !isCompliance && !isRoster) return null;
+    const isHoldback = path.startsWith("/api/v1/ar/holdback/");
+    if (!isLien && !isCompliance && !isRoster && !isHoldback) return null;
     const caller = callerOf(req);
     // The route guards: the staff list is the dealer admin's read (a tier 1 role), every other route is RequireManager.
     if (isRoster) {
@@ -282,6 +500,9 @@ export function createLienWorld() {
       return clientError(400, "invalid_json");
     }
     const q = url.searchParams;
+    if (isHoldback) return handleHoldback(method, path, caller, body, q);
+    const door = isLien ? handleDoors(method, path, body) : null;
+    if (door !== null) return door;
 
     // ---- lien ------------------------------------------------------------------------------------------
     if (method === "GET" && path === "/api/v1/lien/jobs") {
@@ -415,6 +636,9 @@ export function createLienWorld() {
       const found = world.jobs.find((j) => j.id === m[1]);
       if (found === undefined) return clientError(404, "lien: job not found");
       if (found.holdback_direction === "PAYABLE") return clientError(422, "lien: PAYABLE holdback release is manual, recorded, not posted (register a calendar deadline)");
+      if (found.customer_job_id !== undefined) {
+        return clientError(422, `lien: job ${found.job_no} is linked to a customer job, so its holdback is released by the Controller's holdback release (POST /api/v1/ar/holdback/releases), once its preservation period has run out, and not by this job level release`);
+      }
       const left = outstanding(found.id);
       if (left <= 0) return clientError(422, "lien: no outstanding retention to release for this job");
       const journal = uuid("7a", world.nextJournal++);

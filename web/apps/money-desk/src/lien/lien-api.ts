@@ -15,11 +15,15 @@
 // every row, and an empty list says {"items": null}. A list is read as either (listOf) and anything else is not a
 // list.
 import {
+  staffBilling,
   staffBranches,
   staffCompliance,
   staffIdentity,
   staffLien,
   type ApiClient,
+  type BillingHoldbackDueToRelease,
+  type BillingHoldbackRelease,
+  type BillingHoldbackReversal,
   type Branch,
   type ComplianceReviewStatus,
   type IdentityStaffMember,
@@ -27,6 +31,7 @@ import {
   type LienDocument,
   type LienJob,
   type LienJobInput,
+  type LienPreservationDatesInput,
   type LienReleaseResult,
   type LienSyncResult,
   type LienTriageItem,
@@ -101,5 +106,33 @@ export class LienApi {
   /** The release asks the core for the dual gate: the General Manager releases and names a co-signer, whose authority the core resolves itself. */
   release(jobId: string, approverId: string, approverRole: string): Promise<Result<LienReleaseResult>> {
     return staffLien.lienReleaseHoldback(this.#client, jobId, { approver_id: approverId, approver_role: approverRole });
+  }
+
+  // ---- RT-3b: the Controller's holdback release and the lien doors ------------------------------------
+
+  /** Per held invoice, with the judgement the core gives its customer job, and the due total by branch. */
+  dueToRelease(): Promise<Result<BillingHoldbackDueToRelease>> {
+    return staffBilling.billingListHoldbackDueToRelease(this.#client);
+  }
+
+  /** The Controller's release of one customer job's whole holdback. One key names one press; the core replays it. */
+  releaseDue(customerJobId: string, idempotencyKey: string): Promise<Result<BillingHoldbackRelease>> {
+    return staffBilling.billingReleaseHoldback(this.#client, { customer_job_id: customerJobId, idempotency_key: idempotencyKey });
+  }
+
+  reverseRelease(releaseId: string, reason: string): Promise<Result<BillingHoldbackReversal>> {
+    return staffBilling.billingReverseHoldbackRelease(this.#client, releaseId, { reason });
+  }
+
+  recordPreservedLien(jobId: string, preservedOn: string, note: string): Promise<Result<LienJob>> {
+    return staffLien.lienRecordPreservedLien(this.#client, jobId, { preserved_on: preservedOn, note });
+  }
+
+  dischargeLien(jobId: string, dischargedOn: string, note: string): Promise<Result<LienJob>> {
+    return staffLien.lienDischargeLien(this.#client, jobId, { discharged_on: dischargedOn, note });
+  }
+
+  setDates(jobId: string, body: LienPreservationDatesInput): Promise<Result<LienJob>> {
+    return staffLien.lienSetPreservationDates(this.#client, jobId, body);
   }
 }
