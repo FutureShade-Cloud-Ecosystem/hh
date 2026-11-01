@@ -11,6 +11,7 @@ import {
   WEIGHTS,
   SPLITS,
   EVENING_GUARD,
+  WORK_SHELL_ASSEMBLED,
   listPackages,
   buildUnits,
   assign,
@@ -57,6 +58,11 @@ test("every real package appears in the plan, split ones as playwright parts plu
     assert.deepEqual(numbers, split ? [0, ...Array.from({ length: split.parts }, (_, i) => i + 1)] : [1], pkg.name);
   }
   assert.ok(units.some((u) => u.id === EVENING_GUARD), "the evening guard unit is planned");
+  assert.ok(units.some((u) => u.id === WORK_SHELL_ASSEMBLED), "the Work shell assembled-dist unit is planned");
+  for (const count of [1, 6]) {
+    const seen = placements(assign(units, count));
+    assert.equal(seen.get(WORK_SHELL_ASSEMBLED), 1, `the assembled-dist unit lands in one shard at ${count}`);
+  }
 });
 
 test("quote desk's typecheck, node tests and extra configs are a unit of their own, not part of a playwright part", () => {
