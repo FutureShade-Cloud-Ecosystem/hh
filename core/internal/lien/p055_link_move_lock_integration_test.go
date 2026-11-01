@@ -222,3 +222,80 @@ func TestIntegration_P055_LockOrderHasNoDeadlock(t *testing.T) {
 		t.Fatalf("link %q while %d invoice rows stand under the first job", w.linked(t, lj), held)
 	}
 }
+
+// The holdback sync is the second writer of RETENTION. It reads the job's link, then books. A held advisory
+// lock on the invoice's retention key parks the sync inside its insert (after its link read); the move runs
+// meanwhile; then the advisory lock is released. The sync must not leave RETENTION on a job that moved away:
+// either it locked the job row first (the move waits, then refuses) or it rechecked the link and booked nothing.
+func TestIntegration_P055_SyncRacesTheMove(t *testing.T) {
+	w := rt1Plant(t)
+	mgr := w.as(w.manager(w.branchA))
+	lj := w.lienJob(t, w.customerA, w.branchA)
+	if _, err := w.svc.LinkCustomerJob(mgr, lj, w.jobOnSiteON); err != nil {
+		t.Fatal(err)
+	}
+	invID, _ := w.p055Invoice(t)
+	w.svc.WithHoldbackFacts(fakeIntHoldback{inv: invID, branch: w.branchA, job: w.jobOnSiteON})
+
+	// The held transaction owns the invoice's retention advisory key.
+	tx, err := w.pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(context.Background(),
+		`SELECT pg_advisory_xact_lock(hashtextextended('holdback_ledger:' || $1::text, 0))`, invID); err != nil {
+		t.Fatal(err)
+	}
+
+	syncDone := make(chan struct{})
+	var syncErr error
+	go func() {
+		defer close(syncDone)
+		_, syncErr = w.svc.SyncHoldbacks(w.as(w.manager(w.branchA)), lj)
+	}()
+	// The sync has read the link and is parked on the advisory key (or finished, if it never needed it).
+	deadline := time.Now().Add(15 * time.Second)
+	for parked := false; !parked; {
+		select {
+		case <-syncDone:
+			parked = true
+			continue
+		default:
+		}
+		if err := w.pool.QueryRow(context.Background(),
+			`SELECT count(*) > 0 FROM pg_stat_activity WHERE datname = current_database() AND wait_event = 'advisory'`).Scan(&parked); err != nil {
+			t.Fatal(err)
+		}
+		if !parked {
+			if time.Now().After(deadline) {
+				t.Fatal("the sync neither finished nor parked on the advisory lock")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	// The move starts now: it finishes (nothing is booked yet) or waits on the job row the sync holds.
+	moveDone := make(chan struct{})
+	var moveErr error
+	go func() {
+		defer close(moveDone)
+		_, moveErr = w.svc.LinkCustomerJob(mgr, lj, w.jobOnSiteZA)
+	}()
+	w.p055Settle(t, moveDone)
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	<-syncDone
+	<-moveDone
+
+	if syncErr != nil {
+		t.Fatalf("sync: %v", syncErr)
+	}
+	var ce clientError
+	if moveErr != nil && !(errors.As(moveErr, &ce) && ce.status == 422) {
+		t.Fatalf("move: %v", moveErr)
+	}
+	// The ledger row, if booked, names the invoice's customer job: the link must still be it.
+	w.p055Impossible(t, lj, w.jobOnSiteON)
+}
