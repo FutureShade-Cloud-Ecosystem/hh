@@ -17,6 +17,7 @@ import {
   classifyPayment,
   PaySender,
   readHostedToken,
+  unreachableWords,
 } from "../src/pay-core.ts";
 
 const A = "11111111-1111-4111-8111-111111111111";
@@ -327,4 +328,10 @@ test("a discount offer needs both the amount and its last day, and is otherwise 
   assert.equal(discountOffer({}), null);
   assert.equal(discountOffer({ discount_cents: 2000 }), null);
   assert.equal(discountOffer({ discount_cents: 0, discount_by: "2026-03-10" }), null);
+});
+
+test("UX-134: Pro is called unreachable only for a lost signal", () => {
+  assert.match(unreachableWords({ ok: false, error: "network down" }), /not reachable/);
+  assert.equal(unreachableWords({ ok: false, error: "not valid JSON", code: "malformed_success_body" }), "");
+  assert.equal(unreachableWords({ ok: false, error: "boom", status: 503 }), "");
 });

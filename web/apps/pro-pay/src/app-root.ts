@@ -31,7 +31,7 @@ import "@hardscapehouse/pro-kit/src/state-view.js";
 import type { SurfaceSelect } from "@hardscapehouse/pro-kit/src/frame.js";
 import type { SignInMethodChoice, SignInSubmit } from "@hardscapehouse/pro-kit/src/signin.js";
 import type { HHProSignIn } from "@hardscapehouse/pro-kit/src/signin.js";
-import { PaySender, discountOffer, isPayable, payableCents, payoffCents, readHostedToken, type PayBody, type PayOutcome } from "./pay-core.js";
+import { PaySender, discountOffer, isPayable, payableCents, payoffCents, readHostedToken, unreachableWords, type PayBody, type PayOutcome } from "./pay-core.js";
 import { hostedFieldAddress } from "./hosted-field.js";
 import { invoiceDetailScreen, invoicesScreen, methodsScreen, sheetView, statementsScreen, type Load, type Sheet, type ViewState } from "./views.js";
 import { screenStyles } from "./styles.js";
@@ -293,7 +293,7 @@ export class ProPayApp extends HHElement {
   async #fetchInvoices(): Promise<Load | "lapsed"> {
     const [summary, rows] = await Promise.all([tenantDashboard.tenantGetBillingSummary(this.#client), this.#allInvoices()]);
     if (!rows.ok) {
-      if (rows.status === undefined) this.#errorWords = "Pro is not reachable right now. Try again in a moment.";
+      this.#errorWords = unreachableWords(rows);
       return failure(rows);
     }
     this.#invoices = rows.value;
@@ -319,7 +319,7 @@ export class ProPayApp extends HHElement {
   async #fetchMethods(): Promise<Load | "lapsed"> {
     const answer = await tenantPayments.tenantListPaymentMethods(this.#client);
     if (!answer.ok) {
-      if (answer.status === undefined) this.#errorWords = "Pro is not reachable right now. Try again in a moment.";
+      this.#errorWords = unreachableWords(answer);
       return failure(answer);
     }
     this.#methods = answer.value;
@@ -329,7 +329,7 @@ export class ProPayApp extends HHElement {
   async #fetchStatements(): Promise<Load | "lapsed"> {
     const [payments, summary, rows] = await Promise.all([tenantPayments.tenantListPayments(this.#client), tenantDashboard.tenantGetBillingSummary(this.#client), this.#allInvoices()]);
     if (!payments.ok) {
-      if (payments.status === undefined) this.#errorWords = "Pro is not reachable right now. Try again in a moment.";
+      this.#errorWords = unreachableWords(payments);
       return failure(payments);
     }
     this.#payments = payments.value;
