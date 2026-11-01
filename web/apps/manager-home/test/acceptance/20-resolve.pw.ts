@@ -50,8 +50,9 @@ test("a shortage resolves end to end and the count drops", async ({ page }) => {
   const pick = await staffGet(page, bearer, `/api/v1/yard/picks/${taskId}`);
   expect(pick.status).toBe(200);
   const history = ((pick.body as { shortages?: Array<{ note?: string; resolved_at?: string | null; resolution?: string }> }).shortages ?? []);
-  // The cleared shortage by its own seeded note, never the first resolved row the pick happens to hold.
-  const cleared = history.find((s) => s.note === clearedWords);
+  // The cleared shortage by its own seeded note (the words above are each note's opening words), never
+  // the first resolved row the pick happens to hold.
+  const cleared = history.find((s) => typeof s.note === "string" && s.note.startsWith(clearedWords));
   expect(cleared, "the core's pick read holds the cleared shortage").toBeDefined();
   expect(cleared?.resolved_at, "the core records the shortage as resolved").toBeTruthy();
   expect(cleared?.resolution).toBe("Backordered the shortfall; the order keeps the short line open. Customer ok with Thursday");
