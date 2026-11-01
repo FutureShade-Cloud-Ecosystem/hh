@@ -299,3 +299,59 @@ func TestIntegration_P055_SyncRacesTheMove(t *testing.T) {
 	// The ledger row, if booked, names the invoice's customer job: the link must still be it.
 	w.p055Impossible(t, lj, w.jobOnSiteON)
 }
+
+// The case the recheck clause guards: the move commits between the sync's unlocked link read (GetJob) and its
+// row lock. A held transaction has moved the link but not committed; the sync reads the old link (MVCC, no
+// wait), then parks on the lien job row lock; the move commits. The sync must book nothing and not fail.
+func TestIntegration_P055_SyncSkipsAMoveThatCommittedFirst(t *testing.T) {
+	w := rt1Plant(t)
+	lj := w.lienJob(t, w.customerA, w.branchA)
+	if _, err := w.svc.LinkCustomerJob(w.as(w.manager(w.branchA)), lj, w.jobOnSiteON); err != nil {
+		t.Fatal(err)
+	}
+	invID, _ := w.p055Invoice(t)
+	w.svc.WithHoldbackFacts(fakeIntHoldback{inv: invID, branch: w.branchA, job: w.jobOnSiteON})
+
+	// The move is mid way: the link is rewritten on its own open transaction, holding the job row.
+	tx, err := w.pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(context.Background(),
+		`UPDATE lien_jobs SET customer_job_id = $2::uuid WHERE id = $1::uuid`, lj, w.jobOnSiteZA); err != nil {
+		t.Fatal(err)
+	}
+
+	syncDone := make(chan struct{})
+	var syncErr error
+	var res SyncResult
+	go func() {
+		defer close(syncDone)
+		res, syncErr = w.svc.SyncHoldbacks(w.as(w.manager(w.branchA)), lj)
+	}()
+	// The sync has read the old link and is waiting on the job row the move holds.
+	if w.p055Settle(t, syncDone) {
+		t.Fatal("the sync finished without waiting on the job row the move holds")
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	<-syncDone
+
+	if syncErr != nil {
+		t.Fatalf("sync: %v", syncErr)
+	}
+	if res.BookedCount != 0 {
+		t.Fatalf("the sync booked %+v on a job whose link had already moved", res)
+	}
+	var rows int
+	if err := w.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM holdback_ledger WHERE invoice_id = $1`, invID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("%d ledger rows for the invoice after the move committed first", rows)
+	}
+	w.p055Impossible(t, lj, w.jobOnSiteZA)
+}
