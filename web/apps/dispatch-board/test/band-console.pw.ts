@@ -67,3 +67,36 @@ test("a console box's offline door has no Sign in word in the header", async ({ 
   await expect(page.locator("hos-app-header")).not.toHaveAttribute("word", "Sign in");
   await expect(page.getByTestId("header-word")).toHaveText("Offline");
 });
+
+// UX-131 round 2: the header word follows the offline reason. "Offline" is true only for a lost signal; a 503 means
+// the server is up but not answering, a 429 means it is busy.
+function consoleAnswering(status: number) {
+  return (route: import("@playwright/test").Route) => {
+    const headers = route.request().headers();
+    const cors = {
+      "access-control-allow-origin": headers["origin"] ?? "",
+      "access-control-allow-credentials": "true",
+      "access-control-allow-headers": headers["access-control-request-headers"] ?? "content-type",
+      "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+    };
+    return route.request().method() === "OPTIONS"
+      ? route.fulfill({ status: 204, headers: cors })
+      : route.fulfill({ status, json: { message: "later" }, headers: cors });
+  };
+}
+
+test("a console box's door answered 503 says the server is unavailable, not offline", async ({ page }) => {
+  await page.route("**/config.json", (route) => route.fulfill({ json: CONSOLE_CONFIG }));
+  await page.route("https://console.invalid/**", consoleAnswering(503));
+  await page.goto("/");
+  await expect(page.locator("p.notice")).toContainText(/not answering/i);
+  await expect(page.getByTestId("header-word")).toHaveText("Server unavailable");
+});
+
+test("a console box's door answered 429 says the server is busy, not offline", async ({ page }) => {
+  await page.route("**/config.json", (route) => route.fulfill({ json: CONSOLE_CONFIG }));
+  await page.route("https://console.invalid/**", consoleAnswering(429));
+  await page.goto("/");
+  await expect(page.locator("p.notice")).toContainText(/busy/i);
+  await expect(page.getByTestId("header-word")).toHaveText("Server busy");
+});

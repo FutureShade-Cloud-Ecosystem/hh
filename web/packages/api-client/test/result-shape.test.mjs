@@ -170,7 +170,23 @@ test("a success status with a non-JSON body resolves a refusal, never garbage", 
   const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: fetchLike });
   const result = await api.tenantAuth.tenantGetMe(client);
   assert.equal(result.ok, false);
-  if (!result.ok) assert.match(result.error, /not valid JSON/);
+  if (!result.ok) {
+    assert.match(result.error, /not valid JSON/);
+    assert.equal(result.code, api.MALFORMED_SUCCESS_CODE, "the malformed body carries the client code");
+    assert.equal(result.status, undefined, "the server answered success, so no status rides the Result");
+  }
+});
+
+test("a 4xx with a JSON error body still carries the server's own code and status", async (t) => {
+  const fetchLike = () => Promise.resolve(respond({ status: 409, body: { code: "stock_conflict", message: "no" } }));
+  const client = new api.ApiClient({ baseUrl: "https://hh-core.example", fetch: fetchLike });
+  const result = await api.tenantAuth.tenantGetMe(client);
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.code, "stock_conflict");
+    assert.equal(result.status, 409);
+    assert.notEqual(result.code, api.MALFORMED_SUCCESS_CODE);
+  }
 });
 
 // The old pin here answered CSV text and asserted the raw string, which hid
