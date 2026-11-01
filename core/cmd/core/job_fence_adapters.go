@@ -70,5 +70,5 @@ func newQuoteJobFence(pool *pgxpool.Pool) quoteJobFence {
 // it, so no door decides exposure on its own.
 func newCreditGate(pool *pgxpool.Pool, holds till.HoldChecker) *till.HoldAwareCreditGate {
 	reader := billing.NewExposureReader(pool, customer.NewRepository(pool))
-	return till.NewHoldAwareCreditGate(holds).WithExposure(billing.GateExposure{R: reader})
+	return till.NewHoldAwareCreditGate(holds).WithExposure(reader)
 }

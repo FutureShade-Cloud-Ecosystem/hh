@@ -34,7 +34,7 @@ func exposureSvc(t *testing.T, w *jobSaleWorld, pool pgxPoolAlias) *Service {
 	t.Helper()
 	repo := customer.NewRepository(pool)
 	gate := till.NewHoldAwareCreditGate(till.NewRepository(pool)).
-		WithExposure(billing.GateExposure{R: billing.NewExposureReader(pool, repo)})
+		WithExposure(billing.NewExposureReader(pool, repo))
 	return realPosSvc(t, pool, stubCharger{}).
 		WithJobFence(posJobFenceForTest{svc: customer.NewService(repo).WithJobs(repo)}).
 		WithCreditGate(gate).
@@ -160,9 +160,9 @@ func TestIntegration_JobExposure_TheRowsTwoHoldsAndTheTie(t *testing.T) {
 	if exp != 2*T || aging != exp {
 		t.Fatalf("exposure %d, aging %d, want both %d (two rings of %d)", exp, aging, 2*T, T)
 	}
-	pos, err := rd.JobPosition(bg, nil, w.customer, w.open)
-	if err != nil || pos.ExposureCents != T {
-		t.Fatalf("the open job's own exposure = %+v (%v), want its one invoice of %d", pos, err, T)
+	_, jobExp, _, err := rd.JobPosition(bg, nil, w.customer, w.open)
+	if err != nil || jobExp != T {
+		t.Fatalf("the open job's own exposure = %d (%v), want its one invoice of %d", jobExp, err, T)
 	}
 	// An open order (a converted quote not yet invoiced) is exposure the aging does not yet carry:
 	// the exposure is the aging plus the open orders.

@@ -26,15 +26,24 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
 
-// ExposureQuerier is the one read the exposure SQL needs. A pool satisfies it, and so does a
+// rowQuerier is the one read the exposure SQL needs. A pool satisfies it, and so does a
 // transaction: a gate consulted inside a write transaction passes that transaction, so the read
 // sees the same snapshot and asks the pool for no second connection.
-type ExposureQuerier interface {
+type rowQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// querier picks the caller's transaction when one is given and the pool otherwise.
+func (e *ExposureReader) querier(tx pgx.Tx) (rowQuerier, error) {
+	if tx != nil {
+		return tx, nil
+	}
+	if e.pool == nil {
+		return nil, errNoDB
+	}
+	return e.pool, nil
 }
 
 // JobLimits is the customer module's read of a job's own credit limit beside the customer's.
@@ -61,15 +70,13 @@ const openOrdersPredicate = `o.status NOT IN ('CANCELLED','INVOICED','CLOSED')
 
 // CustomerExposure is the customer's whole exposure: the running AR balance (every job included,
 // since every job's invoices post to the one ledger) plus every open order.
-func (e *ExposureReader) CustomerExposure(ctx context.Context, q ExposureQuerier, customerID string) (int64, error) {
-	if q == nil {
-		if e.pool == nil {
-			return 0, errNoDB
-		}
-		q = e.pool
+func (e *ExposureReader) CustomerExposure(ctx context.Context, tx pgx.Tx, customerID string) (int64, error) {
+	q, err := e.querier(tx)
+	if err != nil {
+		return 0, err
 	}
 	var open, orders int64
-	err := q.QueryRow(ctx, `
+	err = q.QueryRow(ctx, `
 		SELECT COALESCE((SELECT t.balance_after FROM customer_transactions t
 		                  WHERE t.customer_id = $1::uuid ORDER BY t.occurred_at DESC LIMIT 1), 0),
 		       COALESCE((SELECT SUM(o.total_cents) FROM orders o
@@ -81,32 +88,21 @@ func (e *ExposureReader) CustomerExposure(ctx context.Context, q ExposureQuerier
 	return open + orders, nil
 }
 
-// JobPosition is what a gate needs of a job: its own limit when it has one, its own exposure, and
-// the customer's limit it is held under.
-type JobPosition struct {
-	// OwnLimitCents is the job's OWN credit limit, nil when the job shares the customer's.
-	OwnLimitCents *int64
-	// ExposureCents is the job's own exposure: its open invoice balances plus its open orders.
-	ExposureCents int64
-	// CustomerLimitCents is the customer's limit, which the job never raises.
-	CustomerLimitCents int64
-}
-
-// JobPosition reads a job's own position for one customer. A job that is not the customer's reads
-// as not found, never as an empty position.
-func (e *ExposureReader) JobPosition(ctx context.Context, q ExposureQuerier, customerID, jobID string) (JobPosition, error) {
+// JobPosition reads a job's own position for one customer: the job's OWN credit limit (nil when it
+// shares the customer's), the job's own exposure (its open invoice balances plus its open orders),
+// and the customer's limit it is held under, which a job never raises. A job that is not the
+// customer's reads as not found, never as an empty position.
+func (e *ExposureReader) JobPosition(ctx context.Context, tx pgx.Tx, customerID, jobID string) (ownLimit *int64, exposure, customerLimit int64, err error) {
 	if e.jobs == nil {
-		return JobPosition{}, errors.New("billing: the exposure reader has no job limits bound")
+		return nil, 0, 0, errors.New("billing: the exposure reader has no job limits bound")
 	}
-	if q == nil {
-		if e.pool == nil {
-			return JobPosition{}, errNoDB
-		}
-		q = e.pool
-	}
-	own, custLimit, err := e.jobs.JobLimitForCustomer(ctx, customerID, jobID)
+	q, err := e.querier(tx)
 	if err != nil {
-		return JobPosition{}, err
+		return nil, 0, 0, err
+	}
+	ownLimit, customerLimit, err = e.jobs.JobLimitForCustomer(ctx, customerID, jobID)
+	if err != nil {
+		return nil, 0, 0, err
 	}
 	var open, orders int64
 	err = q.QueryRow(ctx, `
@@ -117,34 +113,7 @@ func (e *ExposureReader) JobPosition(ctx context.Context, q ExposureQuerier, cus
 		                  WHERE o.customer_id = $1::uuid AND o.job_id = $2::uuid AND `+openOrdersPredicate+`), 0)`,
 		customerID, jobID).Scan(&open, &orders)
 	if err != nil {
-		return JobPosition{}, fmt.Errorf("billing: read the exposure of job %q: %w", jobID, err)
+		return nil, 0, 0, fmt.Errorf("billing: read the exposure of job %q: %w", jobID, err)
 	}
-	return JobPosition{OwnLimitCents: own, ExposureCents: open + orders, CustomerLimitCents: custLimit}, nil
-}
-
-// GateExposure adapts the reader to the seam the credit gate (till.HoldAwareCreditGate) declares.
-type GateExposure struct{ R *ExposureReader }
-
-var _ till.ExposureSource = GateExposure{}
-
-// CustomerExposure reads the customer's whole exposure on tx, or the pool when tx is nil.
-func (g GateExposure) CustomerExposure(ctx context.Context, tx pgx.Tx, customerID string) (int64, error) {
-	var q ExposureQuerier
-	if tx != nil {
-		q = tx
-	}
-	return g.R.CustomerExposure(ctx, q, customerID)
-}
-
-// JobPosition reads a job's own position on tx, or the pool when tx is nil.
-func (g GateExposure) JobPosition(ctx context.Context, tx pgx.Tx, customerID, jobID string) (till.JobCreditPosition, error) {
-	var q ExposureQuerier
-	if tx != nil {
-		q = tx
-	}
-	p, err := g.R.JobPosition(ctx, q, customerID, jobID)
-	if err != nil {
-		return till.JobCreditPosition{}, err
-	}
-	return till.JobCreditPosition{OwnLimitCents: p.OwnLimitCents, ExposureCents: p.ExposureCents, CustomerLimitCents: p.CustomerLimitCents}, nil
+	return ownLimit, open + orders, customerLimit, nil
 }

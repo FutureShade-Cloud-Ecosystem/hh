@@ -139,22 +139,22 @@ func TestIntegration_Exposure_TheCustomerSumsEveryJobAndTheJobReadsItsOwn(t *tes
 	if got != 175000+20000 {
 		t.Fatalf("customer exposure = %d, want the ledger 175000 plus the one open order 20000", got)
 	}
-	a, err := rd.JobPosition(ctx, nil, w.cust, w.jobA)
+	aOwn, aExp, aCust, err := rd.JobPosition(ctx, nil, w.cust, w.jobA)
 	if err != nil {
 		t.Fatalf("job A position: %v", err)
 	}
-	if a.ExposureCents != 100000+20000 || a.OwnLimitCents == nil || *a.OwnLimitCents != 300000 || a.CustomerLimitCents != 1000000 {
-		t.Fatalf("job A position = %+v, want exposure 120000, own limit 300000, customer limit 1000000", a)
+	if aExp != 100000+20000 || aOwn == nil || *aOwn != 300000 || aCust != 1000000 {
+		t.Fatalf("job A position = %v %d %d, want exposure 120000, own limit 300000, customer limit 1000000", aOwn, aExp, aCust)
 	}
-	b, err := rd.JobPosition(ctx, nil, w.cust, w.jobB)
+	bOwn, bExp, _, err := rd.JobPosition(ctx, nil, w.cust, w.jobB)
 	if err != nil {
 		t.Fatalf("job B position: %v", err)
 	}
-	if b.ExposureCents != 70000 || b.OwnLimitCents != nil {
-		t.Fatalf("job B position = %+v, want exposure 70000 and no own limit (it reads the customer's)", b)
+	if bExp != 70000 || bOwn != nil {
+		t.Fatalf("job B position = %v %d, want exposure 70000 and no own limit (it reads the customer's)", bOwn, bExp)
 	}
 	// a job of another customer is not found, never an empty position
-	if _, err := rd.JobPosition(ctx, nil, w.cust, w.otherJob); err == nil {
+	if _, _, _, err := rd.JobPosition(ctx, nil, w.cust, w.otherJob); err == nil {
 		t.Fatal("another customer's job read as a position, want not found")
 	}
 }

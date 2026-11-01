@@ -101,21 +101,15 @@ func NewHoldAwareCreditGate(holds HoldChecker) *HoldAwareCreditGate {
 	return &HoldAwareCreditGate{holds: holds}
 }
 
-// JobCreditPosition is what the gate needs of a job: its own limit when it carries one, its own
-// exposure (its invoices and open orders), and the customer's limit it is held under.
-type JobCreditPosition struct {
-	OwnLimitCents      *int64
-	ExposureCents      int64
-	CustomerLimitCents int64
-}
-
-// ExposureSource is the one reader of exposure every credit gate shares (billing.GateExposure
-// satisfies it; billing imports this package, so the seam is declared here). tx is the caller's
-// open transaction when one rides the context, nil otherwise, so a gate consulted inside a write
-// transaction reads on the caller's connection.
+// ExposureSource is the one reader of exposure every credit gate shares (*billing.ExposureReader
+// satisfies it; billing cannot be imported here, so the seam is declared with builtin types only).
+// tx is the caller's open transaction when one rides the context, nil otherwise, so a gate
+// consulted inside a write transaction reads on the caller's connection. JobPosition answers the
+// job's OWN limit (nil when it shares the customer's), the job's own exposure and the customer's
+// limit.
 type ExposureSource interface {
 	CustomerExposure(ctx context.Context, tx pgx.Tx, customerID string) (int64, error)
-	JobPosition(ctx context.Context, tx pgx.Tx, customerID, jobID string) (JobCreditPosition, error)
+	JobPosition(ctx context.Context, tx pgx.Tx, customerID, jobID string) (ownLimit *int64, exposure, customerLimit int64, err error)
 }
 
 // WithExposure binds the exposure source. Without it the gate behaves as it did before JA-3.
@@ -232,12 +226,12 @@ func (g *HoldAwareCreditGate) Check(ctx context.Context, customerID string, orde
 		return nil
 	}
 	if jobID := saleJobFrom(ctx); jobID != "" {
-		pos, err := g.exposure.JobPosition(ctx, tx, customerID, jobID)
+		ownLimit, jobExposure, _, err := g.exposure.JobPosition(ctx, tx, customerID, jobID)
 		if err != nil {
 			return unavailable
 		}
-		if pos.OwnLimitCents != nil && pos.ExposureCents+orderTotalCents > *pos.OwnLimitCents {
-			return limitBlock(LimitScopeJob, branchID, pos.ExposureCents, orderTotalCents, *pos.OwnLimitCents)
+		if ownLimit != nil && jobExposure+orderTotalCents > *ownLimit {
+			return limitBlock(LimitScopeJob, branchID, jobExposure, orderTotalCents, *ownLimit)
 		}
 		// A job limit never raises the customer's: the customer's own limit below always applies, over
 		// the customer's whole exposure.

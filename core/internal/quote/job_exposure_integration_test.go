@@ -31,7 +31,7 @@ func exposureGatedRepo(t *testing.T, pool *pgxpool.Pool) *Repository {
 	t.Helper()
 	crepo := customer.NewRepository(pool)
 	gate := till.NewHoldAwareCreditGate(till.NewRepository(pool)).
-		WithExposure(billing.GateExposure{R: billing.NewExposureReader(pool, crepo)})
+		WithExposure(billing.NewExposureReader(pool, crepo))
 	return NewRepository(pool).WithCreditGate(gate)
 }
 
