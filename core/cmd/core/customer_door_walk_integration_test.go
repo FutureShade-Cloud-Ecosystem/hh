@@ -82,6 +82,8 @@ func walkDoors() []customerDoor {
 		{route: "GET /api/v1/ar/customers/{customerID}/payment-policy", class: doorWall, path: "/api/v1/ar/customers/%C%/payment-policy"},
 		{route: "PUT /api/v1/ar/customers/{customerID}/payment-policy", class: doorWall, path: "/api/v1/ar/customers/%C%/payment-policy", body: `{"ach_first":true,"surcharge_rate_bps":100,"min_ach_cents":1}`},
 		{route: "GET /api/v1/ar/customers/{customerID}/statement", class: doorWall, path: "/api/v1/ar/customers/%C%/statement"},
+		{route: "GET /api/v1/ar/customers/{customerID}/statement-by-job", class: doorWall, path: "/api/v1/ar/customers/%C%/statement-by-job"},
+		{route: "GET /api/v1/ar/customers/{customerID}/jobs/{jobID}/statement", class: doorWall, path: "/api/v1/ar/customers/%C%/jobs/" + walkUUID2 + "/statement"},
 		{route: "POST /api/v1/ar/holds", class: doorWall, path: "/api/v1/ar/holds", body: `{"customer_id":"%C%","reason":"walk"}`},
 		{route: "GET /api/v1/ar/credit-changes", class: doorWall, path: "/api/v1/ar/credit-changes?customer_id=%C%"},
 		{route: "POST /api/v1/ar/credit-changes", class: doorWall, path: "/api/v1/ar/credit-changes", body: `{"customer_id":"%C%","new_limit_cents":10000,"reason":"walk"}`},
