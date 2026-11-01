@@ -409,4 +409,14 @@ test("the core's refusals keep its sentence; the old press and the move refusal 
   assert.equal(refusalWords("due-release", "releasing a holdback is the Controller's action", 403), "Releasing a holdback is the Controller's action.");
   assert.equal(refusalWords("due-release", "Forbidden", 403), "Releasing a due holdback is for the Financial Controller.");
   assert.equal(refusalWords("due-release", "that release has already been reversed", 409), "That release has already been reversed.");
+  assert.equal(refusalWords("due-reverse", "Forbidden", 403), "Reversing a release is for the Financial Controller.");
+  assert.equal(
+    refusalWords("due-release", "the release this idempotency key made was reversed, so nothing stands released; release the holdback again with a new key", 409),
+    "The release this idempotency key made was reversed, so nothing stands released; press Release again to start a new release.",
+  );
+  assert.equal(
+    refusalWords("due-release", "that idempotency key already released the holdback of another job; a key names one release, use a new key", 409),
+    "That idempotency key already released the holdback of another job; press Release again to start a new release.",
+  );
+  assert.equal(refusalWords("due-release", "that idempotency key already released a holdback; use a new key", 409), "That idempotency key already released a holdback; press Release again to start a new release.");
 });

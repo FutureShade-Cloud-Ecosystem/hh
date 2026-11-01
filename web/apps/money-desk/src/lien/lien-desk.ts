@@ -512,7 +512,7 @@ export class LienDesk {
         put.push({ invoiceNo: item.invoiceNo, amount: formatMoney(answer.ok ? answer.value.restored_cents : item.amountCents) });
         continue;
       }
-      refused = refusalWords("due-release", answer.error, answer.status ?? 0);
+      refused = refusalWords("due-reverse", answer.error, answer.status ?? 0);
       break;
     }
     this.#busy = false;

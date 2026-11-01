@@ -295,11 +295,17 @@ export function jobLevelRefusedWords(message: string): boolean {
   return message.includes(JOB_LEVEL_ROUTE);
 }
 
+const NEW_RELEASE = "press Release again to start a new release";
+
 function rewritten(message: string): string {
   return message
     .replace(JOB_LEVEL_ROUTE, "from Due to release by the Financial Controller")
     .replace("and not by this job level release", "and not here")
-    .replace("cannot be unlinked from its customer job", "cannot be moved or unlinked from its customer job");
+    .replace("cannot be unlinked from its customer job", "cannot be moved or unlinked from its customer job")
+    // The core's replay refusals talk of a key the person never sees; pressing Release again starts a new release.
+    .replace("release the holdback again with a new key", NEW_RELEASE)
+    .replace("a key names one release, use a new key", NEW_RELEASE)
+    .replace("use a new key", NEW_RELEASE);
 }
 
 /**
@@ -311,6 +317,7 @@ export function refusalWords(action: string, message: string, status: number): s
   const lower = message.toLowerCase().trim();
   const generic = lower === "" || lower === "forbidden";
   if (action === "due-release" && status === 403 && generic) return "Releasing a due holdback is for the Financial Controller.";
+  if (action === "due-reverse" && status === 403 && generic) return "Reversing a release is for the Financial Controller.";
   if (status === 403 && generic) {
     return action === "release"
       ? `Releasing a holdback is for ${WHO_RELEASES}.`
