@@ -70,7 +70,7 @@ export class LandedDesk implements AreaDesk {
 
   #loadFailed(result: Failure): void {
     this.#phase = "error";
-    this.#error = refusalWords("load", result.error, result.status);
+    this.#error = refusalWords("load", result.error, result.status, result.code);
     this.#host.repaint();
   }
 
@@ -103,7 +103,7 @@ export class LandedDesk implements AreaDesk {
       this.#detail = {
         doc: doc.value,
         preview: preview.ok ? preview.value : null,
-        previewError: preview.ok ? "" : refusalWords("landed", preview.error, preview.status),
+        previewError: preview.ok ? "" : refusalWords("landed", preview.error, preview.status, preview.code),
         compare: doc.value.allocation_basis,
         po: po !== null && po.ok ? po.value : null,
       };
@@ -218,7 +218,7 @@ export class LandedDesk implements AreaDesk {
 
   #fail(result: Failure): void {
     this.#notice = "";
-    this.#error = refusalWords("landed", result.error, result.status);
+    this.#error = refusalWords("landed", result.error, result.status, result.code);
   }
 
   async #refresh(): Promise<void> {
@@ -248,7 +248,7 @@ export class LandedDesk implements AreaDesk {
     this.#detail = {
       ...this.#detail,
       preview: preview.ok ? preview.value : null,
-      previewError: preview.ok ? "" : refusalWords("landed", preview.error, preview.status),
+      previewError: preview.ok ? "" : refusalWords("landed", preview.error, preview.status, preview.code),
     };
     this.#host.repaint();
   }

@@ -10,7 +10,7 @@
 //
 // Sums shown here (the sticky bar, the sheet's total) are advisory sums of the core's own integer cents. The amount
 // charged is the core's, and the receipt shows the core's figure, flagged when it differs from the one shown.
-import { tenantPayments, type ApiClient, type Result, type TenantPayment } from "@hardscapehouse/api-client";
+import { isLostSignal, tenantPayments, type ApiClient, type Result, type TenantPayment } from "@hardscapehouse/api-client";
 
 // ---- what can be paid ----------------------------------------------------------------------------------------
 
@@ -127,6 +127,14 @@ const WAITING_WORDS = "A payment is still waiting for an answer. Check it first.
 const CHANGED_WORDS = "The amount to pay has changed since you opened this. No money moved. Check the new amount and confirm again.";
 
 const CHECK_WORDS = "This payment could not be confirmed as stopped. Check Statements, then refresh before paying again.";
+
+/**
+ * The landing words for a list that failed. Only a real lost signal says Pro is not reachable: a malformed success
+ * answered, and a refusal or server fault answered, so those return "" and the generic did-not-load line reads.
+ */
+export function unreachableWords(answer: Result<unknown>): string {
+  return !answer.ok && isLostSignal(answer) ? "Pro is not reachable right now. Try again in a moment." : "";
+}
 
 /**
  * paid; declined (402, no money moved); refused (401 and 403 at the guards, no money moved; 400 and 404 only say the

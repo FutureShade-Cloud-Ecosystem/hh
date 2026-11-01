@@ -98,7 +98,7 @@ export class CountsDesk {
 
   #fail(action: string, result: Extract<Result<unknown>, { ok: false }>): void {
     this.#notice = "";
-    this.#error = refusalWords(this.#words(action), result.error, result.status);
+    this.#error = refusalWords(this.#words(action), result.error, result.status, undefined, result.code);
   }
 
   #clearMessages(): void {

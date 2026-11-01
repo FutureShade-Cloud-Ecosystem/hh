@@ -59,7 +59,7 @@ export class IncomingDesk implements AreaDesk {
   }
 
   #fail(result: Extract<Result<unknown>, { ok: false }>): void {
-    this.#error = refusalWords("load", result.error, result.status);
+    this.#error = refusalWords("load", result.error, result.status, result.code);
   }
 
   /** Acts on a control carrying data-action. Returns true when the press was this area's. */

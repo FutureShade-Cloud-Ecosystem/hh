@@ -21,6 +21,15 @@ export type Result<T> = { ok: true; value: T } | { ok: false; error: string; sta
  */
 export const MALFORMED_SUCCESS_CODE = "malformed_success_body";
 
+/**
+ * True when a failure is a real lost signal: nothing answered (a transport failure, a timeout, an abort or a failed
+ * header provider), so there is no status and the code is not MALFORMED_SUCCESS_CODE. A malformed 2xx also has no
+ * status, but the server did answer, so it is not a lost signal. Use this, never "no status", for "could not be reached".
+ */
+export function isLostSignal(result: { ok: false; status?: number; code?: string }): boolean {
+  return result.status === undefined && result.code !== MALFORMED_SUCCESS_CODE;
+}
+
 export function ok<T>(value: T): Result<T> {
   return { ok: true, value };
 }
