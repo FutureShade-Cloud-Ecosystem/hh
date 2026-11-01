@@ -325,9 +325,13 @@ func (s *messagesSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, 
 // - acks: the caller's own acknowledgements, and the offline ack -
 
 type acksSyncStore struct {
-	repo *Repository
-	link syncLinker
+	repo  *Repository
+	link  syncLinker
+	fence roomFence
 }
+
+// WithRoomFence binds the money room fence to the acks write, as REST AckMessage's membership check carries it.
+func (s *acksSyncStore) WithRoomFence(f roomFence) *acksSyncStore { s.fence = f; return s }
 
 // NewAcksSyncStore builds the acks Store (server_wins: an ack is created
 // through the channel-bound upsert; it has no client-editable field and no
@@ -420,6 +424,15 @@ func (s *acksSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key stri
 	messageID, _ := fields["message_id"].(string)
 	method, _ := fields["method"].(string)
 	m, _ := normalizeAckMethod(method)
+	// The money room fence, before the insert so no seq is taken: a message in a room the caller's seat holds but
+	// the payment trail or branch reach refuses answers exactly as an absent message or a non-member does.
+	channelID, found, err := s.repo.syncAckChannel(ctx, messageID)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if found && !admitsRoom(ctx, s.fence, uid, channelID) {
+		return sync.RowState{}, sync.ErrRowNotFound
+	}
 	id, seq, err := s.repo.syncAckCreate(ctx, uid, messageID, m, key)
 	if err != nil {
 		// The seam's plain words, as the messages scope's create answers
