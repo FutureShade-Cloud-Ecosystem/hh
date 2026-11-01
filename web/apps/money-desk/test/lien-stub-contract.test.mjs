@@ -433,7 +433,7 @@ test("due to release answers the contract per invoice: the judgement the core gi
   // The customer's name rides every row, read with the row; the core's row declares it.
   assert.ok(a.every((r) => r.customer_name === "Summit Ridge Builders") && b.every((r) => r.customer_name === "Fieldstone Pools and Patios"));
   assert.ok(res.json.items.every((r) => typeof r.customer_name === "string" && r.customer_name !== ""));
-  assert.ok(coreSource.includes('CustomerName      string `json:"customer_name"`'), "the core's due row does not carry customer_name");
+  assert.match(coreSource, /\bCustomerName\s+string\s+`json:"customer_name"`/, "the core's due row does not carry customer_name");
   assert.equal(b[0].due, false);
   assert.equal(b[0].blocked_kind, "NOT_DUE");
   assert.equal(b[0].releasable_on, dayFrom(34));
