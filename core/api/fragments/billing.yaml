@@ -1198,6 +1198,105 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/finance-charge-waivers:
+    get:
+      operationId: billingListFinanceChargeWaivers
+      tags: [staff-billing]
+      x-addition: "W3 FC-1c: the Controller reads finance charge waivers for the screen; no ERP source route"
+      summary: List finance charge waivers
+      description: >-
+        The waivers of one branch (customers whose home branch it is or that
+        have a document at it) or of one customer, active and cleared, newest
+        first: the customer, the Controller's reason, who set it and when, and
+        who cleared it and when. At least one of branch_id and customer_id is
+        required. A branch outside the caller's reach is refused.
+      x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: customer_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The waivers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingFinanceChargeWaiverList"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/finance-jobs:
+    get:
+      operationId: billingListFinanceJobs
+      tags: [staff-billing]
+      x-addition: "W3 FC-1c: the Controller reads the scheduled finance jobs and whether each is switched on; no ERP source route"
+      summary: List the scheduled finance jobs
+      description: >-
+        The finance charge night job and the AP revaluation reversal, each with
+        whether it is enabled, its next and last run and the last run's error.
+      x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The finance jobs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingFinanceJobList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/finance-jobs/{name}:
+    put:
+      operationId: billingSetFinanceJobEnabled
+      tags: [staff-billing]
+      x-addition: "W3 FC-1c: the Controller switches a scheduled finance job on or off, recorded; no ERP source route"
+      summary: Enable or disable a scheduled finance job
+      description: >-
+        Switches one named finance job on or off. Switching on arms the job's
+        next slot when it has none or it is past, so the running worker picks
+        it up on its next tick with no restart; switching off stops it being
+        claimed. Who, the job and the flag before and after are recorded in
+        the same transaction. Any name other than a finance job is 404.
+      x-role: requireAdmin
+      x-access:
+        surfaces: [money-desk]
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingFinanceJobEnabledRequest"
+      responses:
+        "200":
+          description: The job as it now stands
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingFinanceJob"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/ar/register/reminders:
     post:
       operationId: billingSendRegisterReminders
@@ -5479,6 +5578,55 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/BillingFinanceChargeRunMonth" }
+        next_cursor: { type: [string, "null"] }
+
+    BillingFinanceJobEnabledRequest:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean, description: "True to switch the job on, false to switch it off" }
+
+    BillingFinanceJob:
+      type: object
+      required: [name, enabled]
+      properties:
+        name: { type: string, description: "The schedule's name" }
+        enabled: { type: boolean }
+        next_run_at: { type: string, format: date-time }
+        last_run_at: { type: string, format: date-time }
+        last_status: { type: string }
+        last_error: { type: string }
+
+    BillingFinanceJobList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BillingFinanceJob" }
+        next_cursor: { type: [string, "null"] }
+
+    BillingFinanceChargeWaiverListItem:
+      type: object
+      required: [customer_id, customer_name, account_no, reason, active, waived_at]
+      properties:
+        customer_id: { type: string, format: uuid }
+        customer_name: { type: string }
+        account_no: { type: string }
+        reason: { type: string }
+        active: { type: boolean, description: "True while the waiver holds the customer out of the runs" }
+        waived_by: { type: string, format: uuid }
+        waived_at: { type: string, format: date-time }
+        cleared_by: { type: string, format: uuid }
+        cleared_at: { type: string, format: date-time }
+
+    BillingFinanceChargeWaiverList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BillingFinanceChargeWaiverListItem" }
         next_cursor: { type: [string, "null"] }
 
     BillingFinanceChargeWaiverRequest:

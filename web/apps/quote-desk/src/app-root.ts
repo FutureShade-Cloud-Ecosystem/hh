@@ -29,7 +29,7 @@ import {
 } from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
-import { bootCustody, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+import { bootCustody, entryAfter, entryUnavailable, reasonForStatus, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import "@hardscapehouse/pos-kit/src/branch-chooser.js";
@@ -501,7 +501,7 @@ export class QuoteDeskApp extends HHElement {
       void this.#signOut();
       return;
     }
-    this.#flowsState = { kind: "unavailable", status: null };
+    this.#flowsState = entryAfter(outcome).flows;
     if (outcome.kind === "front-door") this.#custody.toFrontDoor();
     this.requestUpdate();
   }
@@ -512,12 +512,13 @@ export class QuoteDeskApp extends HHElement {
    * unavailable entry and the custody tries the start again on its backoff.
    */
   async #consoleStartFailed(status: number | undefined): Promise<void> {
-    this.#flowsState = { kind: "unavailable", status: null };
     if (status === 401 || status === 403) {
+      this.#flowsState = entryUnavailable().flows;
       await this.#custody.leave();
       this.requestUpdate();
       return;
     }
+    this.#flowsState = { kind: "offline", reason: reasonForStatus(status) };
     this.requestUpdate();
     this.#custody.retry("quote-desk", (outcome) => this.#onRecovered(outcome));
   }
@@ -799,7 +800,7 @@ export class QuoteDeskApp extends HHElement {
                 data-branches=${JSON.stringify(this.#branchChoices.map((row) => ({ id: row.id, name: row.name })))}
                 action-label="Open the Quote Desk"
               ></hh-branch-chooser>`
-            : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message })}
+            : renderEntry({ flows: this.#flowsState, busy: this.#busy, message: this.#message }, { app: "Quote Desk" })}
       </main>
       <!-- The feedback widget (Feature Polish): the shared panel, opened by
            the band's Feedback button (trigger external: no floating pill). -->

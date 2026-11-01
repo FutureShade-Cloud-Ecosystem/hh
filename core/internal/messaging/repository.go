@@ -2929,18 +2929,23 @@ func (r *Repository) syncAckExists(ctx context.Context, ackID string) (bool, err
 	return present, nil
 }
 
-// syncAckChannel names the channel a message stands in, for the sync ack's room fence (UX-129); found is false
-// when the message is absent.
-func (r *Repository) syncAckChannel(ctx context.Context, messageID string) (string, bool, error) {
+// syncAckChannel names the channel a message stands in and whether the caller holds a seat in it, in one query, for
+// the sync ack's room fence (UX-129, UX-130): the fence runs only for a seated caller. found is false when the
+// message is absent.
+func (r *Repository) syncAckChannel(ctx context.Context, messageID, userID string) (string, bool, bool, error) {
 	var ch string
-	err := r.pool.QueryRow(ctx, `SELECT channel_id::text FROM msg_messages WHERE id = $1`, messageID).Scan(&ch)
+	var seated bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT m.channel_id::text,
+		       EXISTS (SELECT 1 FROM msg_members mem WHERE mem.channel_id = m.channel_id AND mem.user_id = $2)
+		FROM msg_messages m WHERE m.id = $1`, messageID, userID).Scan(&ch, &seated)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
+		return "", false, false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("sync ack channel: %w", err)
+		return "", false, false, fmt.Errorf("sync ack channel: %w", err)
 	}
-	return ch, true, nil
+	return ch, seated, true, nil
 }
 
 // syncAckCreate records the caller's acknowledgement of one message through

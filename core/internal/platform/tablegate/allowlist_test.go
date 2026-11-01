@@ -136,6 +136,16 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "billing",
+		file:   "core/internal/billing/finance_charge_route.go",
+		tables: []string{"customers"},
+		// Wave 3 FC-1c: the Controller's waiver read lists each waiver with its
+		// customer's name, account number and home branch, and holds the list to
+		// the caller's branch reach by that home branch (or a document at the
+		// branch). The waivers and invoices are billing's own.
+		reason: "the finance charge waiver list reads the waived customer's name, account number and home branch for the screen and the branch reach; read only, the waiver rows and invoices are billing's own tables",
+	},
+	{
+		module: "billing",
 		file:   "core/internal/billing/ar_landing_store.go",
 		tables: []string{"credit_holds", "customer_contacts", "customers"},
 		// the file's own header: every read here is a projection for the

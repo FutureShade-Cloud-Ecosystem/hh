@@ -32,7 +32,7 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	// 750: the base's 695 staff operations, the wave 3 train's own doors (the two write off doors,
+	// 753: the base's 695 staff operations, the wave 3 train's own doors (the two write off doors,
 	// taxGetWorksheet, the four vendor credit doors, the five payment run doors, landedCostSettle,
 	// JA-1's five job doors and W3-CC1's five credit change request and approval doors:
 	// billingListCreditChanges, billingRequestCreditChange, billingGetCreditChange,
@@ -47,10 +47,11 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 	// (purchasingRunAPRevaluation, purchasingReverseAPRevaluation and purchasingListAPRevaluations), and RT-3's two
 	// holdback release doors (billingListHoldbackDueToRelease and billingReleaseHoldback), and the RT-3 fix round's three
 	// doors (billingReverseHoldbackRelease, lienRecordPreservedLien and lienDischargeLien), and fix round 2's lienSetPreservationDates, and FC-1b's four finance charge doors
-	// (billingRunFinanceCharges, billingListFinanceCharges, billingSetFinanceChargeWaiver and billingClearFinanceChargeWaiver). Both sides'
+	// (billingRunFinanceCharges, billingListFinanceCharges, billingSetFinanceChargeWaiver and billingClearFinanceChargeWaiver), and FC-1c's two finance job doors
+	// (billingListFinanceJobs and billingSetFinanceJobEnabled) and its waiver read (billingListFinanceChargeWaivers). Both sides'
 	// routes are kept; the count is what merge.mjs reports on the assembled document.
-	if staff != 750 {
-		t.Fatalf("census staff operations: %d, want the document's 750", staff)
+	if staff != 753 {
+		t.Fatalf("census staff operations: %d, want the document's 753", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }

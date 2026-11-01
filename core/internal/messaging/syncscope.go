@@ -405,6 +405,10 @@ func (s *acksSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeFilte
 func (s *acksSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
 	if messageID, _ := fields["message_id"].(string); messageID == "" {
 		return syncRefused(fmt.Errorf("message_id is required"))
+	} else if !validChannelID(messageID) {
+		// The canonical 36 character form only, the prefs store's check and the engine's own: uuid.Validate alone
+		// lets urn:uuid: through, which Postgres refuses and which would then fail the whole push.
+		return syncRefused(fmt.Errorf("message_id is not a valid id"))
 	}
 	method, _ := fields["method"].(string)
 	if _, ok := normalizeAckMethod(method); !ok {
@@ -426,11 +430,17 @@ func (s *acksSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key stri
 	m, _ := normalizeAckMethod(method)
 	// The money room fence, before the insert so no seq is taken: a message in a room the caller's seat holds but
 	// the payment trail or branch reach refuses answers exactly as an absent message or a non-member does.
-	channelID, found, err := s.repo.syncAckChannel(ctx, messageID)
+	// The seat is read with the channel, as REST's assertMember reads it first, and the fence runs only for a seated
+	// caller: a missing message, a non-member and a fence-refused member answer alike, and the fence's cost never
+	// tells a non-member a money room message from a missing one (UX-130).
+	channelID, seated, found, err := s.repo.syncAckChannel(ctx, messageID, uid)
 	if err != nil {
 		return sync.RowState{}, err
 	}
-	if found && !admitsRoom(ctx, s.fence, uid, channelID) {
+	if !found || !seated {
+		return sync.RowState{}, sync.ErrRowNotFound
+	}
+	if !admitsRoom(ctx, s.fence, uid, channelID) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
 	id, seq, err := s.repo.syncAckCreate(ctx, uid, messageID, m, key)

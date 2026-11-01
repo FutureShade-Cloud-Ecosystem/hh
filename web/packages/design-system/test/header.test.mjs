@@ -105,6 +105,12 @@ test('the centred word defaults to Pick a role and takes the role label only whe
   );
 });
 
+test('an explicit word replaces Pick a role while nobody is signed in, and never replaces a signed-in role label', () => {
+  assert.equal(word(renderKit(HosAppHeader, { word: 'Sign in' })), 'Sign in');
+  assert.equal(word(renderKit(HosAppHeader, { word: '   ' })), 'Pick a role', 'a blank word keeps the default');
+  assert.equal(word(renderKit(HosAppHeader, { signedIn: true, roleLabel: 'Sales', word: 'Sign in' })), 'Sales');
+});
+
 // ---- the dealer and surface inputs ----
 
 test('a blank or spaces only dealer name draws no lockup rather than a blank one', () => {
