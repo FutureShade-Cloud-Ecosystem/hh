@@ -97,7 +97,7 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 		WithZone(newDealerZone(pool)).
 		WithLineResolver(pricingSvc).
 		WithTenderTaker(tillSvc).
-		WithCreditGate(till.NewHoldAwareCreditGate(tillRepo)).
+		WithCreditGate(newCreditGate(pool, tillRepo)).
 		WithSignatureProvider(pos.NewTypedNameSignatureProvider(payVault)).
 		WithTaxAssessor(posTaxAdapter{svc: taxSvc}).
 		WithStock(posStockAdapter{svc: inventorySvc}).

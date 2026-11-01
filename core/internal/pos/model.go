@@ -430,7 +430,15 @@ func clientErr(status int, format string, a ...any) error {
 }
 
 // ErrCreditBlocked aborts an ACCOUNT sale that fails the credit gate.
-type ErrCreditBlocked struct{ Policy string }
+type ErrCreditBlocked struct {
+	Policy string
+	// LimitScope names which limit the sale broke, "customer" or "job" (JA-3), empty for a refusal
+	// that is not a limit (a hold, no credit at all).
+	LimitScope string
+	// Detail is the refusal in words with the figures; empty when the caller may not read the
+	// account position.
+	Detail string
+}
 
 func (e ErrCreditBlocked) Error() string { return fmt.Sprintf("pos: credit blocked (%s)", e.Policy) }
 

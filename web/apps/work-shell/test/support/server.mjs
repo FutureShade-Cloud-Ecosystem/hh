@@ -98,8 +98,9 @@ function json(response, status, body) {
 
 /**
  * Serve `dist` on a free loopback port. Resolves { url, close }.
- * With `holdApi`, every /api/ call other than the demo mint is held: no answer
- * is ever sent, like a core that has not replied yet. A real desk app that is
+ * With `holdApi`, every /api/ call other than the demo mint and the public
+ * tenant config is held: no answer is ever sent, like a core that has not
+ * replied yet. A real desk app that is
  * hosted with no core behind it ends its own walk on an answer that fails
  * (the Counter Till signs out and goes to the front door when its branch
  * cannot resolve), so the legs that load the real bundles hold the request
@@ -140,6 +141,19 @@ export async function startServer(dist, { holdApi = false } = {}) {
     // The image writes {"mode":"demo"} at /config.json; the front door reads it before it draws a role card.
     if (path === "/config.json") {
       json(response, 200, { mode: "demo" });
+      return;
+    }
+    // The demo core's public tenant config (core/internal/demo/dealer_config.go): the bands name the dealer from it,
+    // so a held read would leave every real bundle's lockup blank.
+    if (path === "/api/v1/tenant/config" && request.method === "GET") {
+      json(response, 200, {
+        id: "gable",
+        dealer_name: "Gable Landscape Supply",
+        logo_url: "",
+        primary_color: "#0B2338",
+        support_email: "support@hh-demo.invalid",
+        support_phone: "(619) 555-0142",
+      });
       return;
     }
     if (path.startsWith("/api/")) {
