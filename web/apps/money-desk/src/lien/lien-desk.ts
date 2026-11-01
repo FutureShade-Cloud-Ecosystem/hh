@@ -161,6 +161,14 @@ export class LienDesk {
     this.#due = answer.ok
       ? { phase: "ready", groups: groupDue(answer.value.items ?? []), totals: answer.value.branches ?? [], error: "" }
       : { phase: "error", groups: [], totals: [], error: refusalWords("load", answer.error, answer.status ?? 0) };
+    // A good read is the truth: a key kept by an earlier failed read for a job that is no longer due ends here, so
+    // the job's next release in this tab is a new press and never a replay of the old one. A failed read changes nothing.
+    if (answer.ok) {
+      const keys = this.#dueKeys();
+      for (const id of keys.ids()) {
+        if (!this.#due.groups.some((g) => g.customerJobId === id && g.due)) keys.delete(id);
+      }
+    }
   }
 
   #setBanner(status: { state: string; banner_text: string; is_draft: boolean } | null): void {

@@ -173,3 +173,16 @@ test("a key is a uuid even where randomUUID is missing (a plain http origin), fr
     Object.defineProperty(globalThis, "crypto", { value: real, configurable: true });
   }
 });
+
+test("ids lists the entries that hold a key, and none once each is deleted", async () => {
+  const store = new Map();
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => void store.set(k, v), removeItem: (k) => void store.delete(k) };
+  const keys = new HeldKeys("user-ids", storage, "ids.");
+  assert.deepEqual(keys.ids(), []);
+  keys.set("a", "k1");
+  keys.set("b", "k2");
+  assert.deepEqual(keys.ids().sort(), ["a", "b"]);
+  keys.delete("a");
+  keys.delete("b");
+  assert.deepEqual(keys.ids(), []);
+});
