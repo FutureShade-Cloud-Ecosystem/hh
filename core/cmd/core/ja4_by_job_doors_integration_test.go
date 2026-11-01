@@ -664,3 +664,48 @@ func TestIntegration_JA4Doors_CreditApplyAcrossJobs(t *testing.T) {
 	ja4Want(t, "after the application is reversed", w.agree(t, "after the application is reversed", soon), w, 26000, 20000, 10000)
 	w.tie(t, "after the application is reversed", soon)
 }
+
+// TestIntegration_JA4Doors_UnknownMemoReadsFixedWords (P061 fix round 2, P3-1): a ledger row that no writer
+// this statement knows wrote (an unknown memo, in every transaction type, on a document of job A) reads the
+// fixed words of its type on the job's line, never the memo. A new or reworded writer is safe by default.
+func TestIntegration_JA4Doors_UnknownMemoReadsFixedWords(t *testing.T) {
+	w := ja4Plant(t)
+	ctx := context.Background()
+	for _, txn := range []struct {
+		typ   string
+		cents int64
+	}{{"ADJUSTMENT", -100}, {"CREDIT_MEMO", -200}, {"WRITE_OFF", -300}, {"NSF", 400}, {"PAYMENT", -500}, {"INVOICE", 600}} {
+		ja4Exec(t, w.pool, "plant an unknown "+txn.typ+" row", `
+INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type,
+                                   source_ref_id, branch_id, memo, occurred_at)
+VALUES ($1::uuid, $2, $3, 0, 'invoice', $4::uuid, $5::uuid, $6, now() - interval '1 hour')`,
+			w.cust, txn.typ, txn.cents, w.invA, trentonBranchID, "a future writer says: "+ja4Reason)
+	}
+	lines, err := w.bill.StatementLinesByJob(ctx, w.cust, time.Now().Add(time.Hour), billing.AllBranches)
+	if err != nil {
+		t.Fatalf("StatementLinesByJob: %v", err)
+	}
+	jobLinesReadOnlyTheirOwn(t, "unknown memo", lines, w.invoiceNumbers(t))
+	want := map[int64]string{
+		-100: "Adjustment", -200: "Credit memo", -300: "Write-off", 400: "Returned payment", -500: "Payment received, thank you",
+	}
+	seen := 0
+	for _, ln := range lines {
+		if ln.JobID != w.jobA {
+			continue
+		}
+		cents := ln.ChargeCents - ln.CreditCents
+		if w8, ok := want[cents]; ok {
+			seen++
+			if !strings.HasPrefix(ln.Description, w8) || strings.Contains(ln.Description, "future writer") {
+				t.Errorf("job A line of %d reads %q; want the fixed words %q", cents, ln.Description, w8)
+			}
+		}
+		if cents == 600 && strings.Contains(ln.Description, "future writer") {
+			t.Errorf("job A's unknown INVOICE row reads %q; want the invoice number", ln.Description)
+		}
+	}
+	if seen != len(want) {
+		t.Errorf("found %d of the %d planted lines on job A: %+v", seen, len(want), lines)
+	}
+}

@@ -736,6 +736,13 @@ func (r *Repository) RecordPaylinkDelivery(ctx context.Context, row PaylinkDeliv
 // and the invoice it reverses (the same job's) without the reason. Account level lines keep the ledger
 // words, as the plain statement does.
 //
+// The job's lines are safe by default (P061 fix round 2): every ledger row on a job reads the fixed words
+// of its transaction type ("Adjustment", "Credit memo <no>", "Write-off", "Returned payment", "Payment
+// received, thank you", the invoice's own number), and only a memo this list names passes: the statement's
+// own synthesized lines (no ledger source), the discount give back words, the credit words above, a credit
+// memo's own number with the invoice it reverses, and the supplier deposit close. A new writer, or a
+// reworded one, reads as fixed words and never leaks a clerk's text.
+//
 // Each act reads as one line per job, dated at the act's first ledger row, and the act's ledger sum
 // less its shares is left at account level (the unapplied part).
 //
@@ -796,12 +803,25 @@ const statementByJobTail = `
 		), parts AS (
 			SELECT a.occurred_at, a.created_at, a.txn_type, a.amount_cents, a.invoice_no,
 			       CASE WHEN a.job_id IS NULL THEN a.memo
-			            WHEN a.src_type = 'invoice' AND a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit memo applied: %' THEN 'Credit memo applied'
-			            WHEN a.src_type = 'invoice' AND a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit applied to %' THEN 'Credit applied'
-			            WHEN a.src_type = 'invoice' AND a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit application reversed: %' THEN 'Credit application reversed'
-			            WHEN a.src_type = 'invoice' AND a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit memo restored: %' THEN 'Credit memo restored'
-			            WHEN a.src_type = 'invoice' AND a.txn_type = 'CREDIT_MEMO' THEN split_part(a.memo, ' (', 1)
-			            ELSE a.memo END AS memo,
+			            WHEN a.src_type IS NULL THEN a.memo
+			            WHEN a.memo IN ('voided receipt: early payment discount given back',
+			                            'reversal: early payment discount given back',
+			                            'NSF reversal: early payment discount given back') THEN a.memo
+			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit memo applied: %' THEN 'Credit memo applied'
+			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit applied to %' THEN 'Credit applied'
+			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit application reversed: %' THEN 'Credit application reversed'
+			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit memo restored: %' THEN 'Credit memo restored'
+			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'Supplier deposit % closed on the order''s cancel' THEN a.memo
+			            WHEN a.txn_type = 'ADJUSTMENT' THEN 'Adjustment'
+			            WHEN a.txn_type = 'CREDIT_MEMO' AND a.memo = 'Credit memo ' || a.invoice_no THEN a.memo
+			            WHEN a.txn_type = 'CREDIT_MEMO' AND (a.memo = a.invoice_no OR a.memo LIKE a.invoice_no || ', reverses %')
+			                 THEN split_part(a.memo, ' (', 1)
+			            WHEN a.txn_type = 'CREDIT_MEMO' THEN 'Credit memo ' || a.invoice_no
+			            WHEN a.txn_type = 'INVOICE' THEN a.invoice_no
+			            WHEN a.txn_type = 'WRITE_OFF' THEN 'Write-off'
+			            WHEN a.txn_type = 'NSF' THEN 'Returned payment'
+			            WHEN a.txn_type = 'PAYMENT' THEN 'Payment received, thank you'
+			            ELSE 'Adjustment' END AS memo,
 			       a.job_id
 			  FROM activity a
 			 WHERE NOT EXISTS (SELECT 1 FROM paytxn p WHERE p.src_id = a.src_id)
