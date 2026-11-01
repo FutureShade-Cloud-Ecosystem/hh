@@ -114,7 +114,8 @@ const statementActivityCTE = `WITH activity AS (
 			       COALESCE(i.invoice_no::text, '') AS invoice_no, COALESCE(t.memo,'') AS memo,
 			       CASE WHEN t.source_type = 'invoice' THEN i.job_id END AS job_id,
 			       t.source_type AS src_type, t.source_ref_id AS src_ref, t.id AS src_id,
-			       COALESCE(ri.invoice_no::text, '') AS reverses_no
+			       COALESCE(ri.invoice_no::text, '') AS reverses_no,
+			       COALESCE(i.order_id::text, '') AS own_order_id
 			  FROM customer_transactions t
 			  LEFT JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
 			  LEFT JOIN invoices ri ON ri.id = i.reverses_invoice_id AND ri.customer_id = t.customer_id
@@ -127,7 +128,7 @@ const statementActivityCTE = `WITH activity AS (
 			       i.total_cents AS amount_cents,
 			       i.invoice_no::text AS invoice_no,
 			       i.invoice_no::text AS memo,
-			       i.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no
+			       i.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no, '' AS own_order_id
 			  FROM invoices i
 			 WHERE i.customer_id = $1::uuid
 			   AND i.status IN ('FINALIZED', 'PARTIALLY_PAID')
@@ -149,7 +150,7 @@ const statementActivityCTE = `WITH activity AS (
 			-- today: a credit, a write off or a release taken after the date never rewrites the statement.
 			SELECT h.occurred_at, h.created_at, 'HOLDBACK' AS txn_type, -h.held AS amount_cents,
 			       h.invoice_no, 'Holdback withheld on ' || h.invoice_no AS memo,
-			       h.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no
+			       h.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no, '' AS own_order_id
 			  FROM (
 			    SELECT (i.issue_date::timestamp AT TIME ZONE $4::text) AS occurred_at,
 			           i.created_at + interval '1 microsecond' AS created_at,
@@ -171,7 +172,7 @@ const statementActivityCTE = `WITH activity AS (
 			-- the running balance and the closing figure are the aging's, unchanged.
 			SELECT r.occurred_at, r.created_at, 'HOLDBACK_RELEASED' AS txn_type, 0::bigint AS amount_cents,
 			       r.invoice_no, r.invoice_no || ' (holdback released ' || to_char(r.rel_on, 'YYYY-MM-DD') || ')' AS memo,
-			       r.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no
+			       r.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no, '' AS own_order_id
 			  FROM (
 			    SELECT (invoice_released_on(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond')::timestamp AT TIME ZONE $4::text) AS occurred_at,
 			           i.created_at + interval '2 microsecond' AS created_at,
@@ -209,7 +210,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 		return nil, err
 	}
 	rows, err := r.pool.Query(ctx, statementActivityCTE+`
-		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, COALESCE(src_type, '') AS source_type, reverses_no
+		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, COALESCE(src_type, '') AS source_type, reverses_no, own_order_id
 		  FROM activity
 		 ORDER BY occurred_at, created_at`, customerID, houseClockIn(zone, asOf), reach.SQLArg(), zone.Name())
 	if err != nil {
@@ -219,6 +220,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 
 	var out []StatementLine
 	var running int64
+	orderNos := map[string]string{}
 	for rows.Next() {
 		var (
 			at         time.Time
@@ -228,11 +230,18 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			memo       string
 			srcType    string
 			reversesNo string
+			ownOrderID string
 		)
-		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &srcType, &reversesNo); err != nil {
+		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &srcType, &reversesNo, &ownOrderID); err != nil {
 			return nil, fmt.Errorf("billing: scan statement line: %w", err)
 		}
-		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: statementDescription(txnType, srcType, memo, invNo, reversesNo)}
+		ownOrderNo := ""
+		if ownOrderID != "" && (orderWholeMemoRe.MatchString(memo) || orderProgressMemoRe.MatchString(memo)) {
+			if ownOrderNo, err = r.orderNoByID(ctx, ownOrderID, orderNos); err != nil {
+				return nil, fmt.Errorf("billing: statement lines: %w", err)
+			}
+		}
+		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: statementDescription(txnType, srcType, memo, invNo, reversesNo, ownOrderNo)}
 		// The subledger's sign convention: a charge raises AR (positive), a payment lowers it
 		// (negative). The statement shows both as positive numbers in their own column, which is what
 		// a reader expects, so the sign is translated here rather than shown raw.
@@ -265,15 +274,43 @@ const stmtDocNo = `#?(?:INV|CM)-\d+`
 // stmtOrderNo is an order number: the legacy '#SO-n' or the branch coded '#SO-TRT-n' (migration 0087).
 const stmtOrderNo = `#?SO-(?:[A-Z0-9]+-)?\d+`
 
+// OrderNumbers is the ORDER seam the plain statement reads the invoice's own order number through
+// (0.64 N1). The invoice writer's two system memos for an order carry the order's number in a slot a
+// clerk's typed memo could imitate, so the statement accepts that shape only when the number in it is
+// the invoiced order's own, read here by id. Declared in billing and satisfied by *order.Repository at
+// the composition root, so billing never imports internal/order and the statement never joins the
+// order module's tables.
+type OrderNumbers interface {
+	OrderNoByID(ctx context.Context, orderID string) (string, error)
+}
+
+// WithOrderNumbers binds the order number seam. Unbound, an order shaped memo reads fixed words: the
+// fail safe side.
+func (r *Repository) WithOrderNumbers(src OrderNumbers) *Repository { r.orderNos = src; return r }
+
+// orderNoByID resolves one order's number through the seam, once per order per read (the cache is the
+// caller's). Unwired, it answers "" and the order shapes read fixed words.
+func (r *Repository) orderNoByID(ctx context.Context, orderID string, seen map[string]string) (string, error) {
+	if no, ok := seen[orderID]; ok {
+		return no, nil
+	}
+	no := ""
+	if r.orderNos != nil {
+		var err error
+		if no, err = r.orderNos.OrderNoByID(ctx, orderID); err != nil {
+			return "", fmt.Errorf("billing: the invoice's own order number: %w", err)
+		}
+	}
+	seen[orderID] = no
+	return no, nil
+}
+
 var (
 	// safeMemoShapes are memos that carry only the account's own document numbers and fixed words.
 	safeMemoShapes = []*regexp.Regexp{
 		regexp.MustCompile(`^NSF fee$`),
 		regexp.MustCompile(`^NSF fee payment$`),
 		regexp.MustCompile(`^Supplier deposit ` + stmtDocNo + ` (closed|credited back) on the order's cancel$`),
-		// The invoice writer's own system memos for an order (never the clerk's `#INV-n, <memo>` shape).
-		regexp.MustCompile(`^` + stmtDocNo + `, order ` + stmtOrderNo + `$`),
-		regexp.MustCompile(`^` + stmtDocNo + `, progress invoice for order ` + stmtOrderNo + ` \(\d+ shipment group\(s\)\)$`),
 		regexp.MustCompile(`^(voided receipt|reversal|NSF reversal): early payment discount given back$`),
 		regexp.MustCompile(`^early payment discount \(\d+\)$`),
 		regexp.MustCompile(`^overpaid receipt left on account \(\d+\)$`),
@@ -282,6 +319,11 @@ var (
 		regexp.MustCompile(`^Credit memo #?CM-\d+$`),
 		regexp.MustCompile(`^finance charge for [A-Za-z]+ \d{4}$`),
 	}
+	// The invoice writer's own system memos for an order (never the clerk's `#INV-n, <memo>` shape),
+	// with the memo's order number captured: statementDescription accepts one only when that number is
+	// the invoiced order's own (0.64 N1), never a token typed into the slot.
+	orderWholeMemoRe    = regexp.MustCompile(`^` + stmtDocNo + `, order (` + stmtOrderNo + `)$`)
+	orderProgressMemoRe = regexp.MustCompile(`^` + stmtDocNo + `, progress invoice for order (` + stmtOrderNo + `) \(\d+ shipment group\(s\)\)$`)
 )
 
 // statementKnownWords are the undo and credit writes whose memo is a fixed prefix plus the clerk's reason,
@@ -325,8 +367,11 @@ func jobLineDescription(txnType, memo string) string {
 
 // statementDescription turns a subledger row into a line a customer can read without a glossary. Nothing a
 // clerk typed and no internal id reaches it unless the memo is an allow listed shape or is the document's own
-// number.
-func statementDescription(txnType, sourceType, memo, docNo, reversesNo string) string {
+// number. ownOrderNo is the row's own invoice's order's number, resolved by the caller through the order
+// module's seam ("" when the row has no order or the seam is unwired): the invoice writer's two system
+// order memos pass only when the number in the memo is that number, so a crafted clerk memo in the same
+// shape, or any other token in the slot, reads fixed words.
+func statementDescription(txnType, sourceType, memo, docNo, reversesNo, ownOrderNo string) string {
 	if memo != "" && memo == docNo {
 		return memo
 	}
@@ -334,6 +379,12 @@ func statementDescription(txnType, sourceType, memo, docNo, reversesNo string) s
 		if re.MatchString(memo) {
 			return memo
 		}
+	}
+	if m := orderWholeMemoRe.FindStringSubmatch(memo); m != nil && m[1] == ownOrderNo {
+		return memo
+	}
+	if m := orderProgressMemoRe.FindStringSubmatch(memo); m != nil && m[1] == ownOrderNo {
+		return memo
 	}
 	// The known prefixes run before the credit memo branch: a counter return credit applied or reversed copies
 	// its CREDIT_MEMO type onto the offsetting row, and that row says what happened, not "Credit memo". The
@@ -942,19 +993,19 @@ const statementByJobTail = `
 			            WHEN a.txn_type = 'NSF' THEN 'Returned payment'
 			            WHEN a.txn_type = 'PAYMENT' THEN 'Payment received, thank you'
 			            ELSE 'Adjustment' END AS memo,
-			       a.job_id, COALESCE(a.src_type, '') AS src_type, a.reverses_no
-			  FROM activity a
-			 WHERE NOT EXISTS (SELECT 1 FROM paytxn p WHERE p.src_id = a.src_id)
-			UNION ALL
-			SELECT ac.occurred_at, ac.created_at, ac.txn_type, s.share, '', ac.memo, s.job_id, ac.act_type, ''
-			  FROM acts ac JOIN shares s ON s.act_type = ac.act_type AND s.src_ref = ac.src_ref
-			UNION ALL
-			SELECT l.occurred_at, l.created_at, l.txn_type, l.amount_cents, '', l.memo, NULL::uuid, l.act_type, ''
-			  FROM leftover l WHERE l.amount_cents <> 0
-		)
-		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, COALESCE(job_id::text, ''), src_type, reverses_no
-		  FROM parts
-		 ORDER BY COALESCE(job_id::text, ''), occurred_at, created_at`
+		       a.job_id, COALESCE(a.src_type, '') AS src_type, a.reverses_no, a.own_order_id
+		  FROM activity a
+		 WHERE NOT EXISTS (SELECT 1 FROM paytxn p WHERE p.src_id = a.src_id)
+		UNION ALL
+		SELECT ac.occurred_at, ac.created_at, ac.txn_type, s.share, '', ac.memo, s.job_id, ac.act_type, '', ''
+		  FROM acts ac JOIN shares s ON s.act_type = ac.act_type AND s.src_ref = ac.src_ref
+		UNION ALL
+		SELECT l.occurred_at, l.created_at, l.txn_type, l.amount_cents, '', l.memo, NULL::uuid, l.act_type, '', ''
+		  FROM leftover l WHERE l.amount_cents <> 0
+	)
+	SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, COALESCE(job_id::text, ''), src_type, reverses_no, own_order_id
+	  FROM parts
+	 ORDER BY COALESCE(job_id::text, ''), occurred_at, created_at`
 
 // StatementLinesByJob is StatementLines with each line's job (JA-4): the same activity, the same
 // cut off and branch reach, and a receipt applied across jobs split by its allocations, the part of
@@ -978,6 +1029,7 @@ func (r *Repository) StatementLinesByJob(ctx context.Context, customerID string,
 	var out []StatementLine
 	var running int64
 	var cur string
+	orderNos := map[string]string{}
 	for rows.Next() {
 		var (
 			at      time.Time
@@ -988,8 +1040,9 @@ func (r *Repository) StatementLinesByJob(ctx context.Context, customerID string,
 			jobID   string
 			srcType string
 			revNo   string
+			ownOrd  string
 		)
-		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &jobID, &srcType, &revNo); err != nil {
+		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &jobID, &srcType, &revNo, &ownOrd); err != nil {
 			return nil, fmt.Errorf("billing: scan statement line by job: %w", err)
 		}
 		if len(out) == 0 || jobID != cur {
@@ -998,7 +1051,13 @@ func (r *Repository) StatementLinesByJob(ctx context.Context, customerID string,
 		desc := jobLineDescription(txnType, memo)
 		if jobID == "" {
 			// Account level lines read the plain statement's words, never the raw ledger memo.
-			desc = statementDescription(txnType, srcType, memo, invNo, revNo)
+			ownOrderNo := ""
+			if ownOrd != "" && (orderWholeMemoRe.MatchString(memo) || orderProgressMemoRe.MatchString(memo)) {
+				if ownOrderNo, err = r.orderNoByID(ctx, ownOrd, orderNos); err != nil {
+					return nil, fmt.Errorf("billing: statement lines by job: %w", err)
+				}
+			}
+			desc = statementDescription(txnType, srcType, memo, invNo, revNo, ownOrderNo)
 		}
 		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: desc, JobID: jobID}
 		if cents >= 0 {

@@ -154,6 +154,21 @@ UPDATE shipment_groups
 
 // - the reads -
 
+// OrderNoByID answers an order's number ('#SO-TRT-1041') by its id, the read the plain statement's
+// own order check makes through billing's OrderNumbers seam (0.64 N1): the statement accepts the
+// invoice writer's order shaped memo only when the number in it is the invoiced order's own. Read
+// only, by id, the same column orderBillingHeader reads.
+func (r *Repository) OrderNoByID(ctx context.Context, orderID string) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var no string
+	if err := r.pool.QueryRow(ctx, `SELECT order_no::text FROM orders WHERE id = $1::uuid`, orderID).Scan(&no); err != nil {
+		return "", fmt.Errorf("order: order number for %s: %w", orderID, err)
+	}
+	return no, nil
+}
+
 // invoiceQuerier is what the invoice facts are read through: the pool, or a caller's transaction
 // (QD-5), so an order written a moment ago in that transaction can be read before it commits.
 type invoiceQuerier interface {

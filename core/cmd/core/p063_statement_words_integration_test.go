@@ -19,6 +19,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	staffcontext "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
@@ -265,6 +266,59 @@ func (w *p063World) memo(t *testing.T, invoiceID string, cents int64, key string
 	return res.CreditMemoID
 }
 
+// p064Order plants one CONFIRMED order for the world's customer on the Trenton branch, its number
+// minted by the house's own branch numbering (next_order_no, migration 0087, the form the writer's
+// order memos carry), with one line of two units at 2000, fully fulfilled. It answers the order's id
+// and number; p064DropOrder deletes what this planted.
+func (w *p063World) p064Order(t *testing.T) (id, no string) {
+	t.Helper()
+	if err := w.pool.QueryRow(context.Background(), `
+INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
+VALUES (next_order_no($2::uuid), $1::uuid, $2::uuid, 'CONFIRMED', 'PICKUP', 4000, 4000)
+RETURNING id::text, order_no::text`, w.cust, trentonBranchID).Scan(&id, &no); err != nil {
+		t.Fatalf("seed the order: %v", err)
+	}
+	if _, err := w.pool.Exec(context.Background(), `
+INSERT INTO order_lines (order_id, line_no, description, qty_entered, uom_entered, qty_base,
+                         unit_price_cents, price_uom, line_total_cents, fulfilled_base)
+VALUES ($1::uuid, 1, 'P064 order line', 2, 'EA', 2, 2000, 'EA', 4000, 2)`, id); err != nil {
+		t.Fatalf("seed the order line: %v", err)
+	}
+	return id, no
+}
+
+// p064DropOrder deletes one planted order, its lines and shipment groups, and the outbox events the
+// order's cancel wrote. The caller deletes the order's invoices first (invoices.order_id would only be
+// set null, but the outbox events carry both ids); every delete fails loudly, naming the table.
+func (w *p063World) p064DropOrder(t *testing.T, ord string) {
+	t.Helper()
+	c := context.Background()
+	for _, q := range []struct{ table, sql string }{
+		{"events_outbox", `DELETE FROM events_outbox WHERE payload->>'order_id' = $1`},
+		{"events_outbox", `DELETE FROM events_outbox WHERE payload->>'invoice_id' IN (SELECT id::text FROM invoices WHERE customer_id = $1::uuid)`},
+		{"shipment_group_lines", `DELETE FROM shipment_group_lines WHERE shipment_group_id IN (SELECT id FROM shipment_groups WHERE order_id = $1::uuid)`},
+		{"shipment_groups", `DELETE FROM shipment_groups WHERE order_id = $1::uuid`},
+		{"order_lines", `DELETE FROM order_lines WHERE order_id = $1::uuid`},
+		{"orders", `DELETE FROM orders WHERE id = $1::uuid`},
+	} {
+		if _, err := w.pool.Exec(c, q.sql, ord); err != nil {
+			t.Errorf("cleanup %s: %v", q.table, err)
+		}
+	}
+}
+
+// p064LineFor answers the one statement line whose document number is docNo.
+func p064LineFor(t *testing.T, label, docNo string, ls []billing.StatementLine) billing.StatementLine {
+	t.Helper()
+	for _, l := range ls {
+		if l.DocNo == docNo {
+			return l
+		}
+	}
+	t.Fatalf("%s: no statement line for document %q in %+v", label, docNo, ls)
+	return billing.StatementLine{}
+}
+
 func TestIntegration_P063_PlainStatementWords(t *testing.T) {
 	pool := p063Pool(t, "p063words")
 	ctx := context.Background()
@@ -417,5 +471,60 @@ VALUES ($1::uuid, $2, 0, 0, 'brand_new_writer', $3::uuid, $4::uuid, $5)`,
 			p063Has(t, "unknown memo", ls, want)
 		}
 		w.staffKeepsReason(t, "unknown memo")
+	})
+
+	// 0.64 N1: the invoice writer's own order memos (`#INV-n, order #SO-x-n` and the progress shape)
+	// pass only when the order number in them is the invoice's OWN order's number, read by id through
+	// the order module's seam; a clerk's crafted memo in the same shape, or any other token in the
+	// slot, reads "Invoice". The writer's whole order invoice, raised with no memo, still reads its
+	// own words.
+	t.Run("OrderInvoiceOwnOrder", func(t *testing.T) {
+		w := p063Plant(t, pool)
+		ctx := context.Background()
+		ord, ordNo := w.p064Order(t)
+		t.Cleanup(func() { w.p064DropOrder(t, ord) })
+		tail := newInvoiceWriter(pool).WithOrderSource(w6cOrderInvoiceSource{svc: order.NewService(order.NewRepository(pool))})
+		doc, err := tail.InvoiceOrder(ctx, ord)
+		if err != nil {
+			t.Fatalf("the invoice writer: %v", err)
+		}
+		// The statement reads through the order module's own number seam, wired as the composition
+		// root wires it.
+		bill := billing.NewRepository(pool).WithOrderNumbers(order.NewRepository(pool))
+		ls, err := bill.StatementLines(ctx, w.cust, time.Now().Add(time.Hour), billing.BranchReach{Global: true})
+		if err != nil {
+			t.Fatalf("order invoice: statement lines: %v", err)
+		}
+		for _, l := range ls {
+			for _, bad := range []string{"P063LEAK", "INVSECRET"} {
+				if strings.Contains(l.Description, bad) {
+					t.Errorf("order invoice: a plain statement line carries %q: %q", bad, l.Description)
+				}
+			}
+		}
+		if l := p064LineFor(t, "order invoice", doc.InvoiceNo, ls); l.Description != doc.InvoiceNo+", order "+ordNo {
+			t.Errorf("the writer's own order line reads %q, want %q", l.Description, doc.InvoiceNo+", order "+ordNo)
+		}
+		// The clerk's crafted memo in the writer's shape, on an invoice of the same account that has
+		// no order, must read fixed words: nothing in the slot the writer did not mint.
+		var invANo string
+		if err := pool.QueryRow(ctx, `SELECT invoice_no::text FROM invoices WHERE id = $1::uuid`, w.invA).Scan(&invANo); err != nil {
+			t.Fatalf("read invoice A's number: %v", err)
+		}
+		p063Exec(t, pool, "craft the clerk's order memo", `
+UPDATE customer_transactions SET memo = '#INV-1, order #SO-P063LEAK-1'
+ WHERE customer_id = $1::uuid AND txn_type = 'INVOICE' AND source_ref_id = $2::uuid`, w.cust, w.invA)
+		ls, err = bill.StatementLines(ctx, w.cust, time.Now().Add(time.Hour), billing.BranchReach{Global: true})
+		if err != nil {
+			t.Fatalf("crafted memo: statement lines: %v", err)
+		}
+		for _, l := range ls {
+			if strings.Contains(l.Description, "P063LEAK") {
+				t.Errorf("crafted memo: a plain statement line carries P063LEAK: %q", l.Description)
+			}
+		}
+		if l := p064LineFor(t, "crafted memo", invANo, ls); l.Description != "Invoice" {
+			t.Errorf("the crafted order memo reads %q, want Invoice", l.Description)
+		}
 	})
 }
