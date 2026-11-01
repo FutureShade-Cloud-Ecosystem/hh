@@ -86,3 +86,63 @@ func TestCheck_AJobThatIsNotTheCustomersSaysSo(t *testing.T) {
 		t.Fatalf("block = %+v, want an outage to read as unavailable", b)
 	}
 }
+
+// fakeCustErr fails the customer exposure read.
+type custErrExposure struct{ overrideExposure }
+
+func (custErrExposure) CustomerExposure(context.Context, pgx.Tx, string) (int64, error) {
+	return 0, errors.New("boom")
+}
+
+// JA-3 fix round 2, P2: the override changes no decision but the limit it waives. Main passed a
+// customer with no credit under an override, and passed when the job read failed.
+func TestCheck_OverridePassesANoCreditCustomerAsOnMain(t *testing.T) {
+	ctx := context.Background()
+	if b := NewHoldAwareCreditGate(overrideHolds{}).Check(ctx, "cust", 1000, 0, 0, true, "br", true); b != nil {
+		t.Fatalf("no reader, no credit, override: %+v, want a pass as on main", b)
+	}
+	g := NewHoldAwareCreditGate(overrideHolds{}).WithExposure(overrideExposure{})
+	if b := g.Check(ctx, "cust", 1000, 0, 0, true, "br", true); b != nil {
+		t.Fatalf("reader, no credit, override: %+v, want a pass as on main", b)
+	}
+}
+
+func TestCheck_OverridePassesWhenTheJobReadFailsAsOnMain(t *testing.T) {
+	g := NewHoldAwareCreditGate(overrideHolds{}).WithExposure(overrideExposure{jobErr: errors.New("boom")})
+	if b := g.Check(WithSaleJob(context.Background(), "job-1"), "cust", 1000, 0, 1000000, true, "br", true); b != nil {
+		t.Fatalf("failed job read under an override: %+v, want a pass as on main", b)
+	}
+	// the customer's own exposure read failing still denies, as on main
+	g = NewHoldAwareCreditGate(overrideHolds{}).WithExposure(custErrExposure{})
+	if b := g.Check(context.Background(), "cust", 1000, 0, 1000000, true, "br", true); b == nil || !strings.Contains(b.Detail, "unavailable") {
+		t.Fatalf("failed customer read under an override: %+v, want it denied", b)
+	}
+}
+
+func TestCheck_ANoCreditCustomerIsTreatedTheSameInsideAndOverTheJobLimit(t *testing.T) {
+	own := int64(100)
+	g := NewHoldAwareCreditGate(overrideHolds{}).WithExposure(overrideExposure{ownLimit: &own})
+	jobCtx := WithSaleJob(context.Background(), "job-1")
+	for _, sale := range []int64{50, 1000} {
+		// no override: both read COD, never the job's limit for the larger one
+		b := g.Check(jobCtx, "cust", sale, 0, 0, true, "br", false)
+		if b == nil || b.Policy != "COD_CONSTRAINT" || !strings.Contains(b.Detail, "no credit") {
+			t.Fatalf("sale %d, no override: %+v, want the no credit COD block", sale, b)
+		}
+		// override: both pass, as on main
+		if b := g.Check(jobCtx, "cust", sale, 0, 0, true, "br", true); b != nil {
+			t.Fatalf("sale %d, override: %+v, want a pass", sale, b)
+		}
+		if n := g.OverriddenLimit(jobCtx, "cust", sale, 0, 0, true, "br"); n != nil {
+			t.Fatalf("sale %d: a no credit customer waived no limit, got %+v", sale, n)
+		}
+	}
+}
+
+// P3-c: the fallback path attaches no limit data to its refusals, as on main.
+func TestCheck_TheFallbackPathAttachesNoLimitData(t *testing.T) {
+	b := NewHoldAwareCreditGate(overrideHolds{}).Check(context.Background(), "cust", 60000, 50000, 100000, true, "br", false)
+	if b == nil || len(b.Data) != 0 {
+		t.Fatalf("fallback refusal = %+v, want a refusal with no Data", b)
+	}
+}

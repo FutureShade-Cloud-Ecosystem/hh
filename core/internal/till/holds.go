@@ -209,34 +209,35 @@ func (g *HoldAwareCreditGate) Check(ctx context.Context, customerID string, orde
 			}
 		}
 	}
-	blk := g.limitBreak(ctx, customerID, orderTotalCents, openBalanceCents, creditLimitCents, termsAreCredit, branchID)
-	// The approved override waives the LIMITS only (the job's own and the customer's), never a hold
-	// above and never a read that failed: an unavailable exposure still denies the account tender.
+	// The approved override changes no decision but the limit it waives. As on main, it passes a
+	// customer with no credit, and it passes whatever the job read says (the job is not read); only a
+	// hold above, or a customer exposure read that failed, still denies the account tender.
 	//
 	// No door passes an approved override today: both the POS ring and the quote conversion pass
-	// false, so this branch is unreachable in production. It is built anyway: Check returns nil, and
-	// OverriddenLimit (below) says WHICH limit was waived, the job's own or the customer's, in words
-	// and in data, for the door that passes one to record.
-	if hasApprovedOverride && blk != nil && blk.Policy == identity.PolicyCredit {
+	// false, so this branch is unreachable in production. It is built anyway; OverriddenLimit (below)
+	// says WHICH limit was waived, the job's own or the customer's, in words and in data, for the
+	// door that passes one to record.
+	if hasApprovedOverride {
+		if g.exposure != nil && termsAreCredit && customerID != "" {
+			if _, err := g.exposure.CustomerExposure(ctx, callerTxFrom(ctx), customerID); err != nil {
+				return &identity.ActionBlocked{
+					Policy:   identity.PolicyCOD,
+					BranchID: branchID,
+					Detail:   "credit exposure unavailable; account tender denied (cash or card only)",
+				}
+			}
+		}
 		return nil
 	}
-	return blk
+	return g.limitBreak(ctx, customerID, orderTotalCents, openBalanceCents, creditLimitCents, termsAreCredit, branchID)
 }
 
 // limitBreak is the limit check with no override: the block the sale would meet, or nil. It reads the
 // customer's whole exposure and, when the sale is on a job that carries its own limit, the job's.
 func (g *HoldAwareCreditGate) limitBreak(ctx context.Context, customerID string, orderTotalCents, openBalanceCents, creditLimitCents int64, termsAreCredit bool, branchID string) *identity.ActionBlocked {
 	if g.exposure == nil || !termsAreCredit || customerID == "" {
-		blk := identity.CheckCredit(orderTotalCents, openBalanceCents, creditLimitCents, termsAreCredit, branchID, false)
-		if blk != nil && blk.Policy == identity.PolicyCredit {
-			// Say which limit, as the exposure path does; the old gate has only the customer's.
-			blk.Data = map[string]string{
-				"limit_scope":  LimitScopeCustomer,
-				"credit_limit": dollars(creditLimitCents),
-				"open_balance": dollars(openBalanceCents),
-			}
-		}
-		return blk
+		// The fallback path attaches no limit data, as on main.
+		return identity.CheckCredit(orderTotalCents, openBalanceCents, creditLimitCents, termsAreCredit, branchID, false)
 	}
 	// The one exposure reader. A read that fails denies the account tender, the hold read's posture.
 	unavailable := &identity.ActionBlocked{
@@ -248,6 +249,11 @@ func (g *HoldAwareCreditGate) limitBreak(ctx context.Context, customerID string,
 	exposure, err := g.exposure.CustomerExposure(ctx, tx, customerID)
 	if err != nil {
 		return unavailable
+	}
+	if creditLimitCents <= 0 {
+		// No credit at all: the customer reads COD whatever the job's own limit, so the order of checks
+		// can never refuse a smaller sale and pass a larger one.
+		return identity.CheckCredit(orderTotalCents, exposure, creditLimitCents, termsAreCredit, branchID, false)
 	}
 	if jobID := saleJobFrom(ctx); jobID != "" {
 		ownLimit, jobExposure, _, err := g.exposure.JobPosition(ctx, tx, customerID, jobID)
@@ -289,6 +295,12 @@ func (g *HoldAwareCreditGate) OverriddenLimit(ctx context.Context, customerID st
 	data := make(map[string]string, len(blk.Data)+1)
 	for k, v := range blk.Data {
 		data[k] = v
+	}
+	if data["limit_scope"] == "" {
+		// The fallback path carries no limit data; the figure it checked is the customer's.
+		data["limit_scope"] = LimitScopeCustomer
+		data["credit_limit"] = dollars(creditLimitCents)
+		data["open_balance"] = dollars(openBalanceCents)
 	}
 	data["overridden"] = "true"
 	return &identity.ActionBlocked{
