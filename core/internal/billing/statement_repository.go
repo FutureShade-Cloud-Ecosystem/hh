@@ -248,16 +248,21 @@ func statementLineDate(zone houseday.Zone, at time.Time) time.Time { return hous
 // only a memo on the explicit allow list below passes through as written. A new or reworded writer therefore
 // reads as fixed words, never as a leak; to show a new memo, add its exact shape here. The ledger keeps the
 // full memo for staff views.
+// stmtDocNo is an invoice or credit memo number in the forms the house mints them ('#INV-n', '#CM-n'). Every
+// slot of a safe shape is pinned to a minted form, so a uuid or a clerk's token typed into a slot reads as
+// fixed words; a payment number is digits from its sequence.
+const stmtDocNo = `#?(?:INV|CM)-\d+`
+
 var (
 	// safeMemoShapes are memos that carry only the account's own document numbers and fixed words.
 	safeMemoShapes = []*regexp.Regexp{
 		regexp.MustCompile(`^NSF fee$`),
 		regexp.MustCompile(`^(voided receipt|reversal|NSF reversal): early payment discount given back$`),
-		regexp.MustCompile(`^early payment discount \([#A-Za-z0-9._/-]+\)$`),
-		regexp.MustCompile(`^overpaid receipt left on account \([#A-Za-z0-9._/-]+\)$`),
-		regexp.MustCompile(`^Holdback withheld on [#A-Za-z0-9._/-]+$`),
-		regexp.MustCompile(`^[#A-Za-z0-9._/-]+ \(holdback released \d{4}-\d{2}-\d{2}\)$`),
-		regexp.MustCompile(`^Credit memo [#A-Za-z0-9-]+$`),
+		regexp.MustCompile(`^early payment discount \(\d+\)$`),
+		regexp.MustCompile(`^overpaid receipt left on account \(\d+\)$`),
+		regexp.MustCompile(`^Holdback withheld on ` + stmtDocNo + `$`),
+		regexp.MustCompile(`^` + stmtDocNo + ` \(holdback released \d{4}-\d{2}-\d{2}\)$`),
+		regexp.MustCompile(`^Credit memo #?CM-\d+$`),
 		regexp.MustCompile(`^finance charge for [A-Za-z]+ \d{4}$`),
 	}
 )
