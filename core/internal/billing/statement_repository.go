@@ -114,7 +114,7 @@ const statementActivityCTE = `WITH activity AS (
 			       COALESCE(i.invoice_no::text, '') AS invoice_no, COALESCE(t.memo,'') AS memo,
 			       CASE WHEN t.source_type = 'invoice' THEN i.job_id END AS job_id,
 			       t.source_type AS src_type, t.source_ref_id AS src_ref, t.id AS src_id,
-			       COALESCE(ri.invoice_no::text, '') AS reverses_no
+			       COALESCE(ri.invoice_no::text, '') AS reverses_no, t.branch_id AS branch_id
 			  FROM customer_transactions t
 			  LEFT JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
 			  LEFT JOIN invoices ri ON ri.id = i.reverses_invoice_id AND ri.customer_id = t.customer_id
@@ -127,7 +127,7 @@ const statementActivityCTE = `WITH activity AS (
 			       i.total_cents AS amount_cents,
 			       i.invoice_no::text AS invoice_no,
 			       i.invoice_no::text AS memo,
-			       i.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no
+			       i.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no, i.branch_id
 			  FROM invoices i
 			 WHERE i.customer_id = $1::uuid
 			   AND i.status IN ('FINALIZED', 'PARTIALLY_PAID')
@@ -149,11 +149,11 @@ const statementActivityCTE = `WITH activity AS (
 			-- today: a credit, a write off or a release taken after the date never rewrites the statement.
 			SELECT h.occurred_at, h.created_at, 'HOLDBACK' AS txn_type, -h.held AS amount_cents,
 			       h.invoice_no, 'Holdback withheld on ' || h.invoice_no AS memo,
-			       h.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no
+			       h.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no, h.branch_id
 			  FROM (
 			    SELECT (i.issue_date::timestamp AT TIME ZONE $4::text) AS occurred_at,
 			           i.created_at + interval '1 microsecond' AS created_at,
-			           i.invoice_no::text AS invoice_no, i.job_id,
+			           i.invoice_no::text AS invoice_no, i.job_id, i.branch_id,
 			           invoice_holdback_as_of(i.id,
 			             (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond') AS held
 			      FROM invoices i
@@ -171,11 +171,11 @@ const statementActivityCTE = `WITH activity AS (
 			-- the running balance and the closing figure are the aging's, unchanged.
 			SELECT r.occurred_at, r.created_at, 'HOLDBACK_RELEASED' AS txn_type, 0::bigint AS amount_cents,
 			       r.invoice_no, r.invoice_no || ' (holdback released ' || to_char(r.rel_on, 'YYYY-MM-DD') || ')' AS memo,
-			       r.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no
+			       r.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no, r.branch_id
 			  FROM (
 			    SELECT (invoice_released_on(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond')::timestamp AT TIME ZONE $4::text) AS occurred_at,
 			           i.created_at + interval '2 microsecond' AS created_at,
-			           i.invoice_no::text AS invoice_no, i.job_id,
+			           i.invoice_no::text AS invoice_no, i.job_id, i.branch_id,
 			           invoice_released_on(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond') AS rel_on,
 			           invoice_released_cents_as_of(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond') AS rel_cents
 			      FROM invoices i
@@ -823,7 +823,7 @@ func (r *Repository) RecordPaylinkDelivery(ctx context.Context, row PaylinkDeliv
 	return nil
 }
 
-// statementByJobTail finishes statementActivityCTE for the by job read. The money of a receipt is split
+// statementByJobParts finishes statementActivityCTE for the by job read. The money of a receipt is split
 // by the payment ACT, not by the ledger row: the doors write one PAYMENT row per allocation, all under
 // one (source_type, source_ref_id), so the rows of an act are grouped, and the act's share for each job
 // is the allocations that belong to it and existed at the end of the as of day:
@@ -863,11 +863,11 @@ func (r *Repository) RecordPaylinkDelivery(ctx context.Context, row PaylinkDeliv
 // first date, even on a read taken after the second batch. This is an accepted presentation choice:
 // the figures per job are right at every as of day, because the ledger rows are cut by day and the
 // shares by the end of the same day, so no past read mixes the batches; only that line's date is early.
-const statementByJobTail = `
+const statementByJobParts = `
 		, cutoff AS (
 			SELECT (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond' AS at
 		), paytxn AS (
-			SELECT a.occurred_at, a.created_at, a.txn_type, a.amount_cents, a.memo, a.src_id, a.src_ref,
+			SELECT a.occurred_at, a.created_at, a.txn_type, a.amount_cents, a.memo, a.src_id, a.src_ref, a.branch_id,
 			       CASE WHEN a.txn_type = 'NSF' THEN 'nsf' ELSE a.src_type END AS act_type
 			  FROM activity a
 			 WHERE a.src_ref IS NOT NULL
@@ -879,6 +879,7 @@ const statementByJobTail = `
 			SELECT p.act_type, p.src_ref, MIN(p.txn_type) AS txn_type,
 			       MIN(p.occurred_at) AS occurred_at, MIN(p.created_at) AS created_at,
 			       SUM(p.amount_cents) AS amount_cents,
+			       array_agg(DISTINCT p.branch_id) AS branches,
 			       CASE p.act_type
 			            WHEN 'nsf' THEN 'Returned payment'
 			            WHEN 'payment_void' THEN 'Payment voided'
@@ -908,7 +909,7 @@ const statementByJobTail = `
 			 WHERE ac.act_type = 'payment_reapply'
 			 GROUP BY ac.act_type, ac.src_ref, inv.job_id
 		), leftover AS (
-			SELECT ac.occurred_at, ac.created_at, ac.txn_type, ac.memo, ac.act_type,
+			SELECT ac.occurred_at, ac.created_at, ac.txn_type, ac.memo, ac.act_type, ac.branches,
 			       ac.amount_cents - COALESCE(sh.net, 0) AS amount_cents
 			  FROM acts ac
 			  LEFT JOIN (SELECT s.act_type, s.src_ref, SUM(s.share) AS net FROM shares s GROUP BY s.act_type, s.src_ref) sh
@@ -942,19 +943,75 @@ const statementByJobTail = `
 			            WHEN a.txn_type = 'NSF' THEN 'Returned payment'
 			            WHEN a.txn_type = 'PAYMENT' THEN 'Payment received, thank you'
 			            ELSE 'Adjustment' END AS memo,
-			       a.job_id, COALESCE(a.src_type, '') AS src_type, a.reverses_no
+			       a.job_id, COALESCE(a.src_type, '') AS src_type, a.reverses_no, ARRAY[a.branch_id] AS branches
 			  FROM activity a
 			 WHERE NOT EXISTS (SELECT 1 FROM paytxn p WHERE p.src_id = a.src_id)
 			UNION ALL
-			SELECT ac.occurred_at, ac.created_at, ac.txn_type, s.share, '', ac.memo, s.job_id, ac.act_type, ''
+			SELECT ac.occurred_at, ac.created_at, ac.txn_type, s.share, '', ac.memo, s.job_id, ac.act_type, '', ac.branches
 			  FROM acts ac JOIN shares s ON s.act_type = ac.act_type AND s.src_ref = ac.src_ref
 			UNION ALL
-			SELECT l.occurred_at, l.created_at, l.txn_type, l.amount_cents, '', l.memo, NULL::uuid, l.act_type, ''
+			SELECT l.occurred_at, l.created_at, l.txn_type, l.amount_cents, '', l.memo, NULL::uuid, l.act_type, '', l.branches
 			  FROM leftover l WHERE l.amount_cents <> 0
-		)
+		)`
+
+// statementByJobSelect is the by job read's last step: the lines, ordered by job.
+const statementByJobSelect = `
 		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, COALESCE(job_id::text, ''), src_type, reverses_no
 		  FROM parts
 		 ORDER BY COALESCE(job_id::text, ''), occurred_at, created_at`
+
+// statementByJobTail finishes statementActivityCTE for the by job read.
+const statementByJobTail = statementByJobParts + statementByJobSelect
+
+// statementByJobBranches is the by job read's other last step: the distinct branches of every part of
+// the job ($5), each part carrying the branch of the ledger rows or document it comes from. It runs on
+// the same activity and the same parts as the statement, so the set of branches the job statement is
+// refused for can never drift from what the statement reads.
+const statementByJobBranches = `
+		SELECT DISTINCT b::text FROM parts p, unnest(p.branches) AS b
+		 WHERE p.job_id = $5::uuid AND b IS NOT NULL`
+
+// jobReachFarDay is the as of day of the branch check: later than any document, so the check reads
+// the job's whole account and an earlier as of on the statement can never skip it.
+const jobReachFarDay = "9000-01-01"
+
+// JobDocumentBranches reads the distinct branches of everything the by job statement can put on the
+// job: its invoices and credit memos, and every part the by job read builds for it (the ledger rows,
+// the receipts, voids, reversals, reapplications and bounces split onto it through their allocations,
+// the holdback lines), each at the branch it sits at. The second half is the statement's own read
+// (statementActivityCTE and statementByJobParts) run with the whole book and no date cut, so the check
+// cannot drift from what the statement reads. It is date free.
+func (r *Repository) JobDocumentBranches(ctx context.Context, customerID, jobID string) ([]string, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	zone, err := r.zoneFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT i.branch_id::text FROM invoices i WHERE i.customer_id = $1::uuid AND i.job_id = $5::uuid AND i.branch_id IS NOT NULL
+		 UNION
+		 SELECT t.branch_id::text FROM customer_transactions t
+		   JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
+		  WHERE t.customer_id = $1::uuid AND i.job_id = $5::uuid AND t.branch_id IS NOT NULL
+		 UNION
+		 SELECT x.b FROM (`+statementActivityCTE+statementByJobParts+statementByJobBranches+`) x`,
+		customerID, jobReachFarDay, nil, zone.Name(), jobID)
+	if err != nil {
+		return nil, fmt.Errorf("billing: job document branches: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			return nil, fmt.Errorf("billing: scan job document branch: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
 
 // StatementLinesByJob is StatementLines with each line's job (JA-4): the same activity, the same
 // cut off and branch reach, and a receipt applied across jobs split by its allocations, the part of
