@@ -16,7 +16,7 @@ import (
 )
 
 func TestEveningGuard_TheDatabaseClockAgreesWithTheGoClock(t *testing.T) {
-	if os.Getenv("HH_EVENING_GUARD") != "1" {
+	if mode := os.Getenv("HH_EVENING_GUARD"); mode != "1" && mode != "local" {
 		t.Skip("not the evening guard run")
 	}
 	url := os.Getenv("DATABASE_URL")
