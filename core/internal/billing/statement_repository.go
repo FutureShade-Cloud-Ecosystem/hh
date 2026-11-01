@@ -811,7 +811,7 @@ const statementByJobTail = `
 			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit applied to %' THEN 'Credit applied'
 			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit application reversed: %' THEN 'Credit application reversed'
 			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit memo restored: %' THEN 'Credit memo restored'
-			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'Supplier deposit % closed on the order''s cancel' THEN a.memo
+			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo = 'Supplier deposit ' || a.invoice_no || ' closed on the order''s cancel' THEN a.memo
 			            WHEN a.txn_type = 'ADJUSTMENT' THEN 'Adjustment'
 			            WHEN a.txn_type = 'CREDIT_MEMO' AND a.memo = 'Credit memo ' || a.invoice_no THEN a.memo
 			            WHEN a.txn_type = 'CREDIT_MEMO' AND a.memo = a.invoice_no THEN a.memo

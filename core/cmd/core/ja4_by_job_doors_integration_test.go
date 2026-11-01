@@ -865,6 +865,17 @@ func TestIntegration_JA4Doors_PlantedReversesReadsFixed(t *testing.T) {
 	ja4NoneReads(t, d, "reverses")
 }
 
+// TestIntegration_JA4Doors_PlantedSupplierDepositReadsFixed (P061 fix round 3, P3-1): a supplier deposit
+// memo with clerk text in the middle reads "Adjustment"; the writer's exact words still pass.
+func TestIntegration_JA4Doors_PlantedSupplierDepositReadsFixed(t *testing.T) {
+	w := ja4Plant(t)
+	w.ja4PlantRow(t, "ADJUSTMENT", -111, "Supplier deposit "+ja4Reason+" closed on the order's cancel")
+	w.ja4PlantRow(t, "ADJUSTMENT", -112, "Supplier deposit "+w.invoiceNo(t, w.invA)+" closed on the order's cancel")
+	d := w.ja4JobADescriptions(t, "planted deposit", time.Now().Add(time.Hour))
+	ja4NoneReads(t, d, ja4Marker)
+	ja4Has(t, d, "Adjustment")
+}
+
 func (w *ja4World) invoiceNo(t *testing.T, id string) string {
 	t.Helper()
 	var no string
