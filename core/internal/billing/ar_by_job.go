@@ -6,7 +6,7 @@ package billing
 // (agingOpenAR in credit_repository.go) and only changes the grouping: the account aging groups by
 // customer, this groups by customer and job. The day rule, the as of rule, the holdback and the
 // release rows are therefore the account aging's own, and the rows of one customer sum to that
-// customer's row by construction, and every row together to ARBalanceCents (GL 1100) at the same
+// customer's row by construction, and every row together to ARBalanceCents at the same
 // reading.
 //
 // A document with no job (the finance charge is raised with no job, FC-1) and every non-invoice

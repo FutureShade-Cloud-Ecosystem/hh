@@ -101,7 +101,7 @@ func jaByJob(rows []AgingJobRow, customerID string) (map[string]AgingJobRow, int
 
 // TestIntegration_JA4_AgingByJob_SubtotalsSumToCustomerAndGL pins JA-4 item 1: the by job
 // aging has a row per job and one account level row (JobID ""), they sum to the customer's own
-// aging total, and the grand total ties to ARBalanceCents (GL 1100) at the same reading.
+// aging total, and the grand total ties to ARBalanceCents at the same reading.
 func TestIntegration_JA4_AgingByJob_SubtotalsSumToCustomerAndGL(t *testing.T) {
 	pool := intPool(t)
 	repo := NewRepository(pool)
@@ -147,7 +147,7 @@ func TestIntegration_JA4_AgingByJob_SubtotalsSumToCustomerAndGL(t *testing.T) {
 		t.Fatalf("customer aging total %d != by job sum %d", custTotal, sum)
 	}
 
-	// The grand totals tie to each other and to ARBalanceCents (GL 1100) at the same reading.
+	// The grand totals tie to each other and to ARBalanceCents at the same reading.
 	var grandJob, grandPlain int64
 	for _, r := range byJob {
 		grandJob += r.TotalCents

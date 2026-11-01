@@ -571,7 +571,9 @@ func (r *Repository) WorklistFacts(ctx context.Context, asOf time.Time, branchID
 	return facts, nil
 }
 
-// agingByJobSelect: $1..$7 are agingSelect's, $8 is the job filter (” = every row).
+// agingByJobSelect: $1..$7 are agingSelect's, $8 is the job filter (” = every row). Unfiltered, a customer
+// whose account nets to zero has no rows, as in the plain aging (its HAVING is per customer); a named
+// job's row is always shown.
 const agingByJobSelect = agingOpenAR + `
 	SELECT c.id::text, c.name, c.account_no::text,
 	       COALESCE(i.job_id::text, ''), COALESCE(j.job_no::text, ''), COALESCE(j.name, ''),
@@ -590,6 +592,10 @@ const agingByJobSelect = agingOpenAR + `
 	   AND ($3 = '' OR i.branch_id = $3::uuid)
 	   AND ($4::uuid[] IS NULL OR i.branch_id = ANY($4::uuid[]))
 	   AND ($8 = '' OR i.job_id = NULLIF($8, '')::uuid)
+	   AND ($8 <> '' OR (SELECT COALESCE(SUM(o.bal), 0) FROM open_ar o
+	                      WHERE o.customer_id = c.id
+	                        AND ($3 = '' OR o.branch_id = $3::uuid)
+	                        AND ($4::uuid[] IS NULL OR o.branch_id = ANY($4::uuid[]))) <> 0)
 	 GROUP BY c.id, c.name, c.account_no, i.job_id, j.job_no, j.name
 	HAVING COALESCE(SUM(i.bal), 0) <> 0
 	 ORDER BY c.name, c.id, i.job_id NULLS FIRST`
