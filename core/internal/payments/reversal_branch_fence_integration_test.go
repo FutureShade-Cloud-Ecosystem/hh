@@ -16,7 +16,7 @@ func TestIntegration_Reversal_ANotReachedBranchFindsNoSuchPayment(t *testing.T) 
 	rig := newPayRig(t, NewStubGateway())
 	cleanupIntents(t, rig)
 	pay, err := rig.svc.Pay(ctx, rig.customerID, PayRequest{
-		InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID,
+		InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID, ExpectedCents: 55000,
 	})
 	if err != nil {
 		t.Fatalf("seed payment: %v", err)

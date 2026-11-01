@@ -18,7 +18,7 @@ func TestIntegration_Reversal_PostsAReversingEntryAndNeverDeletes(t *testing.T) 
 	cleanupIntents(t, rig)
 
 	pay, err := rig.svc.Pay(ctx, rig.customerID, PayRequest{
-		InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID,
+		InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID, ExpectedCents: 55000,
 	})
 	if err != nil {
 		t.Fatalf("seed payment: %v", err)
@@ -141,7 +141,7 @@ func TestIntegration_Reversal_OnlyOnce(t *testing.T) {
 	cleanupIntents(t, rig)
 
 	pay, err := rig.svc.Pay(ctx, rig.customerID, PayRequest{
-		InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID,
+		InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID, ExpectedCents: 40000,
 	})
 	if err != nil {
 		t.Fatalf("seed payment: %v", err)
@@ -181,7 +181,7 @@ func TestIntegration_Reversal_GatesAndReason(t *testing.T) {
 	cleanupIntents(t, rig)
 
 	pay, err := rig.svc.Pay(ctx, rig.customerID, PayRequest{
-		InvoiceIDs: []string{rig.invoiceB}, PaymentMethodID: rig.methodID,
+		InvoiceIDs: []string{rig.invoiceB}, PaymentMethodID: rig.methodID, ExpectedCents: 15000,
 	})
 	if err != nil {
 		t.Fatalf("seed payment: %v", err)
@@ -216,7 +216,7 @@ func TestIntegration_Reversal_LaterDayIsLabelledAReversalNotAVoid(t *testing.T) 
 	cleanupIntents(t, rig)
 
 	pay, err := rig.svc.Pay(ctx, rig.customerID, PayRequest{
-		InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID,
+		InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID, ExpectedCents: 40000,
 	})
 	if err != nil {
 		t.Fatalf("seed payment: %v", err)

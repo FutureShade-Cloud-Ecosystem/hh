@@ -92,7 +92,16 @@ func (pw *payoffWorld) setNow(at time.Time) {
 // payPortal runs the portal's pay flow for the named invoices on a one time token.
 func (pw *payoffWorld) payPortal(t *testing.T, ids ...string) Payment {
 	t.Helper()
-	p, err := pw.svc.Pay(context.Background(), pw.customerID, PayRequest{InvoiceIDs: ids, Nonce: "nonce-" + pw.tag})
+	// The amount the Pay button shows is the portal's own quote of the same invoices at this instant.
+	quote, err := pw.repo.PayableInvoices(context.Background(), pw.customerID, ids)
+	if err != nil {
+		t.Fatalf("quote the shown amount: %v", err)
+	}
+	var shown int64
+	for _, a := range quote {
+		shown += a.AmountCents
+	}
+	p, err := pw.svc.Pay(context.Background(), pw.customerID, PayRequest{InvoiceIDs: ids, Nonce: "nonce-" + pw.tag, ExpectedCents: shown})
 	if err != nil {
 		t.Fatalf("portal pay: %v", err)
 	}
@@ -252,7 +261,7 @@ func TestPortalPayoff_AResumedSettleAfterMidnightKeepsTheQuote(t *testing.T) {
 	pw := newPayoffWorld(t)
 	day := houseToday()
 	inv := pw.discountInvoice(t, pw.customerID, "RESUME", 100000, day)
-	req := PayRequest{InvoiceIDs: []string{inv}, Nonce: "nonce-" + pw.tag}
+	req := PayRequest{InvoiceIDs: []string{inv}, Nonce: "nonce-" + pw.tag, ExpectedCents: 98000}
 
 	intent, claimed, err := pw.repo.ClaimIntent(ctx, IntentClaim{
 		Key: idempotencyKey(pw.customerID, req), CustomerID: pw.customerID, AmountCents: 98000,

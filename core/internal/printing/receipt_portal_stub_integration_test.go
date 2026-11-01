@@ -95,7 +95,7 @@ func TestIntegration_Receipt_PortalStubSettlementPrintsTheWord(t *testing.T) {
 	ctx := context.Background()
 
 	pay, err := rig.svc.Pay(ctx, rig.customerID, payments.PayRequest{
-		InvoiceIDs: []string{rig.invoiceID}, PaymentMethodID: rig.methodID,
+		InvoiceIDs: []string{rig.invoiceID}, PaymentMethodID: rig.methodID, ExpectedCents: 40000,
 	})
 	if err != nil {
 		t.Fatalf("portal stub pay: %v", err)

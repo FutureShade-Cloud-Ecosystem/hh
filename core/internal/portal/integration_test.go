@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -44,6 +45,11 @@ func intPool(t *testing.T) *pgxpool.Pool {
 		fail("integration DB not reachable: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	// Every leg leaves the shared database as it found it (row 0.48): the sweep runs after the legs' own
+	// cleanups, deletes each row added since the snapshot children first, and fails the leg naming the
+	// table if it cannot. The projects legs once left seven customers with their orders and invoices
+	// behind through a silent delete.
+	legsweep.Register(t, pool)
 	return pool
 }
 

@@ -143,7 +143,7 @@ func TestAcceptance_StubGateway_SaleToCaptureToSettlementRows(t *testing.T) {
 		t.Fatalf("gateway name = %q, want \"stub\"", got)
 	}
 
-	req := PayRequest{InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID}
+	req := PayRequest{InvoiceIDs: []string{rig.invoiceA, rig.invoiceB}, PaymentMethodID: rig.methodID, ExpectedCents: 55000}
 
 	// - CAPTURE -
 	pay, err := rig.svc.Pay(ctx, rig.customerID, req)
@@ -293,7 +293,7 @@ func TestAcceptance_StubGateway_DeclineLeavesNoSettlementRows(t *testing.T) {
 	}
 
 	_, err := rig.svc.Pay(ctx, rig.customerID, PayRequest{
-		InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID,
+		InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID, ExpectedCents: 113,
 	})
 	if !errors.Is(err, ErrDeclined) {
 		t.Fatalf("a declined capture must surface as ErrDeclined, got %v", err)
@@ -377,7 +377,7 @@ func TestAcceptance_GatewaySelector_FlagFlipSelectsLiveWithoutCredentials(t *tes
 	// And so does the charge: the whole settle path runs against the selected gateway, and the
 	// persisted gateway_ref is the one the LIVE rail minted.
 	pay, err := liveRig.svc.Pay(ctx, liveRig.customerID, PayRequest{
-		InvoiceIDs: []string{liveRig.invoiceA}, PaymentMethodID: liveRig.methodID,
+		InvoiceIDs: []string{liveRig.invoiceA}, PaymentMethodID: liveRig.methodID, ExpectedCents: 40000,
 	})
 	if err != nil {
 		t.Fatalf("pay through the selected live gateway: %v", err)

@@ -36,7 +36,7 @@ func TestPortalPayoff_AQuotedDiscountMustSettleTheWholeOpenAmount(t *testing.T) 
 			t.Errorf("reverse the desk payment inside the charge: %v", err)
 		}
 	}
-	_, err = pw.svc.Pay(ctx, pw.customerID, PayRequest{InvoiceIDs: []string{inv}, Nonce: "nonce-" + pw.tag})
+	_, err = pw.svc.Pay(ctx, pw.customerID, PayRequest{InvoiceIDs: []string{inv}, Nonce: "nonce-" + pw.tag, ExpectedCents: 58016})
 	if !errors.Is(err, ErrPaymentInFlight) {
 		t.Fatalf("a payable that grew mid charge must refuse the settle into flight; got %v", err)
 	}
