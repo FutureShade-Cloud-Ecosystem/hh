@@ -64,8 +64,9 @@ func fcJobRigNew(t *testing.T) *fcJobRig {
 		})
 	}
 
-	// Put the schedule rows back exactly as found, drop the runs the ticks recorded and the audit rows
-	// the toggles wrote, every statement failing the test loudly.
+	// Put every schedule row back exactly as found (a tick claims any schedule that is due, not only the
+	// two under test, and stamps it), drop the runs the ticks recorded and the audit rows the toggles
+	// wrote, every statement failing the test loudly.
 	type saved struct {
 		name    string
 		enabled bool
@@ -75,18 +76,20 @@ func fcJobRigNew(t *testing.T) *fcJobRig {
 		errText string
 	}
 	var rows []saved
-	for _, name := range []string{FinanceChargeJobName, fcApJobName} {
+	srs, err := r.pool.Query(r.ctx, `SELECT name, enabled, next_run_at, last_run_at, last_status, last_error FROM job_schedules`)
+	if err != nil {
+		t.Fatalf("read the schedules: %v", err)
+	}
+	for srs.Next() {
 		var s saved
-		s.name = name
-		if err := r.pool.QueryRow(r.ctx,
-			`SELECT enabled, next_run_at, last_run_at, last_status, last_error FROM job_schedules WHERE name = $1`, name,
-		).Scan(&s.enabled, &s.next, &s.last, &s.status, &s.errText); err != nil {
-			t.Fatalf("read the %s schedule: %v", name, err)
+		if err := srs.Scan(&s.name, &s.enabled, &s.next, &s.last, &s.status, &s.errText); err != nil {
+			t.Fatalf("scan a schedule: %v", err)
 		}
 		rows = append(rows, s)
 	}
+	srs.Close()
 	priorRuns := []string{}
-	prs, err := r.pool.Query(r.ctx, `SELECT id::text FROM job_runs WHERE job_name = ANY($1::text[])`, []string{FinanceChargeJobName, fcApJobName})
+	prs, err := r.pool.Query(r.ctx, `SELECT id::text FROM job_runs`)
 	if err != nil {
 		t.Fatalf("read the prior job runs: %v", err)
 	}
@@ -99,8 +102,7 @@ func fcJobRigNew(t *testing.T) *fcJobRig {
 	}
 	prs.Close()
 	t.Cleanup(func() {
-		fcDelete(t, r.pool, "job_runs", `DELETE FROM job_runs WHERE job_name = ANY($1::text[]) AND NOT (id::text = ANY($2::text[]))`,
-			[]string{FinanceChargeJobName, fcApJobName}, priorRuns)
+		fcDelete(t, r.pool, "job_runs", `DELETE FROM job_runs WHERE NOT (id::text = ANY($1::text[]))`, priorRuns)
 		for _, s := range rows {
 			fcDelete(t, r.pool, "job_schedules", `UPDATE job_schedules SET enabled = $2, next_run_at = $3, last_run_at = $4, last_status = $5, last_error = $6 WHERE name = $1`,
 				s.name, s.enabled, s.next, s.last, s.status, s.errText)
@@ -159,15 +161,18 @@ func TestIntegration_W3FC1C_EnableThenOneTickRunsItOnce(t *testing.T) {
 		t.Fatalf("W3-FC1c red: after enable the row reads %v, want enabled with the next slot within a day", it)
 	}
 	// Nothing is due yet, so a tick runs nothing; once the slot comes, one tick runs the job once.
-	if n := j.runner.RunDue(j.rig.ctx); n != 0 || j.ran.Load() != 0 {
-		t.Fatalf("W3-FC1c red: a tick before the slot ran %d jobs (%d calls)", n, j.ran.Load())
+	j.runner.RunDue(j.rig.ctx)
+	if j.ran.Load() != 0 {
+		t.Fatalf("W3-FC1c red: a tick before the slot ran the job (%d calls)", j.ran.Load())
 	}
 	j.setNext(t, FinanceChargeJobName, `now() - interval '1 minute'`)
-	if n := j.runner.RunDue(j.rig.ctx); n != 1 || j.ran.Load() != 1 {
-		t.Fatalf("W3-FC1c red: the tick after enable ran %d jobs (%d calls), want exactly 1", n, j.ran.Load())
+	j.runner.RunDue(j.rig.ctx)
+	if j.ran.Load() != 1 {
+		t.Fatalf("W3-FC1c red: the tick after enable ran the job %d times, want exactly 1", j.ran.Load())
 	}
-	if n := j.runner.RunDue(j.rig.ctx); n != 0 || j.ran.Load() != 1 {
-		t.Fatalf("W3-FC1c red: a second tick ran the job again (%d, %d calls)", n, j.ran.Load())
+	j.runner.RunDue(j.rig.ctx)
+	if j.ran.Load() != 1 {
+		t.Fatalf("W3-FC1c red: a second tick ran the job again (%d calls)", j.ran.Load())
 	}
 }
 
@@ -179,8 +184,9 @@ func TestIntegration_W3FC1C_EnableRearmsAPastSlotAndKeepsAFutureOne(t *testing.T
 	if rec := j.put(fcController, FinanceChargeJobName, `{"enabled":true}`); rec.Code != http.StatusOK {
 		t.Fatalf("W3-FC1c red: enable over a past slot = %d (%s)", rec.Code, rec.Body.String())
 	}
-	if n := j.runner.RunDue(j.rig.ctx); n != 0 || j.ran.Load() != 0 {
-		t.Fatalf("W3-FC1c red: an enabled job with a stale slot fired at once (%d, %d calls)", n, j.ran.Load())
+	j.runner.RunDue(j.rig.ctx)
+	if j.ran.Load() != 0 {
+		t.Fatalf("W3-FC1c red: an enabled job with a stale slot fired at once (%d calls)", j.ran.Load())
 	}
 	first := j.listed(t, FinanceChargeJobName)["next_run_at"]
 	if rec := j.put(fcController, FinanceChargeJobName, `{"enabled":true}`); rec.Code != http.StatusOK {
@@ -204,8 +210,9 @@ func TestIntegration_W3FC1C_DisableThenATickRunsNothing(t *testing.T) {
 		t.Fatalf("W3-FC1c red: after disable the row reads %v", it)
 	}
 	j.setNext(t, FinanceChargeJobName, `now() - interval '1 hour'`)
-	if n := j.runner.RunDue(j.rig.ctx); n != 0 || j.ran.Load() != 0 {
-		t.Fatalf("W3-FC1c red: a disabled job ran on a tick (%d jobs, %d calls)", n, j.ran.Load())
+	j.runner.RunDue(j.rig.ctx)
+	if j.ran.Load() != 0 {
+		t.Fatalf("W3-FC1c red: a disabled job ran on a tick (%d calls)", j.ran.Load())
 	}
 }
 
