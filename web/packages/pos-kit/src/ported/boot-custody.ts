@@ -31,6 +31,7 @@ import {
   type StorageLike,
 } from "@hardscapehouse/auth";
 import { createAppwriteAccountSurface, enterPersona } from "@hardscapehouse/auth/appwrite-adapter";
+import { MALFORMED_SUCCESS_CODE } from "@hardscapehouse/api-client";
 import type { EntryView } from "./entry.js";
 import { loadRuntimeConfig, personaVisible, type ConsoleRuntimeConfig, type RuntimeConfig } from "@hardscapehouse/auth/runtime-config";
 
@@ -181,11 +182,13 @@ export function entryAfter(outcome: Exclude<AppStart, { kind: "ready" }>): Entry
 }
 
 /**
- * The offline reason for an app that read the status of a failed start: no status means the call never got an
- * answer (lost signal), 429 is a throttle, anything else is a server that is not answering.
+ * The offline reason for an app that read a failed start: no status means the call never got an answer (lost
+ * signal), 429 is a throttle, anything else is a server that is not answering. The one exception to "no status":
+ * a 2xx answer with a malformed body carries no status either, but the server did answer, so it reads as
+ * unavailable, never as a lost signal. The caller passes the failure's code beside its status.
  */
-export function reasonForStatus(status: number | undefined): "offline" | "unavailable" | "rate_limited" {
-  if (status === undefined) return "offline";
+export function reasonForStatus(status: number | undefined, code?: string): "offline" | "unavailable" | "rate_limited" {
+  if (status === undefined) return code === MALFORMED_SUCCESS_CODE ? "unavailable" : "offline";
   return status === 429 ? "rate_limited" : "unavailable";
 }
 
