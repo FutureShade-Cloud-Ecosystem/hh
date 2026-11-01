@@ -2,7 +2,7 @@
 // Every demo-page message stays exactly as it was.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { entryAfter, entryUnavailable } from "./boot-custody.ts";
+import { entryAfter, entryUnavailable, reasonForStatus } from "./boot-custody.ts";
 import { renderEntry } from "./entry.ts";
 
 /** A lit template as the words it prints: strings and values joined, nested templates flattened. */
@@ -73,4 +73,12 @@ test("each unavailable outcome gives the offline state with its reason, and the 
     assert.doesNotMatch(text, /demo|sign in|reload/i, reason);
   }
   assert.match(flat(renderEntry(entryAfter({ kind: "unavailable", reason: "offline" }))), /^This app cannot reach the server/);
+});
+
+// UX-128 round 3 (P3-7): an app that reads the status of a failed start tells a lost signal from a 5xx and a throttle.
+test("a failed start's status names the offline reason: no status is lost signal, 429 is busy, anything else is not answering", () => {
+  assert.equal(reasonForStatus(undefined), "offline");
+  assert.equal(reasonForStatus(429), "rate_limited");
+  assert.equal(reasonForStatus(503), "unavailable");
+  assert.equal(reasonForStatus(500), "unavailable");
 });
