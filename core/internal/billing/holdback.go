@@ -46,14 +46,14 @@ type Withholder interface {
 	BookHoldbackMove(ctx context.Context, m lien.HoldbackMove) (bool, error)
 	// The release (RT-3): the preservation facts that decide when a job's holdback is due, the invoice's
 	// RELEASE row, and the rows a request key already wrote.
-	PreservationFor(ctx context.Context, customerJobID string) (lien.Preservation, bool, error)
+	PreservationSetFor(ctx context.Context, customerJobID string, invoiceIDs []string) ([]lien.Preservation, error)
 	BookRelease(ctx context.Context, b lien.ReleaseBooking) (string, error)
 	ReleasesForKey(ctx context.Context, key string) ([]lien.ReleasedRow, error)
 	HasReleaseOnJob(ctx context.Context, customerJobID string) (bool, error)
 	// The release reversal (RT-3 fix): read a release row, mark it reversed.
 	ReleaseRowByID(ctx context.Context, releaseID string) (lien.ReleaseRow, bool, error)
 	MarkReleaseReversed(ctx context.Context, releaseID string) (bool, error)
-	// HasJobLevelRelease: the linked lien job already has a job level RELEASE row (the old route).
+	// HasJobLevelRelease: a linked lien job, or a job holding the invoices, already has a job level RELEASE row (the old route).
 	HasJobLevelRelease(ctx context.Context, customerJobID string, invoiceIDs []string) (bool, error)
 }
 

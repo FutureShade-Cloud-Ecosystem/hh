@@ -45,7 +45,7 @@ const (
 	BasisNone                   = "NONE"
 )
 
-// Preservation is what decides whether a customer job's holdback is due: the linked lien job, the date its
+// Preservation is what decides whether a customer job's holdback is due: one lien job that bears on it, the date its
 // period counts from, and the day the period ends. Dates are house days (YYYY-MM-DD), "" when unknown.
 type Preservation struct {
 	LienJobID         string
@@ -60,36 +60,133 @@ type Preservation struct {
 	LienPreservedOn   string
 }
 
-// PreservationFor answers the preservation facts of the lien job linked to a customer job, ok false when
-// none is linked. It reads on the caller's transaction when one rides ctx.
-func (s *Service) PreservationFor(ctx context.Context, customerJobID string) (Preservation, bool, error) {
-	jobID, ok, err := s.repo.LinkedLienJob(ctx, customerJobID)
-	if err != nil || !ok {
-		return Preservation{}, false, err
-	}
-	f, err := s.repo.preservationFacts(ctx, jobID)
+// The kinds a judgement of a set of lien jobs answers. The billing module's refusal kinds carry the same
+// words.
+const (
+	KindNotDue        = "NOT_DUE"
+	KindLienPreserved = "LIEN_PRESERVED"
+	KindNoDate        = "NO_DATE"
+	KindNoLienJob     = "NO_LIEN_JOB"
+)
+
+// PreservationSetFor answers the preservation facts of EVERY lien job that bears on a customer job's
+// holdback: each open RECEIVABLE lien job linked to the customer job, and each lien job whose ledger holds
+// one of the invoices about to be released (a job the link no longer names still holds the money). The
+// order is the links first, oldest first, then the holders. An empty answer means no lien job bears on it.
+// It reads on the caller's transaction when one rides ctx.
+func (s *Service) PreservationSetFor(ctx context.Context, customerJobID string, invoiceIDs []string) ([]Preservation, error) {
+	return s.preservationSet(ctx, customerJobID, invoiceIDs, nil)
+}
+
+func (s *Service) preservationSet(ctx context.Context, customerJobID string, invoiceIDs, extraJobIDs []string) ([]Preservation, error) {
+	linked, err := s.repo.LinkedLienJobs(ctx, customerJobID)
 	if err != nil {
-		return Preservation{}, false, err
+		return nil, err
+	}
+	holders, err := s.repo.JobsHoldingInvoices(ctx, invoiceIDs)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	seen := map[string]bool{}
+	for _, group := range [][]string{linked, extraJobIDs, holders} {
+		for _, id := range group {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
 	}
 	rule, err := s.HoldbackRuleForJob(ctx, customerJobID)
 	if err != nil {
-		return Preservation{}, false, err
+		return nil, err
+	}
+	out := make([]Preservation, 0, len(ids))
+	for _, id := range ids {
+		p, err := s.preservationOf(ctx, id, rule.PreserveDays)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// preservationOf reads one lien job's facts under a rule's preserve days.
+func (s *Service) preservationOf(ctx context.Context, jobID string, preserveDays int) (Preservation, error) {
+	f, err := s.repo.preservationFacts(ctx, jobID)
+	if err != nil {
+		return Preservation{}, err
 	}
 	p := Preservation{
-		LienJobID: jobID, LienJobNo: f.jobNo, BranchID: f.branchID, Basis: BasisNone, PreserveDays: rule.PreserveDays,
+		LienJobID: jobID, LienJobNo: f.jobNo, BranchID: f.branchID, Basis: BasisNone, PreserveDays: preserveDays,
 		LienPreserved: f.preservedOn != nil && f.dischargedOn == nil, LienPreservedOn: dateStr(f.preservedOn),
 	}
 	p.Basis, p.BasisDate = preservationStart(f.cspPublished, f.perf, f.lastSupply)
 	if p.BasisDate != "" {
 		base, err := time.Parse("2006-01-02", p.BasisDate)
 		if err != nil {
-			return Preservation{}, false, fmt.Errorf("lien: the job's preservation date %q: %w", p.BasisDate, err)
+			return Preservation{}, fmt.Errorf("lien: the job's preservation date %q: %w", p.BasisDate, err)
 		}
-		last := base.AddDate(0, 0, rule.PreserveDays)
+		last := base.AddDate(0, 0, preserveDays)
 		p.LastDayToPreserve = last.Format("2006-01-02")
 		p.ReleasableOn = last.AddDate(0, 0, 1).Format("2006-01-02")
 	}
-	return p, true, nil
+	return p, nil
+}
+
+// Judgement is what THE RULE answers for a set of lien jobs on a house day: Kind "" when the holdback is due,
+// else why not, in words. Governing is the job the answer names: the offending job for a refusal, else the
+// job whose last day to preserve is the latest over the set (the release's last day is the latest).
+type Judgement struct {
+	Kind      string
+	Msg       string
+	Governing Preservation
+}
+
+// JudgePreservations is the one rule for when a holdback is due, shared by the release, the due to release
+// worklist and the triage badge. It refuses, naming the lien job, when ANY job in the set carries an
+// undischarged preserved lien, then when any has no date to start a period, then when any period has not run
+// out on the house day (today). A lien job set that is empty has no period to count.
+func JudgePreservations(set []Preservation, today string) Judgement {
+	if len(set) == 0 {
+		return Judgement{Kind: KindNoLienJob, Msg: "no lien job is linked to this job, so there is no preservation period to count"}
+	}
+	for _, p := range set {
+		if p.LienPreserved {
+			return Judgement{Kind: KindLienPreserved, Governing: p, Msg: fmt.Sprintf(
+				"a lien was preserved on lien job %s on %s and has not been discharged, so the holdback stays held until it is discharged or settled",
+				p.LienJobNo, p.LienPreservedOn)}
+		}
+	}
+	for _, p := range set {
+		if p.BasisDate == "" {
+			return Judgement{Kind: KindNoDate, Governing: p, Msg: fmt.Sprintf(
+				"lien job %s has no date to start the preservation period from (the publication of the certificate of substantial performance, the date of substantial performance or the last supply), so the holdback cannot be released", p.LienJobNo)}
+		}
+	}
+	gov := set[0]
+	for _, p := range set[1:] {
+		if p.LastDayToPreserve > gov.LastDayToPreserve {
+			gov = p
+		}
+	}
+	if today <= gov.LastDayToPreserve {
+		basis := "substantial performance"
+		switch gov.Basis {
+		case BasisCompletion:
+			basis = "last supply"
+		case BasisPublication:
+			basis = "publication of the certificate of substantial performance"
+		}
+		return Judgement{Kind: KindNotDue, Governing: gov, Msg: fmt.Sprintf(
+			"the holdback is not due: lien job %s counts %d days from %s (%s), so a lien can be preserved through %s and the holdback is releasable from %s",
+			gov.LienJobNo, gov.PreserveDays, gov.BasisDate, basis, gov.LastDayToPreserve, gov.ReleasableOn)}
+	}
+	return Judgement{Governing: gov}
 }
 
 type preservationFacts struct {
@@ -234,7 +331,7 @@ func (s *Service) HasReleaseOnJob(ctx context.Context, customerJobID string) (bo
 }
 
 // HasJobLevelRelease answers whether the old job level route already released holdback that RT-3 is about to
-// release again: a job level RELEASE row (no invoice) on the lien job linked to the customer job, or on ANY
+// release again: a job level RELEASE row (no invoice) on ANY lien job linked to the customer job, or on ANY
 // lien job whose ledger holds one of the invoices about to be released. The two can be different jobs (a
 // manager can unlink a lien job and link another), and the release books against the job that holds the
 // invoice, so the guard keys on the ledger and not only on the link.
@@ -243,17 +340,15 @@ func (s *Service) HasJobLevelRelease(ctx context.Context, customerJobID string, 
 	if err != nil {
 		return false, err
 	}
-	var linked *string
-	if id, ok, err := s.repo.LinkedLienJob(ctx, customerJobID); err != nil {
+	linked, err := s.repo.LinkedLienJobs(ctx, customerJobID)
+	if err != nil {
 		return false, err
-	} else if ok {
-		linked = &id
 	}
 	var n int
 	if err := q.QueryRow(ctx, `
 		SELECT count(*) FROM holdback_ledger
 		 WHERE entry_type = 'RELEASE' AND invoice_id IS NULL
-		   AND (job_id = $1::uuid
+		   AND (job_id = ANY($1::uuid[])
 		        OR job_id IN (SELECT job_id FROM holdback_ledger
 		                       WHERE invoice_id = ANY($2::uuid[]) AND entry_type = 'RETENTION' AND amount_cents > 0))`,
 		linked, invoiceIDs).Scan(&n); err != nil && !errors.Is(err, pgx.ErrNoRows) {

@@ -47,10 +47,10 @@ import (
 
 // The refusal kinds a release answers.
 const (
-	RefusedNotDue          = "NOT_DUE"
-	RefusedLienPreserved   = "LIEN_PRESERVED"
-	RefusedNoDate          = "NO_DATE"
-	RefusedNoLienJob       = "NO_LIEN_JOB"
+	RefusedNotDue          = lien.KindNotDue
+	RefusedLienPreserved   = lien.KindLienPreserved
+	RefusedNoDate          = lien.KindNoDate
+	RefusedNoLienJob       = lien.KindNoLienJob
 	RefusedNothingHeld     = "NOTHING_HELD"
 	RefusedAlreadyReleased = "ALREADY_RELEASED"
 	RefusedNotController   = "NOT_CONTROLLER"
@@ -82,31 +82,12 @@ type HoldbackReleaseRefused struct {
 
 func (e HoldbackReleaseRefused) Error() string { return e.Msg }
 
-// holdbackDue judges one job's preservation against the house day: "" kind when it is due.
-func holdbackDue(p lien.Preservation, linked bool, today string) (kind, msg string) {
-	switch {
-	case !linked:
-		return RefusedNoLienJob, "no lien job is linked to this job, so there is no preservation period to count"
-	case p.LienPreserved:
-		return RefusedLienPreserved, fmt.Sprintf(
-			"a lien was preserved on lien job %s on %s and has not been discharged, so the holdback stays held until it is discharged or settled",
-			p.LienJobNo, p.LienPreservedOn)
-	case p.BasisDate == "":
-		return RefusedNoDate, fmt.Sprintf(
-			"lien job %s has no date to start the preservation period from (the publication of the certificate of substantial performance, the date of substantial performance or the last supply), so the holdback cannot be released", p.LienJobNo)
-	case today <= p.LastDayToPreserve:
-		basis := "substantial performance"
-		switch p.Basis {
-		case lien.BasisCompletion:
-			basis = "last supply"
-		case lien.BasisPublication:
-			basis = "publication of the certificate of substantial performance"
-		}
-		return RefusedNotDue, fmt.Sprintf(
-			"the holdback is not due: lien job %s counts %d days from %s (%s), so a lien can be preserved through %s and the holdback is releasable from %s",
-			p.LienJobNo, p.PreserveDays, p.BasisDate, basis, p.LastDayToPreserve, p.ReleasableOn)
-	}
-	return "", ""
+// holdbackDue judges the lien jobs that bear on a job's holdback against the house day: "" kind when it is
+// due. It is lien.JudgePreservations, the one rule the worklist, the release and the triage badge share; the
+// governing job it answers is the one the refusal names, else the job with the latest last day.
+func holdbackDue(set []lien.Preservation, today string) (lien.Judgement, string, string) {
+	j := lien.JudgePreservations(set, today)
+	return j, j.Kind, j.Msg
 }
 
 // HoldbackDueQuery is the due to release read: the branch ("" = every branch the caller reaches) and the
@@ -184,26 +165,36 @@ SELECT i.id::text, i.invoice_no::text, i.customer_id::text, i.job_id::text, i.br
 	}
 	rows.Close()
 
-	byJob := map[string]struct {
-		p      lien.Preservation
-		linked bool
-		err    error
-	}{}
+	// The lien jobs that bear on a customer job are its linked jobs and the jobs whose ledger holds the
+	// invoices read, so the invoices of each job are gathered first.
+	invoicesOf := map[string][]string{}
+	for _, row := range out {
+		invoicesOf[row.CustomerJobID] = append(invoicesOf[row.CustomerJobID], row.InvoiceID)
+	}
+	type judged struct {
+		j   lien.Judgement
+		err error
+	}
+	byJob := map[string]judged{}
 	for i := range out {
 		row := &out[i]
-		j, seen := byJob[row.CustomerJobID]
+		v, seen := byJob[row.CustomerJobID]
 		if !seen {
-			j.p, j.linked, j.err = r.holdback.PreservationFor(ctx, row.CustomerJobID)
-			byJob[row.CustomerJobID] = j
+			set, err := r.holdback.PreservationSetFor(ctx, row.CustomerJobID, invoicesOf[row.CustomerJobID])
+			v.err = err
+			if err == nil {
+				v.j, _, _ = holdbackDue(set, today)
+			}
+			byJob[row.CustomerJobID] = v
 		}
-		if j.err != nil {
-			row.BlockedKind, row.BlockedReason = RefusedNoDate, "the holdback rule for this job cannot be read: "+j.err.Error()
+		if v.err != nil {
+			row.BlockedKind, row.BlockedReason = RefusedNoDate, "the holdback rule for this job cannot be read: "+v.err.Error()
 			continue
 		}
-		row.LienJobID, row.LienJobNo, row.Basis, row.BasisDate = j.p.LienJobID, j.p.LienJobNo, j.p.Basis, j.p.BasisDate
-		row.PreserveDays, row.LastDayToPreserve, row.ReleasableOn = j.p.PreserveDays, j.p.LastDayToPreserve, j.p.ReleasableOn
-		kind, msg := holdbackDue(j.p, j.linked, today)
-		row.Due, row.BlockedKind, row.BlockedReason = kind == "", kind, msg
+		g := v.j.Governing
+		row.LienJobID, row.LienJobNo, row.Basis, row.BasisDate = g.LienJobID, g.LienJobNo, g.Basis, g.BasisDate
+		row.PreserveDays, row.LastDayToPreserve, row.ReleasableOn = g.PreserveDays, g.LastDayToPreserve, g.ReleasableOn
+		row.Due, row.BlockedKind, row.BlockedReason = v.j.Kind == "", v.j.Kind, v.j.Msg
 	}
 	return out, nil
 }
@@ -401,11 +392,13 @@ SELECT id::text, invoice_no::text, branch_id::text, holdback_cents
 			Msg: "no open invoice on this job withholds any holdback to release"}
 	}
 
-	p, linked, err := r.holdback.PreservationFor(txCtx, in.CustomerJobID)
+	// Every lien job that bears on the money is judged: the ones linked to the job and the ones whose ledger
+	// holds the invoices about to be released, so the release's last day is the latest over them all.
+	set, err := r.holdback.PreservationSetFor(txCtx, in.CustomerJobID, allIDs)
 	if err != nil {
 		return HoldbackReleaseResult{}, err
 	}
-	if kind, msg := holdbackDue(p, linked, today); kind != "" {
+	if _, kind, msg := holdbackDue(set, today); kind != "" {
 		return HoldbackReleaseResult{}, HoldbackReleaseRefused{Kind: kind, Msg: msg}
 	}
 

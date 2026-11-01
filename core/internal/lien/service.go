@@ -381,34 +381,23 @@ func (s *Service) jobFacts(ctx context.Context, branchID string) (map[string]job
 	return out, nil
 }
 
-// linkedHoldOf reads a linked job's standing under RT-3's preservation rule from the job's own dates and the
-// preserve days of the rule that governs its customer job. A rule that cannot be read leaves the job
-// "no date" (the worklist then says it cannot be judged), never a guess.
+// linkedHoldOf reads a linked job's standing under RT-3's preservation rule: THE RULE (JudgePreservations)
+// over every lien job that bears on the job's customer job (all linked, and this one), at the preserve days
+// of the rule that governs the customer job. A rule that cannot be read leaves the job "no date" (the
+// worklist then says it cannot be judged), never a guess.
 func (s *Service) linkedHoldOf(ctx context.Context, j Job) linkedHold {
-	if j.LienPreservedOn != "" && j.LienDischargedOn == "" {
+	set, err := s.preservationSet(ctx, j.CustomerJobID, nil, []string{j.ID})
+	if err != nil || len(set) == 0 {
+		return linkedHold{State: holdNoDate}
+	}
+	jd := JudgePreservations(set, houseday.DefaultZone().Today(s.clock))
+	switch jd.Kind {
+	case KindLienPreserved:
 		return linkedHold{State: holdLien}
-	}
-	parse := func(v string) *time.Time {
-		if t, err := time.Parse("2006-01-02", v); err == nil {
-			return &t
-		}
-		return nil
-	}
-	_, start := preservationStart(parse(j.CSPPublishedOn), parse(j.SubstantialPerfDate), parse(j.LastSupplyDate))
-	if start == "" {
+	case KindNoDate:
 		return linkedHold{State: holdNoDate}
+	case KindNotDue:
+		return linkedHold{State: holdWaiting, ReleasableOn: jd.Governing.ReleasableOn}
 	}
-	rule, err := s.HoldbackRuleForJob(ctx, j.CustomerJobID)
-	if err != nil {
-		return linkedHold{State: holdNoDate}
-	}
-	base, err := time.Parse("2006-01-02", start)
-	if err != nil {
-		return linkedHold{State: holdNoDate}
-	}
-	releasable := base.AddDate(0, 0, rule.PreserveDays+1).Format("2006-01-02")
-	if houseday.DefaultZone().Today(s.clock) < releasable {
-		return linkedHold{State: holdWaiting, ReleasableOn: releasable}
-	}
-	return linkedHold{State: holdReleaseD, ReleasableOn: releasable}
+	return linkedHold{State: holdReleaseD, ReleasableOn: jd.Governing.ReleasableOn}
 }
