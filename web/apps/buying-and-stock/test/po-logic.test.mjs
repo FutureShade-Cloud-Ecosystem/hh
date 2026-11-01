@@ -366,3 +366,11 @@ test("the sales orders a shortfall holds up read as one reason: the oldest first
   assert.equal(shortOrderWords({}), "");
   assert.equal(shortOrderWords({ short_order_nos: [], short_order_more: 0 }), "");
 });
+
+test("UX-134: a malformed success reads as the server's problem, a lost signal as unreachable", () => {
+  const malformed = refusalWords("receive", "not valid JSON", undefined, "malformed_success_body");
+  assert.equal(malformed, refusalWords("receive", "boom", 503));
+  assert.doesNotMatch(malformed, /could not be reached/);
+  assert.match(refusalWords("receive", "network down", undefined), /could not be reached/);
+  assert.match(refusalWords("receive", "timed out", undefined, "timeout"), /could not be reached/);
+});

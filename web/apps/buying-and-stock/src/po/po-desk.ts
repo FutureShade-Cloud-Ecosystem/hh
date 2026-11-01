@@ -87,7 +87,7 @@ export class PoDesk implements AreaDesk {
 
   #loadFailed(result: Extract<Result<unknown>, { ok: false }>): void {
     this.#phase = "error";
-    this.#error = refusalWords("load", result.error, result.status);
+    this.#error = refusalWords("load", result.error, result.status, result.code);
     this.#host.repaint();
   }
 
@@ -233,7 +233,7 @@ export class PoDesk implements AreaDesk {
 
   #fail(action: string, result: Extract<Result<unknown>, { ok: false }>, at: "panel" | "editor" = "panel"): void {
     this.#notice = "";
-    this.#error = refusalWords(action, result.error, result.status);
+    this.#error = refusalWords(action, result.error, result.status, result.code);
     this.#errorAt = at;
   }
 
