@@ -129,9 +129,11 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 	rows, err := r.pool.Query(ctx,
 		`WITH activity AS (
 			SELECT t.occurred_at, t.created_at, t.txn_type, t.amount_cents,
-			       COALESCE(i.invoice_no::text, '') AS invoice_no, COALESCE(t.memo,'') AS memo, t.source_type
+			       COALESCE(i.invoice_no::text, '') AS invoice_no, COALESCE(t.memo,'') AS memo, t.source_type,
+			       COALESCE(ri.invoice_no::text, '') AS reverses_no
 			  FROM customer_transactions t
 			  LEFT JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
+			  LEFT JOIN invoices ri ON ri.id = i.reverses_invoice_id AND ri.customer_id = t.customer_id
 			 WHERE t.customer_id = $1::uuid AND (t.occurred_at AT TIME ZONE $4::text)::date <= $2::date
 			   AND ($3::uuid[] IS NULL OR t.branch_id = ANY($3::uuid[]))
 			UNION ALL
@@ -140,7 +142,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			       i.doc_type AS txn_type,
 			       i.total_cents AS amount_cents,
 			       i.invoice_no::text AS invoice_no,
-			       i.invoice_no::text AS memo, '' AS source_type
+			       i.invoice_no::text AS memo, '' AS source_type, '' AS reverses_no
 			  FROM invoices i
 			 WHERE i.customer_id = $1::uuid
 			   AND i.status IN ('FINALIZED', 'PARTIALLY_PAID')
@@ -161,7 +163,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			-- (invoice_holdback_as_of), for every invoice issued by then, whatever its status or holdback is
 			-- today: a credit, a write off or a release taken after the date never rewrites the statement.
 			SELECT h.occurred_at, h.created_at, 'HOLDBACK' AS txn_type, -h.held AS amount_cents,
-			       h.invoice_no, 'Holdback withheld on ' || h.invoice_no AS memo, '' AS source_type
+			       h.invoice_no, 'Holdback withheld on ' || h.invoice_no AS memo, '' AS source_type, '' AS reverses_no
 			  FROM (
 			    SELECT (i.issue_date::timestamp AT TIME ZONE $4::text) AS occurred_at,
 			           i.created_at + interval '1 microsecond' AS created_at,
@@ -182,7 +184,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			-- "Holdback withheld" line vanish with no word of why. It moves no money (the amount is zero), so
 			-- the running balance and the closing figure are the aging's, unchanged.
 			SELECT r.occurred_at, r.created_at, 'HOLDBACK_RELEASED' AS txn_type, 0::bigint AS amount_cents,
-			       r.invoice_no, r.invoice_no || ' (holdback released ' || to_char(r.rel_on, 'YYYY-MM-DD') || ')' AS memo, '' AS source_type
+			       r.invoice_no, r.invoice_no || ' (holdback released ' || to_char(r.rel_on, 'YYYY-MM-DD') || ')' AS memo, '' AS source_type, '' AS reverses_no
 			  FROM (
 			    SELECT (invoice_released_on(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond')::timestamp AT TIME ZONE $4::text) AS occurred_at,
 			           i.created_at + interval '2 microsecond' AS created_at,
@@ -198,7 +200,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			  ) r
 			 WHERE r.rel_cents > 0
 		)
-		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, source_type
+		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, source_type, reverses_no
 		  FROM activity
 		 ORDER BY occurred_at, created_at`, customerID, houseClockIn(zone, asOf), reach.SQLArg(), zone.Name())
 	if err != nil {
@@ -218,7 +220,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			srcType    string
 			reversesNo string
 		)
-		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &srcType); err != nil {
+		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &srcType, &reversesNo); err != nil {
 			return nil, fmt.Errorf("billing: scan statement line: %w", err)
 		}
 		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: statementDescription(txnType, srcType, memo, invNo, reversesNo)}
@@ -258,9 +260,6 @@ var (
 		regexp.MustCompile(`^Credit memo [#A-Za-z0-9-]+$`),
 		regexp.MustCompile(`^finance charge for [A-Za-z]+ \d{4}$`),
 	}
-	// creditMemoLine is the credit memo's own line, "#CM-n, reverses <invoice> (<reason>)": the numbers are
-	// the account's own and stay, the bracketed reason is the clerk's and goes.
-	creditMemoLine = regexp.MustCompile(`^([#A-Za-z0-9-]+(?:, reverses [#A-Za-z0-9._/-]+)?)(?: \(.*)?$`)
 )
 
 // statementKnownWords are the undo and credit writes whose memo is a fixed prefix plus the clerk's reason,
@@ -283,7 +282,6 @@ var statementKnownWords = []struct{ prefix, words string }{
 // clerk typed and no internal id reaches it unless the memo is an allow listed shape or is the document's own
 // number.
 func statementDescription(txnType, sourceType, memo, docNo, reversesNo string) string {
-	_ = reversesNo
 	if memo != "" && memo == docNo {
 		return memo
 	}
@@ -301,8 +299,13 @@ func statementDescription(txnType, sourceType, memo, docNo, reversesNo string) s
 		}
 	}
 	if txnType == "CREDIT_MEMO" {
-		if m := creditMemoLine.FindStringSubmatch(memo); m != nil {
-			return m[1]
+		// The row's own document number and the reversed invoice's number, both read from the invoices by
+		// id (the joined docNo and reversesNo); nothing is taken from the memo's text.
+		if docNo != "" {
+			if reversesNo != "" {
+				return docNo + ", reverses " + reversesNo
+			}
+			return docNo
 		}
 		return "Credit memo"
 	}

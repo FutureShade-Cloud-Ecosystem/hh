@@ -310,7 +310,15 @@ func TestIntegration_P063_PlainStatementWords(t *testing.T) {
 		w := p063Plant(t, pool)
 		memoID := w.memo(t, w.invA, 4000, "p063-memo-"+w.cust)
 		ls := w.lines(t, "credit memo")
-		p063Has(t, "credit memo", ls, ls[len(ls)-1].Description) // the memo line is the last; checked for leaks above
+		// The memo's line is its own number and the reversed invoice's number, both read by id.
+		var cmNo, invANo string
+		if err := pool.QueryRow(ctx, `SELECT invoice_no FROM invoices WHERE id = $1::uuid`, memoID).Scan(&cmNo); err != nil {
+			t.Fatalf("read the credit memo's number: %v", err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT invoice_no FROM invoices WHERE id = $1::uuid`, w.invA).Scan(&invANo); err != nil {
+			t.Fatalf("read the reversed invoice's number: %v", err)
+		}
+		p063Has(t, "credit memo", ls, cmNo+", reverses "+invANo)
 		app, err := w.bill.ApplyCredit(ctx, billing.ApplyCreditInput{
 			CustomerID: w.cust, CreditKind: billing.CreditKindMemo, CreditID: memoID, InvoiceID: w.invB,
 			AmountCents: 4000, Reason: p063Reason, IdempotencyKey: "p063-apply-" + w.cust, OrgID: cmRoundNorthOrg,
@@ -395,14 +403,14 @@ RETURNING id::text`, w.cust, fam.txn, fam.source, trentonBranchID, fam.memo).Sca
 	// A writer the statement has never heard of reads as fixed words, never as its memo.
 	t.Run("AnUnknownMemoReadsAsFixedWords", func(t *testing.T) {
 		w := p063Plant(t, pool)
-		for _, txn := range []string{"ADJUSTMENT", "PAYMENT", "WRITE_OFF", "NSF"} {
+		for _, txn := range []string{"ADJUSTMENT", "PAYMENT", "WRITE_OFF", "NSF", "CREDIT_MEMO", "INVOICE"} {
 			p063Exec(t, pool, "plant a ledger row with an unknown memo", `
 INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
 VALUES ($1::uuid, $2, 0, 0, 'brand_new_writer', $3::uuid, $4::uuid, $5)`,
 				w.cust, txn, w.invA, trentonBranchID, "a future writer: "+p063Reason)
 		}
 		ls := w.lines(t, "unknown memo")
-		for _, want := range []string{"Adjustment", "Payment received, thank you", "Write-off", "Returned payment"} {
+		for _, want := range []string{"Adjustment", "Payment received, thank you", "Write-off", "Returned payment", "Credit memo", "Invoice"} {
 			p063Has(t, "unknown memo", ls, want)
 		}
 		w.staffKeepsReason(t, "unknown memo")
