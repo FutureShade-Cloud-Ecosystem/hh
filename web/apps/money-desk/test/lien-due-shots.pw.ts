@@ -77,7 +77,7 @@ for (const size of SIZES) {
         await gm.getByRole("button", { name: "Theme: Light" }).click();
       }
       await liensTab(gm, "holdbacks");
-      await gm.locator("[data-row='aging'][data-job-no='GLS-2103']:visible").getByRole("button", { name: "Release" }).click();
+      await gm.locator("[data-row='aging'][data-job-no='GLS-2105']:visible").getByRole("button", { name: "Release" }).click();
       await expect(gm.locator("[data-job-level-refused]")).toBeVisible();
       await shot(gm, theme, size.width, "09", "old-press-refused");
     });
