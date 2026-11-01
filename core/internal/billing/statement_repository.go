@@ -174,6 +174,27 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			       AND ($3::uuid[] IS NULL OR i.branch_id = ANY($3::uuid[]))
 			  ) h
 			 WHERE h.held > 0
+			UNION ALL
+			-- A holdback released by the statement date is said so, in the words the preview uses: the
+			-- invoice's line above carries the whole total, and without this the customer would see the
+			-- "Holdback withheld" line vanish with no word of why. It moves no money (the amount is zero), so
+			-- the running balance and the closing figure are the aging's, unchanged.
+			SELECT r.occurred_at, r.created_at, 'HOLDBACK_RELEASED' AS txn_type, 0::bigint AS amount_cents,
+			       r.invoice_no, r.invoice_no || ' (holdback released ' || to_char(r.rel_on, 'YYYY-MM-DD') || ')' AS memo
+			  FROM (
+			    SELECT (invoice_released_on(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond')::timestamp AT TIME ZONE $4::text) AS occurred_at,
+			           i.created_at + interval '2 microsecond' AS created_at,
+			           i.invoice_no::text AS invoice_no,
+			           invoice_released_on(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond') AS rel_on,
+			           invoice_released_cents_as_of(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond') AS rel_cents
+			      FROM invoices i
+			     WHERE i.customer_id = $1::uuid
+			       AND i.doc_type = 'INVOICE'
+			       AND i.status IN ('FINALIZED', 'PARTIALLY_PAID', 'PAID')
+			       AND i.issue_date <= $2::date
+			       AND ($3::uuid[] IS NULL OR i.branch_id = ANY($3::uuid[]))
+			  ) r
+			 WHERE r.rel_cents > 0
 		)
 		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo
 		  FROM activity
@@ -535,16 +556,27 @@ func (r *Repository) PreviewLines(ctx context.Context, customerID string, asOf t
 		return nil, err
 	}
 	rows, err := r.pool.Query(ctx,
-		`WITH open_lines AS (
-			SELECT i.id::text AS doc_id,
-			       i.invoice_no::text AS doc_no,
-			       i.due_date,
-			       i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0)) AS balance_cents,
-			       GREATEST(0, (($2::date - i.due_date))::int) AS days_overdue
+		`WITH inv AS (
+			SELECT i.id, i.invoice_no, i.due_date,
+			       to_char(invoice_released_on(i.id, now()), 'YYYY-MM-DD') AS rel_on,
+			       i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0)) AS net,
+			       invoice_released_cents_as_of(i.id, now()) AS rel_cents,
+			       GREATEST(invoice_released_on(i.id, now()) + GREATEST(i.due_date - i.issue_date, 0), i.due_date) AS rel_due
 			  FROM invoices i
 			 WHERE i.customer_id = $1::uuid
 			   AND i.status IN ('FINALIZED','PARTIALLY_PAID')
 			   AND i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0)) <> 0
+		), open_lines AS (
+			SELECT inv.id::text AS doc_id,
+			       inv.invoice_no::text || x.label AS doc_no,
+			       x.due_date,
+			       x.bal AS balance_cents,
+			       GREATEST(0, (($2::date - x.due_date))::int) AS days_overdue
+			  FROM inv
+			  CROSS JOIN LATERAL (VALUES
+			        (inv.net - LEAST(inv.rel_cents, GREATEST(inv.net, 0)), inv.due_date, ''),
+			        (LEAST(inv.rel_cents, GREATEST(inv.net, 0)), inv.rel_due, ' (holdback released ' || COALESCE(inv.rel_on, '') || ')')) AS x(bal, due_date, label)
+			 WHERE x.bal <> 0
 			UNION ALL
 			SELECT COALESCE(ct.source_ref_id, ct.id)::text AS doc_id,
 			       COALESCE(NULLIF(MIN(ct.memo), ''), MIN(ct.txn_type)) AS doc_no,
@@ -592,12 +624,21 @@ func (r *Repository) PreviewAging(ctx context.Context, customerID string) (State
 	today := houseClockIn(zone, time.Now()).Format("2006-01-02")
 	var a StatementPreviewAging
 	err = r.pool.QueryRow(ctx,
-		`WITH open_ar AS (
-			SELECT balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0)) AS balance_cents, due_date
+		`WITH inv AS (
+			SELECT balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0)) AS net, due_date,
+			       invoice_released_cents_as_of(id, now()) AS rel_cents,
+			       GREATEST(invoice_released_on(id, now()) + GREATEST(due_date - issue_date, 0), due_date) AS rel_due
 			  FROM invoices
 			 WHERE customer_id = $1::uuid
 			   AND status IN ('FINALIZED','PARTIALLY_PAID')
 			   AND balance_cents - LEAST(GREATEST(holdback_cents, 0), GREATEST(balance_cents, 0)) <> 0
+		), open_ar AS (
+			SELECT x.bal AS balance_cents, x.due_date
+			  FROM inv
+			  CROSS JOIN LATERAL (VALUES
+			        (inv.net - LEAST(inv.rel_cents, GREATEST(inv.net, 0)), inv.due_date),
+			        (LEAST(inv.rel_cents, GREATEST(inv.net, 0)), inv.rel_due)) AS x(bal, due_date)
+			 WHERE x.bal <> 0
 			UNION ALL
 			SELECT SUM(amount_cents) AS balance_cents,
 			       MIN((occurred_at AT TIME ZONE $3::text)::date) AS due_date

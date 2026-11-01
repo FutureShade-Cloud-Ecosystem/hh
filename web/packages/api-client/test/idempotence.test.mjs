@@ -39,10 +39,12 @@ test("two fresh generations are byte-identical and match the committed tree", ()
     // reportingUpdateSavedReport, reportingDeleteSavedReport, reportingRunSavedReport and
     // reportingExportSavedReportCsv), plus RT-1's five holdback rule routes, plus FX-2b's three AP
     // revaluation routes (purchasingRunAPRevaluation, purchasingReverseAPRevaluation and
-    // purchasingListAPRevaluations), plus FC-1b's four finance charge doors (billingRunFinanceCharges,
-    // billingListFinanceCharges, billingSetFinanceChargeWaiver and billingClearFinanceChargeWaiver), plus FC-1c's two finance job doors (billingListFinanceJobs and
-    // billingSetFinanceJobEnabled), plus FC-1c's waiver read (billingListFinanceChargeWaivers): 844.
-    if (!out1.includes("844 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
+    // purchasingListAPRevaluations), plus RT-3's billingListHoldbackDueToRelease and
+    // billingReleaseHoldback: 839, plus the RT-3 fix round's billingReverseHoldbackRelease, lienRecordPreservedLien,
+    // lienDischargeLien and lienSetPreservationDates: 843, plus FC-1b's four finance charge doors
+    // (billingRunFinanceCharges, billingListFinanceCharges, billingSetFinanceChargeWaiver and billingClearFinanceChargeWaiver): 847, plus FC-1c's two finance job doors
+    // (billingListFinanceJobs and billingSetFinanceJobEnabled) and its waiver read (billingListFinanceChargeWaivers): 850.
+    if (!out1.includes("850 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
     const a = snapshot(one);
     const b = snapshot(two);
     const c = snapshot(committed);

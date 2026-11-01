@@ -639,6 +639,68 @@ type BillingWriteOffReversed struct {
 	Replayed                 bool   `json:"replayed"`
 }
 
+type BillingHoldbackDueRow struct {
+	InvoiceId         string  `json:"invoice_id"`
+	InvoiceNo         string  `json:"invoice_no"`
+	CustomerId        string  `json:"customer_id"`
+	CustomerJobId     string  `json:"customer_job_id"`
+	LienJobId         *string `json:"lien_job_id,omitempty"`
+	LienJobNo         *string `json:"lien_job_no,omitempty"`
+	BranchId          string  `json:"branch_id"`
+	HoldbackCents     int64   `json:"holdback_cents"`
+	Basis             *string `json:"basis,omitempty"`
+	BasisDate         *string `json:"basis_date,omitempty"`
+	PreserveDays      *int    `json:"preserve_days,omitempty"`
+	LastDayToPreserve *string `json:"last_day_to_preserve,omitempty"`
+	ReleasableOn      *string `json:"releasable_on,omitempty"`
+	Due               bool    `json:"due"`
+	BlockedKind       *string `json:"blocked_kind,omitempty"`
+	BlockedReason     *string `json:"blocked_reason,omitempty"`
+}
+
+type BillingHoldbackBranchDue struct {
+	BranchId string `json:"branch_id"`
+	DueCents int64  `json:"due_cents"`
+}
+
+type BillingHoldbackDueToRelease struct {
+	Items    []BillingHoldbackDueRow    `json:"items"`
+	Branches []BillingHoldbackBranchDue `json:"branches"`
+}
+
+type BillingHoldbackReleaseInput struct {
+	CustomerJobId  string `json:"customer_job_id"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type BillingHoldbackReleasedInvoice struct {
+	InvoiceId   string `json:"invoice_id"`
+	InvoiceNo   string `json:"invoice_no"`
+	BranchId    string `json:"branch_id"`
+	ReleaseId   string `json:"release_id"`
+	AmountCents int64  `json:"amount_cents"`
+}
+
+type BillingHoldbackReversalInput struct {
+	Reason string `json:"reason"`
+}
+
+type BillingHoldbackReversal struct {
+	ReleaseId     string `json:"release_id"`
+	InvoiceId     string `json:"invoice_id"`
+	InvoiceNo     string `json:"invoice_no"`
+	RestoredCents int64  `json:"restored_cents"`
+	ReversedOn    string `json:"reversed_on"`
+}
+
+type BillingHoldbackRelease struct {
+	CustomerJobId string                           `json:"customer_job_id"`
+	ReleasedOn    string                           `json:"released_on"`
+	TotalCents    int64                            `json:"total_cents"`
+	Items         []BillingHoldbackReleasedInvoice `json:"items"`
+	Replayed      bool                             `json:"replayed"`
+}
+
 type BillingCreditApplication struct {
 	ApplicationId        string                         `json:"application_id"`
 	CreditKind           string                         `json:"credit_kind"`
@@ -10874,6 +10936,10 @@ type LienJob struct {
 	HoldbackPctBps      int32      `json:"holdback_pct_bps"`
 	SubstantialPerfDate *string    `json:"substantial_perf_date,omitempty"`
 	LastSupplyDate      *string    `json:"last_supply_date,omitempty"`
+	CspPublishedOn      *string    `json:"csp_published_on,omitempty"`
+	LienPreservedOn     *string    `json:"lien_preserved_on,omitempty"`
+	LienPreservedNote   *string    `json:"lien_preserved_note,omitempty"`
+	LienDischargedOn    *string    `json:"lien_discharged_on,omitempty"`
 	Status              string     `json:"status"`
 	HoldbackDirection   string     `json:"holdback_direction"`
 	HstOnHoldback       bool       `json:"hst_on_holdback"`
@@ -10914,16 +10980,33 @@ type LienCustomerJobLinkInput struct {
 }
 
 type LienJobInput struct {
-	JobNo               string `json:"job_no"`
-	CustomerId          string `json:"customer_id"`
-	BranchId            string `json:"branch_id"`
-	Description         string `json:"description"`
-	ContractCents       int64  `json:"contract_cents"`
-	HoldbackPctBps      int32  `json:"holdback_pct_bps"`
-	SubstantialPerfDate string `json:"substantial_perf_date"`
-	LastSupplyDate      string `json:"last_supply_date"`
-	HoldbackDirection   string `json:"holdback_direction"`
-	HstOnHoldback       bool   `json:"hst_on_holdback"`
+	JobNo               string  `json:"job_no"`
+	CustomerId          string  `json:"customer_id"`
+	BranchId            string  `json:"branch_id"`
+	Description         string  `json:"description"`
+	ContractCents       int64   `json:"contract_cents"`
+	HoldbackPctBps      int32   `json:"holdback_pct_bps"`
+	SubstantialPerfDate string  `json:"substantial_perf_date"`
+	LastSupplyDate      string  `json:"last_supply_date"`
+	CspPublishedOn      *string `json:"csp_published_on,omitempty"`
+	HoldbackDirection   string  `json:"holdback_direction"`
+	HstOnHoldback       bool    `json:"hst_on_holdback"`
+}
+
+type LienPreservedLienInput struct {
+	PreservedOn string  `json:"preserved_on"`
+	Note        *string `json:"note,omitempty"`
+}
+
+type LienDischargeInput struct {
+	DischargedOn string  `json:"discharged_on"`
+	Note         *string `json:"note,omitempty"`
+}
+
+type LienPreservationDatesInput struct {
+	CspPublishedOn      *string `json:"csp_published_on,omitempty"`
+	SubstantialPerfDate *string `json:"substantial_perf_date,omitempty"`
+	LastSupplyDate      *string `json:"last_supply_date,omitempty"`
 }
 
 type LienJobPage struct {

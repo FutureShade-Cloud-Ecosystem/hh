@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { LienAgingRowPage, LienCustomerJobLinkInput, LienDealerRule, LienDocument, LienDocumentInput, LienDocumentPage, LienHoldbackOverrideInput, LienHoldbackRule, LienJob, LienJobInput, LienJobPage, LienProvinceRuleList, LienReleaseApproval, LienReleaseResult, LienSyncResult, LienTriageItemPage } from "./types.js";
+import type { LienAgingRowPage, LienCustomerJobLinkInput, LienDealerRule, LienDischargeInput, LienDocument, LienDocumentInput, LienDocumentPage, LienHoldbackOverrideInput, LienHoldbackRule, LienJob, LienJobInput, LienJobPage, LienPreservationDatesInput, LienPreservedLienInput, LienProvinceRuleList, LienReleaseApproval, LienReleaseResult, LienSyncResult, LienTriageItemPage } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -207,6 +207,57 @@ export async function lienListJobDocuments(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "lienListJobDocuments",
+  });
+}
+
+export async function lienSetPreservationDates(
+  client: ApiClient,
+  id: string | number,
+  body: LienPreservationDatesInput,
+  call?: ApiCallOptions
+): Promise<Result<LienJob>> {
+  return client.request<LienJob>({
+    method: "PUT",
+    path: "/api/v1/lien/jobs/{id}/preservation-dates",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "lienSetPreservationDates",
+  });
+}
+
+export async function lienRecordPreservedLien(
+  client: ApiClient,
+  id: string | number,
+  body: LienPreservedLienInput,
+  call?: ApiCallOptions
+): Promise<Result<LienJob>> {
+  return client.request<LienJob>({
+    method: "POST",
+    path: "/api/v1/lien/jobs/{id}/preserved-lien",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "lienRecordPreservedLien",
+  });
+}
+
+export async function lienDischargeLien(
+  client: ApiClient,
+  id: string | number,
+  body: LienDischargeInput,
+  call?: ApiCallOptions
+): Promise<Result<LienJob>> {
+  return client.request<LienJob>({
+    method: "POST",
+    path: "/api/v1/lien/jobs/{id}/preserved-lien/discharge",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "lienDischargeLien",
   });
 }
 

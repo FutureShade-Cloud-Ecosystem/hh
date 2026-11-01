@@ -554,6 +554,126 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ar/holdback/due-to-release:
+    get:
+      operationId: billingListHoldbackDueToRelease
+      tags: [staff-billing]
+      x-addition: "Wave 3 RT-3 holdback due to release read over the dated holdback ledger; no ERP source route"
+      summary: List the holdback each open invoice still withholds and whether it is due to release
+      description: >-
+        One read per branch: for every open invoice on a lien linked job that still withholds, the amount from
+        the dated holdback ledger (invoice_holdback_as_of, now), the lien job's date the preservation period
+        counts from (substantial performance, else last supply), the last day a lien can be preserved (that
+        date plus the province rule's preserve days), the house day it is releasable from (the next day), and
+        whether it is due. A holdback that is not due says why in words: before its day, a lien preserved and
+        not discharged, or no date to count from. Branches are fenced to the caller's reach; branch_id narrows
+        the list. branches carries the amount due per branch.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The holdback by invoice and the amount due per branch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingHoldbackDueToRelease"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/ar/holdback/releases:
+    post:
+      operationId: billingReleaseHoldback
+      tags: [staff-billing]
+      x-addition: "Wave 3 RT-3 holdback release, one RELEASE row per invoice, Controller only; no ERP source route"
+      summary: Release the due holdback of one customer job, invoice by invoice
+      description: >-
+        The Controller's action (the caller's own role; a manager who is not the Controller is refused with
+        403). For each open invoice on the job that still withholds: one RELEASE row on the invoice in the
+        holdback ledger and the invoice's holdback column lowered in the same call, and the journal DR 1100 /
+        CR 1150, so the customer now owes the amount on the same invoice (its net grows; no new invoice is
+        raised, which would count it twice). Refused with 409, in words, before the day it falls due, while a
+        lien is preserved and not discharged, with no date to count from, when nothing is held and when it was
+        already released (including by the old job level release route). A job is released whole: a caller who
+        does not reach every branch its held invoices sit at is refused with 403, in words. An idempotency key
+        names one release: used on a second job it is refused. Idempotent on idempotency_key: a retry answers
+        the first result with 200.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingHoldbackReleaseInput"
+      responses:
+        "200":
+          description: Replayed release result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingHoldbackRelease"
+        "201":
+          description: Holdback released
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingHoldbackRelease"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/ar/holdback/releases/{releaseID}/reversal:
+    post:
+      operationId: billingReverseHoldbackRelease
+      tags: [staff-billing]
+      x-addition: "Wave 3 RT-3 fix: the Controller's reversal of a release made in error; no ERP source route"
+      summary: Reverse a holdback release made in error
+      description: >-
+        The Controller's action (403 for anyone else), with a reason that is recorded. The invoice's holdback
+        column goes up by the released amount and a positive RETENTION row restores the ledger beside the kept
+        RELEASE row, in one transaction; the GL reverses the release (DR 1150 / CR 1100). The holdback can then
+        be released again. Refused with 409 when the release was already reversed or the customer has paid part
+        of the released amount, 404 when there is no such release.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: releaseID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingHoldbackReversalInput"
+      responses:
+        "200":
+          description: Release reversed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingHoldbackReversal"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /api/v1/ar/credit-changes:
     get:
       operationId: billingListCreditChanges
@@ -3399,6 +3519,112 @@ components:
         invoice_no: { type: string }
         restored_cents: { type: integer, format: int64 }
         invoice_balance_after_cents: { type: integer, format: int64 }
+        replayed: { type: boolean }
+    BillingHoldbackDueRow:
+      type: object
+      required:
+        - invoice_id
+        - invoice_no
+        - customer_id
+        - customer_job_id
+        - branch_id
+        - holdback_cents
+        - due
+      properties:
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        customer_id: { type: string, format: uuid }
+        customer_job_id: { type: string, format: uuid }
+        lien_job_id: { type: string, format: uuid }
+        lien_job_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        holdback_cents: { type: integer, format: int64 }
+        basis:
+          type: string
+          enum: [CSP_PUBLICATION, SUBSTANTIAL_PERFORMANCE, COMPLETION, NONE]
+        basis_date: { type: string, description: "House day the preservation period counts from, YYYY-MM-DD" }
+        preserve_days: { type: integer }
+        last_day_to_preserve: { type: string, description: "House day, YYYY-MM-DD" }
+        releasable_on: { type: string, description: "House day, YYYY-MM-DD" }
+        due: { type: boolean }
+        blocked_kind:
+          type: string
+          enum: [NOT_DUE, LIEN_PRESERVED, NO_DATE, NO_LIEN_JOB]
+        blocked_reason: { type: string }
+    BillingHoldbackBranchDue:
+      type: object
+      required:
+        - branch_id
+        - due_cents
+      properties:
+        branch_id: { type: string, format: uuid }
+        due_cents: { type: integer, format: int64 }
+    BillingHoldbackDueToRelease:
+      type: object
+      required:
+        - items
+        - branches
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingHoldbackDueRow"
+        branches:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingHoldbackBranchDue"
+    BillingHoldbackReleaseInput:
+      type: object
+      required:
+        - customer_job_id
+        - idempotency_key
+      properties:
+        customer_job_id: { type: string, format: uuid }
+        idempotency_key: { type: string }
+    BillingHoldbackReleasedInvoice:
+      type: object
+      required:
+        - invoice_id
+        - invoice_no
+        - branch_id
+        - release_id
+        - amount_cents
+      properties:
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        branch_id: { type: string, format: uuid }
+        release_id: { type: string, format: uuid }
+        amount_cents: { type: integer, format: int64 }
+    BillingHoldbackReversalInput:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, description: "Why the release was made in error; recorded" }
+    BillingHoldbackReversal:
+      type: object
+      required: [release_id, invoice_id, invoice_no, restored_cents, reversed_on]
+      properties:
+        release_id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        restored_cents: { type: integer, format: int64 }
+        reversed_on: { type: string, description: "House day, YYYY-MM-DD" }
+    BillingHoldbackRelease:
+      type: object
+      required:
+        - customer_job_id
+        - released_on
+        - total_cents
+        - items
+        - replayed
+      properties:
+        customer_job_id: { type: string, format: uuid }
+        released_on: { type: string, description: "House day, YYYY-MM-DD" }
+        total_cents: { type: integer, format: int64 }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingHoldbackReleasedInvoice"
         replayed: { type: boolean }
     BillingCreditApplication:
       type: object

@@ -99,25 +99,28 @@ const (
 // computed it from due_date would be aging invoices against the operator's laptop clock, which is
 // how two people end up quoting different numbers down two phone lines.
 type RegisterRow struct {
-	ID            string    `json:"id"`
-	InvoiceNo     string    `json:"invoice_no"`
-	DocType       string    `json:"doc_type"` // INVOICE | CREDIT_MEMO
-	CustomerID    string    `json:"customer_id"`
-	CustomerName  string    `json:"customer_name"`
-	AccountNo     string    `json:"account_no"`
-	BranchID      string    `json:"branch_id"`
-	OrderID       string    `json:"order_id,omitempty"`
-	OrderNo       string    `json:"order_no,omitempty"`
-	CustomerPO    string    `json:"customer_po,omitempty"`
-	Salesperson   string    `json:"salesperson,omitempty"`
-	IssueDate     time.Time `json:"issue_date"`
-	DueDate       time.Time `json:"due_date"`
-	TotalCents    int64     `json:"total_cents"`
-	BalanceCents  int64     `json:"balance_cents"`
-	HoldbackCents int64     `json:"holdback_cents,omitempty"`
-	StoredStatus  string    `json:"stored_status"` // the 0009 CHECK value, unmodified
-	Status        string    `json:"status"`        // the derived pill state
-	DaysOverdue   int       `json:"days_overdue"`  // 0 unless past due
+	ID           string    `json:"id"`
+	InvoiceNo    string    `json:"invoice_no"`
+	DocType      string    `json:"doc_type"` // INVOICE | CREDIT_MEMO
+	CustomerID   string    `json:"customer_id"`
+	CustomerName string    `json:"customer_name"`
+	AccountNo    string    `json:"account_no"`
+	BranchID     string    `json:"branch_id"`
+	OrderID      string    `json:"order_id,omitempty"`
+	OrderNo      string    `json:"order_no,omitempty"`
+	CustomerPO   string    `json:"customer_po,omitempty"`
+	Salesperson  string    `json:"salesperson,omitempty"`
+	IssueDate    time.Time `json:"issue_date"`
+	DueDate      time.Time `json:"due_date"`
+	// agedFrom is the date the oldest part still owed falls due (a released holdback ages from its release
+	// day, RT-3 fix 2); the zero value means the due date. The pill and the day count read it.
+	agedFrom      time.Time
+	TotalCents    int64  `json:"total_cents"`
+	BalanceCents  int64  `json:"balance_cents"`
+	HoldbackCents int64  `json:"holdback_cents,omitempty"`
+	StoredStatus  string `json:"stored_status"` // the 0009 CHECK value, unmodified
+	Status        string `json:"status"`        // the derived pill state
+	DaysOverdue   int    `json:"days_overdue"`  // 0 unless past due
 	// BucketLabel is the C8 5-bucket label (Current / 1 to 30 / 31 to 60 / 61 to 90 / 91 and over),
 	// derived from DaysOverdue against the same server asOf clock that picked DaysOverdue itself.
 	// Equal to the empty string for non-past-due rows (Current), the same shape as the table cell

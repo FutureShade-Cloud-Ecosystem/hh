@@ -3,6 +3,8 @@ package lien
 import (
 	"sort"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // aging.go, PURE Bill 60 holdback aging + Monday-triage classification. Kept DB-free (input = ledger rows +
@@ -33,6 +35,26 @@ type jobFacts struct {
 	JobNo     string
 	BranchID  string
 	Direction string
+	// Linked is true when the job is linked to a customer job: its holdback is released by RT-3's
+	// Controller release, never by the old job level route.
+	Linked bool
+	// Hold is RT-3's reading of a linked job (empty when not linked): why the Controller cannot release
+	// yet, or the day the period ran out.
+	Hold linkedHold
+}
+
+// Triage hold states of a linked job, from the preservation rule (one function, preservationStart).
+const (
+	holdWaiting  = "WAITING"    // the preservation period has not run out
+	holdLien     = "LIEN"       // a lien is preserved and not discharged
+	holdNoDate   = "NO_DATE"    // the job carries no date to start the period from
+	holdReleaseD = "RELEASABLE" // the period has run out
+)
+
+// linkedHold is a linked job's standing under RT-3's rule at a house day.
+type linkedHold struct {
+	State        string
+	ReleasableOn string // the day after the last day to preserve ("" without a date)
 }
 
 // buildAging rolls the ledger up per job into outstanding-holdback aging rows. Outstanding = ΣRETENTION −
@@ -80,7 +102,12 @@ func buildAging(entries []HoldbackEntry, facts map[string]jobFacts, asOf time.Ti
 			OutstandingCents: a.outstanding,
 			OldestDays:       days,
 			Bucket:           ageBucket(days),
-			ReleaseEligible:  f.Direction == dirReceivable && days >= releaseRuleDays,
+			ReleaseEligible:  f.Direction == dirReceivable && !f.Linked && days >= releaseRuleDays,
+			linked:           f.Linked,
+			hold:             f.Hold,
+		}
+		if f.Linked && f.Hold.State == holdReleaseD {
+			row.daysPastReleasable = daysBetweenDays(f.Hold.ReleasableOn, houseday.DefaultZone().Today(func() time.Time { return asOf }))
 		}
 		out = append(out, row)
 	}
@@ -92,6 +119,10 @@ func buildAging(entries []HoldbackEntry, facts map[string]jobFacts, asOf time.Ti
 	})
 	return out
 }
+
+// linkedReleaseNote is the triage's words for a job linked to a customer job: the old job level release
+// refuses it, and the holdback is released by the Controller once the preservation period has run out.
+const linkedReleaseNote = "held on a customer job's invoices: not released from here, the Controller releases it from the holdback release once its lien preservation period has run out"
 
 // buildTriage badge-classifies the aging rows into the Monday worklist. Badges (no scheduler infra at W6 -
 // these are worklist BADGES computed on read, the recorded PARTIAL for reminders):
@@ -114,9 +145,32 @@ func buildTriage(rows []AgingRow) []TriageItem {
 		case r.Direction == dirPayable:
 			item.Badge = "PAYABLE_MANUAL"
 			item.Note = "payable retention, release is manual (registers a deadline, does not post)"
+		case r.linked:
+			// RT-3's rule decides a linked job, not the age of its retention: the Controller can release it
+			// once the preservation period has run out and no lien is preserved.
+			switch {
+			case r.hold.State == holdLien:
+				item.Badge = "AGING"
+				item.Note = "a lien is preserved on this job and not discharged, so the holdback stays held"
+			case r.hold.State == holdNoDate:
+				item.Badge = "AGING"
+				item.Note = "this job has no date to start its lien preservation period from"
+			case r.hold.State == holdWaiting:
+				item.Badge = "AGING"
+				item.Note = "lien preservation period still running, releasable from " + r.hold.ReleasableOn
+			case r.daysPastReleasable > releaseRuleDays:
+				item.Badge = "OVERDUE"
+				item.Note = linkedReleaseNote
+			default:
+				item.Badge = "RELEASE_DUE"
+				item.Note = linkedReleaseNote
+			}
 		case r.OldestDays > 2*releaseRuleDays:
 			item.Badge = "OVERDUE"
 			item.Note = "past the release window, action overdue"
+		case r.linked && r.OldestDays >= releaseRuleDays:
+			item.Badge = "RELEASE_DUE"
+			item.Note = linkedReleaseNote
 		case r.OldestDays >= releaseRuleDays:
 			item.Badge = "RELEASE_DUE"
 			item.Note = "at/over the 45-day window, eligible to release"
@@ -127,6 +181,16 @@ func buildTriage(rows []AgingRow) []TriageItem {
 		out = append(out, item)
 	}
 	return out
+}
+
+// daysBetweenDays is whole days from one YYYY-MM-DD day to a later one (0 when either does not parse).
+func daysBetweenDays(from, to string) int {
+	a, err1 := time.Parse("2006-01-02", from)
+	b, err2 := time.Parse("2006-01-02", to)
+	if err1 != nil || err2 != nil || b.Before(a) {
+		return 0
+	}
+	return int(b.Sub(a).Hours() / 24)
 }
 
 // daysBetween returns whole days from t to asOf (calendar-day granularity, never negative-rounding surprises).

@@ -22,6 +22,7 @@ import (
 type querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 func (r *Repository) q(ctx context.Context) (querier, error) {

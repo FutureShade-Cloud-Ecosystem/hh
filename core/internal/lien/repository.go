@@ -99,11 +99,11 @@ func (r *Repository) InsertJob(ctx context.Context, in JobInput, createdBy strin
 	err := r.pool.QueryRow(ctx,
 		`INSERT INTO lien_jobs
 		   (job_no, customer_id, branch_id, description, contract_cents, holdback_pct_bps,
-		    substantial_perf_date, last_supply_date, metadata, created_by)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		    substantial_perf_date, last_supply_date, csp_published_on, metadata, created_by)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		 RETURNING id::text, created_at`,
 		in.JobNo, nullStr(in.CustomerID), in.BranchID, in.Description, in.ContractCents, in.HoldbackPctBps,
-		nullDate(in.SubstantialPerfDate), nullDate(in.LastSupplyDate), meta, nullUUID(createdBy),
+		nullDate(in.SubstantialPerfDate), nullDate(in.LastSupplyDate), nullDate(in.CSPPublishedOn), meta, nullUUID(createdBy),
 	).Scan(&id, &created)
 	if err != nil {
 		return Job{}, fmt.Errorf("lien: insert job: %w", err)
@@ -119,25 +119,26 @@ func s2Job(id string, in JobInput, created time.Time) Job {
 	return Job{
 		ID: id, JobNo: in.JobNo, CustomerID: in.CustomerID, BranchID: in.BranchID,
 		Description: in.Description, ContractCents: in.ContractCents, HoldbackPctBps: in.HoldbackPctBps,
-		SubstantialPerfDate: in.SubstantialPerfDate, LastSupplyDate: in.LastSupplyDate, Status: "OPEN",
+		SubstantialPerfDate: in.SubstantialPerfDate, LastSupplyDate: in.LastSupplyDate, CSPPublishedOn: in.CSPPublishedOn, Status: "OPEN",
 		Direction: dir, HSTOnHoldback: in.HSTOnHoldback, CreatedAt: created.Format(time.RFC3339),
 	}
 }
 
 const jobCols = `id::text, job_no::text, COALESCE(customer_id::text,''), COALESCE(customer_job_id::text,''), branch_id::text, description,
-	contract_cents, holdback_pct_bps, substantial_perf_date, last_supply_date, status, metadata, created_at`
+	contract_cents, holdback_pct_bps, substantial_perf_date, last_supply_date, csp_published_on, lien_preserved_on, lien_preserved_note, lien_discharged_on, status, metadata, created_at`
 
 func scanJob(row pgx.Row) (Job, error) {
 	var j Job
-	var perf, lastSupply *time.Time
+	var perf, lastSupply, csp, preserved, discharged *time.Time
 	var meta []byte
 	var created time.Time
 	if err := row.Scan(&j.ID, &j.JobNo, &j.CustomerID, &j.CustomerJobID, &j.BranchID, &j.Description, &j.ContractCents,
-		&j.HoldbackPctBps, &perf, &lastSupply, &j.Status, &meta, &created); err != nil {
+		&j.HoldbackPctBps, &perf, &lastSupply, &csp, &preserved, &j.LienPreservedNote, &discharged, &j.Status, &meta, &created); err != nil {
 		return Job{}, err
 	}
 	j.SubstantialPerfDate = dateStr(perf)
 	j.LastSupplyDate = dateStr(lastSupply)
+	j.CSPPublishedOn, j.LienPreservedOn, j.LienDischargedOn = dateStr(csp), dateStr(preserved), dateStr(discharged)
 	j.CreatedAt = created.Format(time.RFC3339)
 	var m jobMeta
 	if len(meta) > 0 {

@@ -32,6 +32,63 @@ func (r *Repository) LinkedLienJob(ctx context.Context, customerJobID string) (s
 	return id, true, nil
 }
 
+// LinkedLienJobs answers EVERY open RECEIVABLE lien job linked to a customer job, oldest first. More than one
+// may be linked; RT-3 judges them all (LinkedLienJob names only the oldest).
+func (r *Repository) LinkedLienJobs(ctx context.Context, customerJobID string) ([]string, error) {
+	q, err := r.q(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := q.Query(ctx, `
+		SELECT id::text FROM lien_jobs
+		 WHERE customer_job_id = $1::uuid
+		   AND status <> 'CLOSED'
+		   AND COALESCE(metadata->>'holdback_direction', 'RECEIVABLE') = 'RECEIVABLE'
+		 ORDER BY created_at, id`, customerJobID)
+	if err != nil {
+		return nil, fmt.Errorf("lien: the lien jobs linked to a customer job: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("lien: scan a linked lien job: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// JobsHoldingInvoices answers each distinct lien job whose ledger holds a positive RETENTION of any of the
+// invoices, oldest first.
+func (r *Repository) JobsHoldingInvoices(ctx context.Context, invoiceIDs []string) ([]string, error) {
+	if len(invoiceIDs) == 0 {
+		return nil, nil
+	}
+	q, err := r.q(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := q.Query(ctx, `
+		SELECT job_id::text FROM holdback_ledger
+		 WHERE invoice_id = ANY($1::uuid[]) AND entry_type = 'RETENTION' AND amount_cents > 0
+		 GROUP BY job_id ORDER BY min(created_at), job_id`, invoiceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("lien: the jobs holding invoices' retention: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("lien: scan a holding job: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // JobHoldingInvoice answers the lien job whose ledger holds an invoice's RETENTION.
 func (r *Repository) JobHoldingInvoice(ctx context.Context, invoiceID string) (string, bool, error) {
 	q, err := r.q(ctx)

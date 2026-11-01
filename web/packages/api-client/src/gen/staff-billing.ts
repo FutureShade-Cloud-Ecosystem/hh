@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingARWorklistResponse, BillingAccountPaymentPolicy, BillingAccountPaymentPolicyInput, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingPage, BillingApplyCreditInput, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreateHoldRequest, BillingCreditApplication, BillingCreditApplicationReversed, BillingCreditChangeDecideInput, BillingCreditChangeInput, BillingCreditChangePage, BillingCreditChangeRequest, BillingCreditHold, BillingCreditHoldPage, BillingCreditMemoInput, BillingCreditMemoQuote, BillingCreditMemoQuoteInput, BillingCreditMemoResult, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingFinanceChargeRunList, BillingFinanceChargeRunResult, BillingFinanceChargeWaiver, BillingFinanceChargeWaiverList, BillingFinanceChargeWaiverRequest, BillingFinanceJob, BillingFinanceJobEnabledRequest, BillingFinanceJobList, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromisePage, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderEnrolInput, BillingReminderEnrolResult, BillingReminderExemptInput, BillingReminderInput, BillingReminderResult, BillingReminderRulePage, BillingReminderSend, BillingReminderSendPage, BillingReverseCreditApplicationInput, BillingRunFinanceChargesRequest, BillingSendPaylinkRequest, BillingSendPaylinkResult, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementPreview, BillingStatementRunRequest, BillingStatementRunResult, BillingWriteOff, BillingWriteOffInput, BillingWriteOffReversalInput, BillingWriteOffReversed, PaymentCardAttemptSummary } from "./types.js";
+import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingARWorklistResponse, BillingAccountPaymentPolicy, BillingAccountPaymentPolicyInput, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingPage, BillingApplyCreditInput, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreateHoldRequest, BillingCreditApplication, BillingCreditApplicationReversed, BillingCreditChangeDecideInput, BillingCreditChangeInput, BillingCreditChangePage, BillingCreditChangeRequest, BillingCreditHold, BillingCreditHoldPage, BillingCreditMemoInput, BillingCreditMemoQuote, BillingCreditMemoQuoteInput, BillingCreditMemoResult, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingFinanceChargeRunList, BillingFinanceChargeRunResult, BillingFinanceChargeWaiver, BillingFinanceChargeWaiverList, BillingFinanceChargeWaiverRequest, BillingFinanceJob, BillingFinanceJobEnabledRequest, BillingFinanceJobList, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingHoldbackDueToRelease, BillingHoldbackRelease, BillingHoldbackReleaseInput, BillingHoldbackReversal, BillingHoldbackReversalInput, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromisePage, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderEnrolInput, BillingReminderEnrolResult, BillingReminderExemptInput, BillingReminderInput, BillingReminderResult, BillingReminderRulePage, BillingReminderSend, BillingReminderSendPage, BillingReverseCreditApplicationInput, BillingRunFinanceChargesRequest, BillingSendPaylinkRequest, BillingSendPaylinkResult, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementPreview, BillingStatementRunRequest, BillingStatementRunResult, BillingWriteOff, BillingWriteOffInput, BillingWriteOffReversalInput, BillingWriteOffReversed, PaymentCardAttemptSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -429,6 +429,55 @@ export async function billingSetFinanceJobEnabled(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "billingSetFinanceJobEnabled",
+  });
+}
+
+export async function billingListHoldbackDueToRelease(
+  client: ApiClient,
+  opts?: { branch_id?: string },
+  call?: ApiCallOptions
+): Promise<Result<BillingHoldbackDueToRelease>> {
+  return client.request<BillingHoldbackDueToRelease>({
+    method: "GET",
+    path: "/api/v1/ar/holdback/due-to-release",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingListHoldbackDueToRelease",
+  });
+}
+
+// The document also declares success as 201; the client
+// types the lowest declared success code (200).
+export async function billingReleaseHoldback(
+  client: ApiClient,
+  body: BillingHoldbackReleaseInput,
+  call?: ApiCallOptions
+): Promise<Result<BillingHoldbackRelease>> {
+  return client.request<BillingHoldbackRelease>({
+    method: "POST",
+    path: "/api/v1/ar/holdback/releases",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingReleaseHoldback",
+  });
+}
+
+export async function billingReverseHoldbackRelease(
+  client: ApiClient,
+  releaseID: string | number,
+  body: BillingHoldbackReversalInput,
+  call?: ApiCallOptions
+): Promise<Result<BillingHoldbackReversal>> {
+  return client.request<BillingHoldbackReversal>({
+    method: "POST",
+    path: "/api/v1/ar/holdback/releases/{releaseID}/reversal",
+    pathParams: { releaseID },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingReverseHoldbackRelease",
   });
 }
 

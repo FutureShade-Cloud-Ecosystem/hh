@@ -104,6 +104,16 @@ var sweepRestorable = map[string][]string{
 	"public.locations":             {"org_id", "updated_at"},
 }
 
+// sweepReinsertable names the restorable tables whose DELETED seeded rows the sweep puts back,
+// not only the changed ones: the numbering counters, which a leg clears to reset its own stream.
+// Re-inserting a counter is safe for the same reason restoring one is: every row that took a
+// number from it was added by the leg and is gone (row 0.52).
+var sweepReinsertable = map[string]bool{
+	"public.scope_sequences":       true,
+	"public.order_no_sequences":    true,
+	"public.gl_entry_no_sequences": true,
+}
+
 // keyExprOf is the key expression with every column qualified by alias.
 func (tb sweepTable) keyExprOf(alias string) string {
 	cols := make([]string, len(tb.keyCols))
@@ -638,7 +648,19 @@ func Register(t *testing.T, pool *pgxpool.Pool) {
 		// Put the restorable tables' changed rows back to the image taken at the snapshot.
 		for _, tb := range plan.tables {
 			for k, img := range before.images[tb.name] {
-				if h, ok := after.rows[tb.name][k]; !ok || h == before.rows[tb.name][k] {
+				h, ok := after.rows[tb.name][k]
+				if !ok && moved[tb.name] && sweepReinsertable[tb.name] {
+					// A leg deleted a seeded counter row (the sync legs clear their stream's
+					// scope_sequences row). Put it back from the snapshot image.
+					if _, err := tx.Exec(ctx, fmt.Sprintf(
+						`INSERT INTO %s SELECT * FROM json_populate_record(NULL::%s, $1::json)`,
+						tb.name, tb.name), img); err != nil {
+						t.Errorf("leg sweep: re-insert row %s of %s: %v", k, tb.name, err)
+						return
+					}
+					continue
+				}
+				if !moved[tb.name] || !ok || h == before.rows[tb.name][k] {
 					continue
 				}
 				sets := make([]string, len(tb.setCols))

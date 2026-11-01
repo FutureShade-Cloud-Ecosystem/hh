@@ -209,6 +209,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/lien/holdback/jobs/{customerJobID}/rule", g.RequireManager(h.staff(h.jobRule)))
 	r.Handle("PUT /api/v1/lien/holdback/dealer-rule", g.RequireManager(h.staff(h.setDealerOverride)))
 	r.Handle("PUT /api/v1/lien/holdback/jobs/{customerJobID}/override", g.RequireManager(h.staff(h.setJobOverride)))
+	r.Handle("POST /api/v1/lien/jobs/{id}/preserved-lien", g.RequireManager(h.staff(h.preserveLien)))
+	r.Handle("POST /api/v1/lien/jobs/{id}/preserved-lien/discharge", g.RequireManager(h.staff(h.dischargeLien)))
+	r.Handle("PUT /api/v1/lien/jobs/{id}/preservation-dates", g.RequireManager(h.staff(h.setPreservationDates)))
 	r.Handle("PUT /api/v1/lien/jobs/{id}/customer-job", g.RequireManager(h.staff(h.linkCustomerJob)))
 }
 

@@ -64,13 +64,15 @@ test("every generated operation's signature returns Promise<Result<...>>", (t) =
   // reportingCreateSavedReport, reportingGetSavedReport, reportingUpdateSavedReport,
   // reportingDeleteSavedReport, reportingRunSavedReport and reportingExportSavedReportCsv), plus RT-1's five holdback rule routes
   // (lienListProvinceRules, lienGetJobHoldbackRule, lienSetDealerHoldbackOverride, lienSetJobHoldbackOverride and lienLinkCustomerJob): 835 / 834 / 835, plus FX-2b's three AP revaluation routes (purchasingRunAPRevaluation,
-  // purchasingReverseAPRevaluation and purchasingListAPRevaluations): 838 / 837 / 838, plus FC-1b's four finance charge doors (billingRunFinanceCharges,
-  // billingListFinanceCharges, billingSetFinanceChargeWaiver and billingClearFinanceChargeWaiver): 842 / 841 / 842, plus FC-1c's two finance job doors (billingListFinanceJobs and
-  // billingSetFinanceJobEnabled), plus FC-1c's waiver read (billingListFinanceChargeWaivers): 845 / 844 / 845.
-  assert.equal(operations, 845, "the document's operation count minus the excluded stream, plus the declared body variant");
-  assert.equal(emitted.length, 844, "the document's operation count minus the excluded stream");
+  // purchasingReverseAPRevaluation and purchasingListAPRevaluations): 838 / 837 / 838, plus RT-3's two holdback release routes
+  // (billingListHoldbackDueToRelease and billingReleaseHoldback): 840 / 839 / 840, plus the RT-3 fix round's three doors
+  // (billingReverseHoldbackRelease, lienRecordPreservedLien, lienDischargeLien and lienSetPreservationDates): 844 / 843 / 844, plus FC-1b's four finance charge doors (billingRunFinanceCharges,
+  // billingListFinanceCharges, billingSetFinanceChargeWaiver and billingClearFinanceChargeWaiver): 848 / 847 / 848, plus FC-1c's two finance job doors (billingListFinanceJobs and
+  // billingSetFinanceJobEnabled) and its waiver read (billingListFinanceChargeWaivers): 851 / 850 / 851.
+  assert.equal(operations, 851, "the document's operation count minus the excluded stream, plus the declared body variant");
+  assert.equal(emitted.length, 850, "the document's operation count minus the excluded stream");
   assert.deepEqual(variants, ["feedbackCreateMultipart"], "the only multi content type body is feedbackCreate's multipart form");
-  assert.equal(ROUTES.length, 845, "the manifest census keeps the full route table");
+  assert.equal(ROUTES.length, 851, "the manifest census keeps the full route table");
 });
 
 test("each declared body variant resolves to a live generated function beside its operation", (t) => {

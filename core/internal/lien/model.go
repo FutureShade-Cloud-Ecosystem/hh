@@ -17,6 +17,10 @@ type Job struct {
 	HoldbackPctBps      int    `json:"holdback_pct_bps"`
 	SubstantialPerfDate string `json:"substantial_perf_date,omitempty"`
 	LastSupplyDate      string `json:"last_supply_date,omitempty"`
+	CSPPublishedOn      string `json:"csp_published_on,omitempty"` // the certificate of substantial performance's publication date, when known (RT-3 fix)
+	LienPreservedOn     string `json:"lien_preserved_on,omitempty"`
+	LienPreservedNote   string `json:"lien_preserved_note,omitempty"`
+	LienDischargedOn    string `json:"lien_discharged_on,omitempty"`
 	Status              string `json:"status"`
 	Direction           string `json:"holdback_direction"` // RECEIVABLE | PAYABLE (from metadata)
 	HSTOnHoldback       bool   `json:"hst_on_holdback"`    // config flag (from metadata)
@@ -33,6 +37,7 @@ type JobInput struct {
 	HoldbackPctBps      int    `json:"holdback_pct_bps"`
 	SubstantialPerfDate string `json:"substantial_perf_date"`
 	LastSupplyDate      string `json:"last_supply_date"`
+	CSPPublishedOn      string `json:"csp_published_on"` // optional
 	Direction           string `json:"holdback_direction"`
 	HSTOnHoldback       bool   `json:"hst_on_holdback"`
 }
@@ -98,14 +103,17 @@ type ReleaseResult struct {
 
 // AgingRow is one job's outstanding holdback, aged into a bucket (the Bill 60 aging surface).
 type AgingRow struct {
-	JobID            string `json:"job_id"`
-	JobNo            string `json:"job_no"`
-	BranchID         string `json:"branch_id"`
-	Direction        string `json:"holdback_direction"`
-	OutstandingCents int64  `json:"outstanding_cents"`
-	OldestDays       int    `json:"oldest_days"`
-	Bucket           string `json:"bucket"`
-	ReleaseEligible  bool   `json:"release_eligible"` // RECEIVABLE + past the 45-day rule window
+	JobID              string `json:"job_id"`
+	JobNo              string `json:"job_no"`
+	BranchID           string `json:"branch_id"`
+	Direction          string `json:"holdback_direction"`
+	OutstandingCents   int64  `json:"outstanding_cents"`
+	OldestDays         int    `json:"oldest_days"`
+	Bucket             string `json:"bucket"`
+	ReleaseEligible    bool   `json:"release_eligible"` // RECEIVABLE + past the 45-day rule window, and not linked to a customer job
+	linked             bool   // linked to a customer job: released by RT-3, so the old rule's eligibility does not apply
+	hold               linkedHold
+	daysPastReleasable int
 }
 
 // TriageItem is one Monday-triage worklist row, a job needing attention, badge-classified.

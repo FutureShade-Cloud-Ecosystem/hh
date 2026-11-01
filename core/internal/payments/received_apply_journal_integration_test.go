@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"log/slog"
 	"os"
 	"testing"
@@ -50,6 +51,7 @@ func journalPool(t *testing.T) *pgxpool.Pool {
 		t.Skipf("integration DB not reachable: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	legsweep.Register(t, pool)
 	return pool
 }
 

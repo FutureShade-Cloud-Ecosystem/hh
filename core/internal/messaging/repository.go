@@ -2929,6 +2929,20 @@ func (r *Repository) syncAckExists(ctx context.Context, ackID string) (bool, err
 	return present, nil
 }
 
+// syncAckChannel names the channel a message stands in, for the sync ack's room fence (UX-129); found is false
+// when the message is absent.
+func (r *Repository) syncAckChannel(ctx context.Context, messageID string) (string, bool, error) {
+	var ch string
+	err := r.pool.QueryRow(ctx, `SELECT channel_id::text FROM msg_messages WHERE id = $1`, messageID).Scan(&ch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("sync ack channel: %w", err)
+	}
+	return ch, true, nil
+}
+
 // syncAckCreate records the caller's acknowledgement of one message through
 // the module's own rules: the write binds to (message, its channel, the
 // caller's membership), idempotent on the upsert, method validated at the
