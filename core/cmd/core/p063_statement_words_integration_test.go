@@ -22,6 +22,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -268,35 +269,61 @@ func (w *p063World) memo(t *testing.T, invoiceID string, cents int64, key string
 
 // p064Order plants one CONFIRMED order for the world's customer on the Trenton branch, its number
 // minted by the house's own branch numbering (next_order_no, migration 0087, the form the writer's
-// order memos carry), with one line of two units at 2000, fully fulfilled. It answers the order's id
+// order memos carry), with n lines of two units at 2000, fully fulfilled. It answers the order's id
 // and number; p064DropOrder deletes what this planted.
-func (w *p063World) p064Order(t *testing.T) (id, no string) {
+func (w *p063World) p064OrderN(t *testing.T, n int) (id, no string) {
 	t.Helper()
 	if err := w.pool.QueryRow(context.Background(), `
 INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment, subtotal_cents, total_cents)
-VALUES (next_order_no($2::uuid), $1::uuid, $2::uuid, 'CONFIRMED', 'PICKUP', 4000, 4000)
-RETURNING id::text, order_no::text`, w.cust, trentonBranchID).Scan(&id, &no); err != nil {
+VALUES (next_order_no($2::uuid), $1::uuid, $2::uuid, 'CONFIRMED', 'PICKUP', $3, $3)
+RETURNING id::text, order_no::text`, w.cust, trentonBranchID, 2000*n).Scan(&id, &no); err != nil {
 		t.Fatalf("seed the order: %v", err)
 	}
 	if _, err := w.pool.Exec(context.Background(), `
 INSERT INTO order_lines (order_id, line_no, description, qty_entered, uom_entered, qty_base,
                          unit_price_cents, price_uom, line_total_cents, fulfilled_base)
-VALUES ($1::uuid, 1, 'P064 order line', 2, 'EA', 2, 2000, 'EA', 4000, 2)`, id); err != nil {
-		t.Fatalf("seed the order line: %v", err)
+SELECT $1::uuid, k, 'P064 order line', 2, 'EA', 2, 2000, 'EA', 2000, 2
+  FROM generate_series(1, $2::int) k`, id, n); err != nil {
+		t.Fatalf("seed the order lines: %v", err)
 	}
 	return id, no
 }
 
-// p064DropOrder deletes one planted order, its lines and shipment groups, and the outbox events the
-// order's cancel wrote. The caller deletes the order's invoices first (invoices.order_id would only be
-// set null, but the outbox events carry both ids); every delete fails loudly, naming the table.
+func (w *p063World) p064Order(t *testing.T) (id, no string) { return w.p064OrderN(t, 1) }
+
+// p064Groups plants one COMPLETE shipment group per order line, each taking its line's whole
+// quantity, in ONE statement so the group partition trigger (0126) holds at its commit; it answers
+// the first group's id.
+func (w *p063World) p064Groups(t *testing.T, ord string) string {
+	t.Helper()
+	var g1 string
+	if err := w.pool.QueryRow(context.Background(), `
+WITH grp AS (
+  INSERT INTO shipment_groups (order_id, group_no, status, completed_at)
+  SELECT $1::uuid, k, 'COMPLETE', now()
+    FROM generate_series(1, (SELECT count(*) FROM order_lines WHERE order_id = $1::uuid)::int) k
+  RETURNING id, group_no),
+ins AS (
+  INSERT INTO shipment_group_lines (shipment_group_id, order_line_id, qty_base)
+  SELECT grp.id, ol.id, ol.qty_base FROM grp
+    JOIN order_lines ol ON ol.order_id = $1::uuid AND ol.line_no = grp.group_no
+  RETURNING 1)
+SELECT (SELECT id::text FROM grp WHERE group_no = 1), (SELECT count(*) FROM ins)`, ord).Scan(&g1, new(int)); err != nil {
+		t.Fatalf("seed the shipment groups: %v", err)
+	}
+	return g1
+}
+
+// p064DropOrder deletes one planted order and its children, and the outbox events the order's cancel
+// wrote. The groups go first, their cascade emptying the group lines while the order still shows no
+// groups: the partition trigger (0126) short-circuits on an order with no groups, so deleting the
+// lines one group at a time would refuse. Every delete fails loudly, naming the table.
 func (w *p063World) p064DropOrder(t *testing.T, ord string) {
 	t.Helper()
 	c := context.Background()
 	for _, q := range []struct{ table, sql string }{
 		{"events_outbox", `DELETE FROM events_outbox WHERE payload->>'order_id' = $1`},
 		{"events_outbox", `DELETE FROM events_outbox WHERE payload->>'invoice_id' IN (SELECT id::text FROM invoices WHERE customer_id = $1::uuid)`},
-		{"shipment_group_lines", `DELETE FROM shipment_group_lines WHERE shipment_group_id IN (SELECT id FROM shipment_groups WHERE order_id = $1::uuid)`},
 		{"shipment_groups", `DELETE FROM shipment_groups WHERE order_id = $1::uuid`},
 		{"order_lines", `DELETE FROM order_lines WHERE order_id = $1::uuid`},
 		{"orders", `DELETE FROM orders WHERE id = $1::uuid`},
@@ -585,6 +612,117 @@ VALUES ($1::uuid, 'CREDIT_MEMO', -4000, 46000, 'invoice', $2::uuid, $3::uuid, ''
 			if strings.Contains(l.Description, otherNo) {
 				t.Errorf("the statement carries the other customer's invoice number %q: %q", otherNo, l.Description)
 			}
+		}
+	})
+
+	// 0.64 N3: the restored words' door legs. Each leg drives the real write door (never a planted
+	// row) and reads the plain statement: the line reads the door's own words.
+	//
+	// The order cancel door with a paid supplier deposit (CREDIT_BACK): the closed part and the
+	// credited back part are two lines, each in the settlement's own words.
+	t.Run("RestoredWords_DepositCancelDoor", func(t *testing.T) {
+		w := p063Plant(t, pool)
+		ctx := context.Background()
+		ord, _ := w.p064Order(t)
+		t.Cleanup(func() { w.p064DropOrder(t, ord) })
+		var dep, depNo string
+		if err := pool.QueryRow(ctx, `
+INSERT INTO invoices (invoice_no, customer_id, order_id, branch_id, org_id, status, issue_date, due_date,
+                      subtotal_cents, tax_cents, total_cents, balance_cents, source_kind, finalized_at, doc_type)
+VALUES ('#INV-' || nextval('invoice_no_seq'), $1::uuid, $2::uuid, $3::uuid,
+        (SELECT org_id FROM locations WHERE id = $3::uuid), 'FINALIZED', current_date, current_date,
+        4000, 0, 4000, 4000, 'SUPPLIER_DEPOSIT', now(), 'INVOICE')
+RETURNING id::text, invoice_no::text`, w.cust, ord, trentonBranchID).Scan(&dep, &depNo); err != nil {
+			t.Fatalf("plant the deposit document: %v", err)
+		}
+		// The INVOICE row the deposit's finalize writes, the charge that puts the deposit on the
+		// account (the same plant internal/order's deposit cancel legs use).
+		p063Exec(t, pool, "plant the deposit's finalize ledger row", `
+INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type,
+                                   source_ref_id, branch_id, memo, occurred_at)
+VALUES ($1::uuid, 'INVOICE', 4000, 54000, 'invoice', $2::uuid, $3::uuid, 'Supplier deposit', clock_timestamp())`,
+			w.cust, dep, trentonBranchID)
+		if _, err := payments.NewRepository(pool).ApplyReceived(ctx, payments.ApplyRequest{
+			CustomerID: w.cust, Method: "CHEQUE", Reference: "p064-dep",
+			IdempotencyKey: "p064-dep-" + w.cust, InvoiceIDs: []string{dep}, AmountCents: 2500,
+		}); err != nil {
+			t.Fatalf("the received payment door: %v", err)
+		}
+		var userID string
+		if err := pool.QueryRow(ctx, `SELECT id::text FROM users ORDER BY id LIMIT 1`).Scan(&userID); err != nil {
+			t.Fatalf("pick a seeded user: %v", err)
+		}
+		mctx := staffcontext.ContextWithStaff(ctx, staffcontext.StaffContext{
+			UserID: userID, Tier: staffcontext.TierManager, Scope: staffcontext.ScopeGlobal, Status: "ACTIVE",
+		})
+		orderSvc := order.NewService(order.NewRepository(pool)).
+			WithCancelGuards(billing.NewRepository(pool), pos.NewRepository(pool)).
+			WithDepositCanceller(billing.NewInvoiceWriter(pool))
+		if _, err := orderSvc.CancelOrderManual(mctx, ord, "customer walked away", false); err != nil {
+			t.Fatalf("the order cancel door: %v", err)
+		}
+		// The credit back leaves the paid part on the account: an open credit the statement's closing
+		// nets (the aging's own figure), not an invoice balance.
+		ls := w.lines(t, "deposit cancel", -2500)
+		p063Has(t, "deposit cancel", ls, "Supplier deposit "+depNo+" closed on the order's cancel")
+		p063Has(t, "deposit cancel", ls, "Supplier deposit "+depNo+" credited back on the order's cancel")
+	})
+
+	// The payments settle door with an NSF fee allocation: after the bounce, the fee the policy
+	// charges is settled by a received payment naming it, and the row that settle writes reads its
+	// own words.
+	t.Run("RestoredWords_NSFFeePaymentDoor", func(t *testing.T) {
+		w := p063Plant(t, pool)
+		p := w.receipt(t)
+		w.bounce(t, p.ID)
+		var nsfID string
+		if err := pool.QueryRow(context.Background(),
+			`SELECT id::text FROM payment_nsf WHERE payment_id = $1::uuid ORDER BY created_at DESC LIMIT 1`, p.ID).Scan(&nsfID); err != nil {
+			t.Fatalf("read the bounce's fee: %v", err)
+		}
+		if _, err := w.pay.ApplyReceived(context.Background(), payments.ApplyRequest{
+			CustomerID: w.cust, Method: "CHEQUE", Reference: "p064-fee",
+			IdempotencyKey: "p064-fee-" + w.cust, InvoiceIDs: []string{nsfID}, AmountCents: 4500,
+		}); err != nil {
+			t.Fatalf("the payments settle door: %v", err)
+		}
+		// The fee payment settles the fee the bounce charged, so the account's net non invoice
+		// charge is zero and the closing ties to the invoice balances alone.
+		ls := w.lines(t, "nsf fee payment")
+		p063Has(t, "nsf fee payment", ls, "Returned payment")
+		p063Has(t, "nsf fee payment", ls, "NSF fee payment")
+	})
+
+	// The invoice writer with an order's number and no memo: the whole order's document and a
+	// progress invoice each read their own shape, on a branch coded order number.
+	t.Run("RestoredWords_OrderInvoiceDoor", func(t *testing.T) {
+		w := p063Plant(t, pool)
+		ctx := context.Background()
+		bill := billing.NewRepository(pool).WithOrderNumbers(order.NewRepository(pool))
+		tail := newInvoiceWriter(pool).WithOrderSource(w6cOrderInvoiceSource{svc: order.NewService(order.NewRepository(pool))})
+		ord1, ord1No := w.p064Order(t)
+		t.Cleanup(func() { w.p064DropOrder(t, ord1) })
+		doc1, err := tail.InvoiceOrder(ctx, ord1)
+		if err != nil {
+			t.Fatalf("the whole order invoice door: %v", err)
+		}
+		ord2, ord2No := w.p064OrderN(t, 2)
+		t.Cleanup(func() { w.p064DropOrder(t, ord2) })
+		g1 := w.p064Groups(t, ord2)
+		doc2, err := tail.InvoiceOrderGroups(ctx, ord2, []string{g1}, "ON_DEMAND_SUBSET")
+		if err != nil {
+			t.Fatalf("the progress invoice door: %v", err)
+		}
+		ls, err := bill.StatementLines(ctx, w.cust, time.Now().Add(time.Hour), billing.BranchReach{Global: true})
+		if err != nil {
+			t.Fatalf("order invoice words: statement lines: %v", err)
+		}
+		if l := p064LineFor(t, "whole order", doc1.InvoiceNo, ls); l.Description != doc1.InvoiceNo+", order "+ord1No {
+			t.Errorf("the whole order line reads %q, want %q", l.Description, doc1.InvoiceNo+", order "+ord1No)
+		}
+		progress := doc2.InvoiceNo + ", progress invoice for order " + ord2No + " (1 shipment group(s))"
+		if l := p064LineFor(t, "progress", doc2.InvoiceNo, ls); l.Description != progress {
+			t.Errorf("the progress line reads %q, want %q", l.Description, progress)
 		}
 	})
 }
