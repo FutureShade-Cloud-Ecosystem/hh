@@ -89,6 +89,14 @@ VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', current_date - 45, current_date - 1
 RETURNING id::text`, tag+suffix, w.cust, trentonBranchID, total, jobArg).Scan(dst); err != nil {
 			t.Fatalf("seed invoice %s: %v", suffix, err)
 		}
+		// The INVOICE ledger row the real writer books with the invoice (invoice_writer.go), dated at
+		// the issue date in house time: the statement lists an invoice by it.
+		ja4Exec(t, pool, "seed the INVOICE ledger row "+suffix, `
+INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type,
+                                   source_ref_id, branch_id, memo, occurred_at)
+VALUES ($1::uuid, 'INVOICE', $2, $2, 'invoice', $3::uuid, $4::uuid, $5,
+        (current_date - 45)::timestamp AT TIME ZONE 'America/Toronto')`,
+			w.cust, total, *dst, trentonBranchID, tag+suffix)
 	}
 	mk(&w.invA, "-A", 30000, &w.jobA)
 	mk(&w.invB, "-B", 20000, &w.jobB)
@@ -252,6 +260,19 @@ func TestIntegration_JA4Doors_ReceiptAcrossTwoJobs(t *testing.T) {
 	w.receipt(t)
 	got := w.agree(t, "after the receipt", time.Now().Add(time.Hour))
 	ja4Want(t, "after the receipt", got, w, 15000, 15000, 10000)
+}
+
+// TestIntegration_JA4Doors_ReceiptClosesTwoInvoices (P3-D2): a receipt that pays job A's and job B's
+// invoices in full. The statement lists an invoice by its INVOICE ledger row, as live ones have, so a
+// planted invoice must carry that row or closing it reads wrong on the plain statement itself.
+func TestIntegration_JA4Doors_ReceiptClosesTwoInvoices(t *testing.T) {
+	w := ja4Plant(t)
+	if _, err := w.pay.Pay(context.Background(), w.cust, "CHEQUE", "",
+		[]payments.Allocation{{InvoiceID: w.invA, AmountCents: 30000}, {InvoiceID: w.invB, AmountCents: 20000}}); err != nil {
+		t.Fatalf("the receipt door: %v", err)
+	}
+	got := w.agree(t, "after the closing receipt", time.Now().Add(time.Hour))
+	ja4Want(t, "after the closing receipt", got, w, 0, 0, 10000)
 }
 
 // TestIntegration_JA4Doors_Void: the same receipt voided through the void door; the figures are back
