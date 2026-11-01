@@ -542,7 +542,7 @@ export class DriveRunApp extends HHElement {
       } else {
         this.#runs = [];
         this.#phase = "error";
-        this.#error = roadsideError(answer.error, answer.status, "Your run did not load. Check your signal and try again.", {
+        this.#error = roadsideError(answer.error, answer, "Your run did not load.", {
           notFound: "You are not set up as a driver. Ask your branch manager to link your login.",
         });
       }
@@ -563,7 +563,7 @@ export class DriveRunApp extends HHElement {
     } else {
       this.#runs = [];
       this.#phase = "error";
-      this.#error = roadsideError(result.error, result.status, "Your run did not load. Check your signal and try again.", {
+      this.#error = roadsideError(result.error, result, "Your run did not load.", {
         notFound: "You are not set up as a driver. Ask your branch manager to link your login.",
       });
     }
@@ -599,7 +599,7 @@ export class DriveRunApp extends HHElement {
     if (result.ok) {
       await this.#refreshRuns();
     } else {
-      this.#error = roadsideError(result.error, result.status, "That did not go through. Check your signal and try again.");
+      this.#error = roadsideError(result.error, result, "That did not go through.");
       await this.#refreshRuns();
     }
     this.#busy = false;
@@ -684,7 +684,7 @@ export class DriveRunApp extends HHElement {
       this.#view = { kind: "stop", id: stopId };
       this.#notice = HANDBACK_TITLE;
     } else {
-      this.#error = roadsideError(result.error, result.status, "That did not go through. Check your signal and try again.");
+      this.#error = roadsideError(result.error, result, "That did not go through.");
     }
     this.requestUpdate();
   }
@@ -701,7 +701,7 @@ export class DriveRunApp extends HHElement {
     if (result.ok) {
       this.#notice = `${run?.run_no ?? "The run"} is closed. Thanks: that is the day.`;
     } else {
-      this.#error = roadsideError(result.error, result.status, "The run did not close. Check your signal and try again.");
+      this.#error = roadsideError(result.error, result, "The run did not close.");
     }
     // The layer's close already waited for the pull that carries the closed
     // run into the store; read it.
@@ -733,7 +733,7 @@ export class DriveRunApp extends HHElement {
       const waiting = this.#findStop(stopId)?.stop.proof_waiting === true;
       this.#notice = waiting ? PROOF_QUEUED_NOTICE : `Delivery to ${found?.stop.customer_name || "this stop"} is signed for.`;
     } else {
-      this.#error = roadsideError(result.ok ? refused : result.error, result.ok ? 400 : result.status, "The signature did not go through. Check your signal and try again.");
+      this.#error = roadsideError(result.ok ? refused : result.error, result.ok ? { status: 400 } : result, "The signature did not go through.");
       await this.#refreshRuns();
     }
     this.requestUpdate();
@@ -784,7 +784,7 @@ export class DriveRunApp extends HHElement {
     }
     const sent = await this.#drive.uploadPhoto(stopId, ready.bytes, ready.type);
     if (!sent.ok) {
-      this.#error = roadsideError(sent.error, sent.status, "The photo did not send. Check your signal and add it again.");
+      this.#error = roadsideError(sent.error, sent, "The photo did not send.", { retry: "add it again" });
       return;
     }
     const made = URL.createObjectURL(new Blob([ready.bytes as BlobPart], { type: ready.type }));
@@ -799,7 +799,7 @@ export class DriveRunApp extends HHElement {
     if ((late || (currentStop?.pod_received_by ?? "") !== "") && !currentStop?.proof_waiting) {
       const folded = await this.#drive.attachPhotos(stopId);
       if (!folded.ok) {
-        this.#error = roadsideError(folded.error, folded.status, "The photo is up but is not on the proof yet. Add it again in a moment.");
+        this.#error = roadsideError(folded.error, folded, "", { neutral: "The photo is up but is not on the proof yet. Add it again in a moment." });
       }
     }
     // The photo door is direct, so the count it moved lands in the store
