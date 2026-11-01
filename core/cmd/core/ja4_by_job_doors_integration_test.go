@@ -12,6 +12,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,13 +56,19 @@ func ja4Plant(t *testing.T) *ja4World {
 		t.Fatalf("open pool: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	return ja4PlantOn(t, pool)
+}
+
+// ja4PlantOn is ja4Plant on a pool the caller chose.
+func ja4PlantOn(t *testing.T, pool *pgxpool.Pool) *ja4World {
+	t.Helper()
 	w := &ja4World{pool: pool, pay: payments.NewRepository(pool), bill: billing.NewRepository(pool)}
 	w.credit = billing.NewCreditService(w.bill)
 	ctx := context.Background()
 	tag := fmt.Sprintf("JA4D-%d", time.Now().UnixNano())
 	if err := pool.QueryRow(ctx,
-		`INSERT INTO customers (account_no, name, customer_type, credit_limit_cents)
-		 VALUES ($1, $2, 'CONTRACTOR', 5000000) RETURNING id::text`, tag, "JA-4 doors "+tag).Scan(&w.cust); err != nil {
+		`INSERT INTO customers (account_no, name, customer_type, home_branch_id, credit_limit_cents)
+		 VALUES ($1, $2, 'CONTRACTOR', $3::uuid, 5000000) RETURNING id::text`, tag, "JA-4 doors "+tag, trentonBranchID).Scan(&w.cust); err != nil {
 		t.Fatalf("seed the customer: %v", err)
 	}
 	t.Cleanup(func() { w.cleanup(t) })
@@ -74,19 +83,30 @@ func ja4Plant(t *testing.T) *ja4World {
 			t.Fatalf("seed job %s: %v", j.no, err)
 		}
 	}
+	var running int64
 	mk := func(dst *string, suffix string, total int64, job *string) {
+		running += total
 		var jobArg any
 		if job != nil {
 			jobArg = *job
 		}
 		if err := pool.QueryRow(ctx, `
-INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date, subtotal_cents, tax_cents,
+INSERT INTO invoices (invoice_no, customer_id, branch_id, org_id, status, issue_date, due_date, subtotal_cents, tax_cents,
                       total_cents, balance_cents, finalized_at, doc_type, job_id)
-VALUES ($1, $2::uuid, $3::uuid, 'FINALIZED', current_date - 45, current_date - 15, $4, 0, $4, $4,
+VALUES ($1, $2::uuid, $3::uuid, (SELECT org_id FROM locations WHERE id = $3::uuid), 'FINALIZED', current_date - 45, current_date - 15, $4, 0, $4, $4,
         now() - interval '45 days', 'INVOICE', $5::uuid)
 RETURNING id::text`, tag+suffix, w.cust, trentonBranchID, total, jobArg).Scan(dst); err != nil {
 			t.Fatalf("seed invoice %s: %v", suffix, err)
 		}
+		// The INVOICE ledger row the real writer books with the invoice (invoice_writer.go), dated at
+		// the issue date in house time: the statement lists an invoice by it. balance_after is the
+		// customer's running open balance, as the writer stores it (no read uses it).
+		ja4Exec(t, pool, "seed the INVOICE ledger row "+suffix, `
+INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type,
+                                   source_ref_id, branch_id, memo, occurred_at)
+VALUES ($1::uuid, 'INVOICE', $2, $6, 'invoice', $3::uuid, $4::uuid, $5,
+        (current_date - 45)::timestamp AT TIME ZONE 'America/Toronto')`,
+			w.cust, total, *dst, trentonBranchID, tag+suffix, running)
 	}
 	mk(&w.invA, "-A", 30000, &w.jobA)
 	mk(&w.invB, "-B", 20000, &w.jobB)
@@ -105,6 +125,8 @@ func (w *ja4World) cleanup(t *testing.T) {
 		{"payments", `DELETE FROM payments WHERE customer_id = $1::uuid AND reverses_payment_id IS NOT NULL`},
 		{"payments", `DELETE FROM payments WHERE customer_id = $1::uuid`},
 		{"customer_transactions", `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`},
+		{"finance_charge_runs", `DELETE FROM finance_charge_runs WHERE customer_id = $1::uuid`},
+		{"credit_application_keys", `DELETE FROM credit_application_keys WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`},
 		{"invoice_lines", `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`},
 		{"invoices", `DELETE FROM invoices WHERE customer_id = $1::uuid`},
 		{"customer_jobs", `DELETE FROM customer_jobs WHERE customer_id = $1::uuid`},
@@ -138,7 +160,7 @@ func (w *ja4World) bounce(t *testing.T, payID string, at time.Time) {
 		UserID: userID, Tier: staffcontext.TierManager, Scope: staffcontext.ScopeGlobal, Status: "ACTIVE",
 	})
 	svc := till.NewService(till.NewRepository(w.pool)).WithClock(func() time.Time { return at })
-	if _, err := svc.MarkNSF(ctx, till.NSFInput{PaymentID: payID, Reason: "ja4 bounce leg"}); err != nil {
+	if _, err := svc.MarkNSF(ctx, till.NSFInput{PaymentID: payID, Reason: ja4Reason}); err != nil {
 		t.Fatalf("the NSF door: %v", err)
 	}
 	// A bounce taken in the past by a test clock has its ledger rows' created_at at the real now (the
@@ -178,6 +200,7 @@ func (w *ja4World) agree(t *testing.T, label string, asOf time.Time) map[string]
 	}
 	stmt := map[string]int64{}
 	var stmtSum int64
+	jobLinesReadOnlyTheirOwn(t, label, lines, w.invoiceNumbers(t))
 	for _, ln := range lines {
 		stmt[ln.JobID] += ln.ChargeCents - ln.CreditCents
 		stmtSum += ln.ChargeCents - ln.CreditCents
@@ -209,6 +232,78 @@ func (w *ja4World) agree(t *testing.T, label string, asOf time.Time) map[string]
 	return age
 }
 
+// ja4Reason is the free text a clerk types at every door, written so that it would leak if it could: it
+// names the other job, a figure that is nobody's own and an invoice number. A job line carries none of it.
+const (
+	ja4Marker = "LEAKMARK"
+	ja4Reason = ja4Marker + " keyed 77777 against job B invoice INVSECRET-9 by mistake"
+)
+
+var (
+	ja4UUID  = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+	ja4Cents = regexp.MustCompile(`([0-9]+) cents`)
+)
+
+// jobLinesReadOnlyTheirOwn is the words half of the by job proof (P3-D3, then P2-1): a statement line,
+// at a job or at account level, carries no internal id and no money figure other than its own amount;
+// a JOB line also carries no staff reason (the planted marker), no invoice number that is not on the
+// same job, and no id. A job contact reads these lines, so no other job's money, name or number may
+// reach them. numbers is every invoice number of the customer with the job it sits on ("" for the
+// account).
+func jobLinesReadOnlyTheirOwn(t *testing.T, label string, lines []billing.StatementLine, numbers map[string]string) {
+	t.Helper()
+	for _, ln := range lines {
+		if ja4UUID.MatchString(ln.Description) || ja4UUID.MatchString(ln.DocNo) {
+			t.Errorf("%s: job %q line %q (doc %q) carries an internal id", label, ln.JobID, ln.Description, ln.DocNo)
+		}
+		own := ln.ChargeCents - ln.CreditCents
+		if own < 0 {
+			own = -own
+		}
+		for _, m := range ja4Cents.FindAllStringSubmatch(ln.Description, -1) {
+			if n, err := strconv.ParseInt(m[1], 10, 64); err != nil || n != own {
+				t.Errorf("%s: job %q line %q (amount %d) names a figure %s that is not its own", label, ln.JobID, ln.Description, own, m[1])
+			}
+		}
+		if ln.JobID == "" {
+			continue
+		}
+		if strings.Contains(ln.Description, ja4Marker) || strings.Contains(ln.Description, "INVSECRET") {
+			t.Errorf("%s: job %q line %q carries a staff reason", label, ln.JobID, ln.Description)
+		}
+		for no, job := range numbers {
+			if job == ln.JobID || no == "" {
+				continue
+			}
+			if strings.Contains(ln.Description, no) || strings.Contains(ln.DocNo, no) {
+				t.Errorf("%s: job %q line %q (doc %q) names invoice %s, which is not on this job", label, ln.JobID, ln.Description, ln.DocNo, no)
+			}
+		}
+	}
+}
+
+// invoiceNumbers reads every invoice number of the customer with its job ("" for the account).
+func (w *ja4World) invoiceNumbers(t *testing.T) map[string]string {
+	t.Helper()
+	rows, err := w.pool.Query(context.Background(), `SELECT invoice_no::text, COALESCE(job_id::text, '') FROM invoices WHERE customer_id = $1::uuid`, w.cust)
+	if err != nil {
+		t.Fatalf("read the invoice numbers: %v", err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var no, job string
+		if err := rows.Scan(&no, &job); err != nil {
+			t.Fatalf("scan an invoice number: %v", err)
+		}
+		out[no] = job
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read the invoice numbers: %v", err)
+	}
+	return out
+}
+
 func ja4Want(t *testing.T, label string, got map[string]int64, w *ja4World, a, b, acct int64) {
 	t.Helper()
 	if got[w.jobA] != a || got[w.jobB] != b || got[""] != acct {
@@ -225,12 +320,25 @@ func TestIntegration_JA4Doors_ReceiptAcrossTwoJobs(t *testing.T) {
 	ja4Want(t, "after the receipt", got, w, 15000, 15000, 10000)
 }
 
+// TestIntegration_JA4Doors_ReceiptClosesTwoInvoices (P3-D2): a receipt that pays job A's and job B's
+// invoices in full. The statement lists an invoice by its INVOICE ledger row, as live ones have, so a
+// planted invoice must carry that row or closing it reads wrong on the plain statement itself.
+func TestIntegration_JA4Doors_ReceiptClosesTwoInvoices(t *testing.T) {
+	w := ja4Plant(t)
+	if _, err := w.pay.Pay(context.Background(), w.cust, "CHEQUE", "",
+		[]payments.Allocation{{InvoiceID: w.invA, AmountCents: 30000}, {InvoiceID: w.invB, AmountCents: 20000}}); err != nil {
+		t.Fatalf("the receipt door: %v", err)
+	}
+	got := w.agree(t, "after the closing receipt", time.Now().Add(time.Hour))
+	ja4Want(t, "after the closing receipt", got, w, 0, 0, 10000)
+}
+
 // TestIntegration_JA4Doors_Void: the same receipt voided through the void door; the figures are back
 // to the invoices and the agreement holds.
 func TestIntegration_JA4Doors_Void(t *testing.T) {
 	w := ja4Plant(t)
 	p := w.receipt(t)
-	if _, err := w.pay.VoidPayment(context.Background(), payments.VoidInput{PaymentID: p.ID, Reason: "ja4 void leg", IsManager: true},
+	if _, err := w.pay.VoidPayment(context.Background(), payments.VoidInput{PaymentID: p.ID, Reason: ja4Reason, IsManager: true},
 		time.Now(), houseday.DefaultZone()); err != nil {
 		t.Fatalf("the void door: %v", err)
 	}
@@ -247,7 +355,7 @@ func TestIntegration_JA4Doors_TheWholeSequence(t *testing.T) {
 	ctx := context.Background()
 	p := w.receipt(t)
 	w.age(t, p.ID, 10*24*time.Hour)
-	if _, err := w.pay.ReversePayment(ctx, payments.ReverseInput{PaymentID: p.ID, Reason: "ja4 reversal leg", IsManager: true},
+	if _, err := w.pay.ReversePayment(ctx, payments.ReverseInput{PaymentID: p.ID, Reason: ja4Reason, IsManager: true},
 		time.Now().Add(-2*24*time.Hour)); err != nil {
 		t.Fatalf("the reversal door: %v", err)
 	}
@@ -257,7 +365,7 @@ func TestIntegration_JA4Doors_TheWholeSequence(t *testing.T) {
 	ja4Want(t, "after the reversal", afterRev, w, 30000, 20000, 10000)
 
 	if _, err := w.pay.ReapplyHeld(ctx, payments.ReapplyInput{
-		PaymentID: p.ID, Reason: "ja4 reapply leg", IdempotencyKey: "ja4-" + w.cust, IsManager: true,
+		PaymentID: p.ID, Reason: ja4Reason, IdempotencyKey: "ja4-" + w.cust, IsManager: true,
 		Allocations: []payments.Allocation{{InvoiceID: w.invA, AmountCents: 10000}},
 	}, time.Now()); err != nil {
 		t.Fatalf("the reapply door: %v", err)
@@ -268,7 +376,7 @@ func TestIntegration_JA4Doors_TheWholeSequence(t *testing.T) {
 	ja4Want(t, "five days ago, after the reapply", again, w, 15000, 15000, 10000)
 
 	p2 := w.receipt(t)
-	if _, err := w.pay.VoidPayment(ctx, payments.VoidInput{PaymentID: p2.ID, Reason: "ja4 void leg", IsManager: true},
+	if _, err := w.pay.VoidPayment(ctx, payments.VoidInput{PaymentID: p2.ID, Reason: ja4Reason, IsManager: true},
 		time.Now(), houseday.DefaultZone()); err != nil {
 		t.Fatalf("the void door: %v", err)
 	}
@@ -338,4 +446,484 @@ func nsfFeeCents(t *testing.T, w *ja4World) int64 {
 		t.Fatalf("read the NSF fee: %v", err)
 	}
 	return fee
+}
+
+// ja4PlantFresh is ja4Plant on a database of the leg's own, migrated and seeded as CI does, with the
+// branches under one org: the finance charge run charges every customer of a branch and the credit
+// memo door judges the branch's org, so neither can run on the shared gate database without leaving
+// rows behind. The database is dropped when the leg ends.
+func ja4PlantFresh(t *testing.T, suffix string) *ja4World {
+	t.Helper()
+	ctx := context.Background()
+	pool := freshMigratedDB(t, suffix)
+	t.Cleanup(func() {
+		pool.Close()
+		admin, err := pgxpool.New(context.Background(), swapDatabase(mustEnv(t, "DATABASE_URL"), "postgres"))
+		if err != nil {
+			t.Errorf("ja4: connect to drop the leg database: %v", err)
+			return
+		}
+		defer admin.Close()
+		if _, err := admin.Exec(context.Background(), "DROP DATABASE IF EXISTS demoseed_it_"+suffix+" WITH (FORCE)"); err != nil {
+			t.Errorf("ja4: drop the leg database: %v", err)
+		}
+	})
+	body, err := seedFS.ReadFile("dibbits_seed.sql")
+	if err != nil {
+		t.Fatalf("reading the embedded seed: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(body)); err != nil {
+		t.Fatalf("applying the seed: %v", err)
+	}
+	mustExec(t, ctx, pool, `INSERT INTO org (id, slug, name) VALUES ($1, 'ja4-'||$2::text, 'JA4 Org')`, cmRoundNorthOrg, suffix)
+	mustExec(t, ctx, pool, `UPDATE locations SET org_id = $1 WHERE loc_type = 'BRANCH'`, cmRoundNorthOrg)
+	return ja4PlantOn(t, pool)
+}
+
+// ageInvoices moves the planted invoices and their INVOICE ledger rows back by days.
+func (w *ja4World) ageInvoices(t *testing.T, days int) {
+	t.Helper()
+	ja4Exec(t, w.pool, "age the invoices", `
+UPDATE invoices SET issue_date = issue_date - $2::int, due_date = due_date - $2::int,
+       finalized_at = finalized_at - make_interval(days => $2::int), created_at = created_at - make_interval(days => $2::int)
+ WHERE customer_id = $1::uuid`, w.cust, days)
+	ja4Exec(t, w.pool, "age the INVOICE rows", `
+UPDATE customer_transactions SET occurred_at = occurred_at - make_interval(days => $2::int),
+       created_at = created_at - make_interval(days => $2::int)
+ WHERE customer_id = $1::uuid AND txn_type = 'INVOICE'`, w.cust, days)
+}
+
+// memo issues a credit memo of cents against invoiceID through the real memo door (ISSUED).
+func (w *ja4World) memo(t *testing.T, invoiceID string, cents int64, key string) string {
+	t.Helper()
+	svc, _ := cmRoundService(t, w.pool)
+	var userID string
+	if err := w.pool.QueryRow(context.Background(), `SELECT id::text FROM users ORDER BY id LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("pick a seeded user: %v", err)
+	}
+	res, err := svc.Issue(staffcontext.ContextWithStaffUserID(context.Background(), userID), billing.CreditMemoRouteRequest{
+		CustomerID: w.cust, BranchID: trentonBranchID, InvoiceID: invoiceID, AmountCents: cents,
+		Reason: ja4Reason, IdempotencyKey: key,
+	}, billing.CreditMemoCaller{OrgID: cmRoundNorthOrg, Scope: staffcontext.ScopeGlobal})
+	if err != nil {
+		t.Fatalf("the credit memo door: %v", err)
+	}
+	if res.Status != billing.CreditMemoIssued {
+		t.Fatalf("the memo is %q, want ISSUED", res.Status)
+	}
+	t.Cleanup(func() {
+		ja4Exec(t, w.pool, "memo journals", `DELETE FROM gl_journals WHERE idempotency_key = $1`, billing.CreditMemoJournalKeyPrefix+res.CreditMemoID)
+	})
+	return res.CreditMemoID
+}
+
+// financeCharge runs the prior month's finance charge through the real run and returns this customer's
+// charge invoice and its cents.
+func (w *ja4World) financeCharge(t *testing.T) (string, int64) {
+	t.Helper()
+	zone, err := time.LoadLocation("America/Toronto")
+	if err != nil {
+		t.Fatalf("load the house zone: %v", err)
+	}
+	n := time.Now().In(zone)
+	prior := time.Date(n.Year(), n.Month(), 1, 0, 0, 0, 0, zone).AddDate(0, -1, 0)
+	res, err := newInvoiceWriter(w.pool).RunFinanceCharges(context.Background(), billing.FinanceChargeRequest{
+		BranchID: trentonBranchID, Month: prior.Format("2006-01"),
+	})
+	if err != nil {
+		t.Fatalf("the finance charge run: %v", err)
+	}
+	for _, c := range res.Charges {
+		if c.CustomerID == w.cust {
+			return c.InvoiceID, c.ChargeCents
+		}
+	}
+	t.Fatalf("the finance charge run charged nothing to the planted customer: %+v", res)
+	return "", 0
+}
+
+// tie fails unless the by job aging totals ARBalanceCents at asOf.
+func (w *ja4World) tie(t *testing.T, label string, asOf time.Time) {
+	t.Helper()
+	all, err := w.credit.AgingByJob(context.Background(), asOf, "", "")
+	if err != nil {
+		t.Fatalf("%s: AgingByJob: %v", label, err)
+	}
+	var mine, grand int64
+	for _, r := range all {
+		grand += r.TotalCents
+		if r.CustomerID == w.cust {
+			mine += r.TotalCents
+		}
+	}
+	ar, err := w.bill.ARBalanceCents(context.Background(), asOf, "")
+	if err != nil {
+		t.Fatalf("%s: ARBalanceCents: %v", label, err)
+	}
+	if grand != ar {
+		t.Fatalf("%s: the by job aging totals %d, ARBalanceCents %d (this customer %d)", label, grand, ar, mine)
+	}
+}
+
+// TestIntegration_JA4Doors_MemoChargeReceiptBounceNow (P3-D1): a job memo, a real finance charge run
+// and an overpaid receipt paying both jobs and the charge invoice, then bounced. Every step reads the
+// statement by job equal to the aging by job per job, and the total ties through ARBalanceCents.
+func TestIntegration_JA4Doors_MemoChargeReceiptBounceNow(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4d1now")
+	w.ageInvoices(t, 90)
+	soon := time.Now().Add(time.Hour)
+
+	w.memo(t, w.invA, 4000, "ja4-memo-now-"+w.cust)
+	ja4Want(t, "after the memo", w.agree(t, "after the memo", soon), w, 26000, 20000, 10000)
+	w.tie(t, "after the memo", soon)
+
+	chargeInv, charge := w.financeCharge(t)
+	ja4Want(t, "after the finance charge", w.agree(t, "after the finance charge", soon), w, 26000, 20000, 10000+charge)
+	w.tie(t, "after the finance charge", soon)
+
+	// 60000 for 50000 + the charge: the rest is change on account.
+	ans, err := w.pay.ApplyReceived(context.Background(), payments.ApplyRequest{
+		CustomerID: w.cust, Method: "CHEQUE", IdempotencyKey: "ja4-receipt-now-" + w.cust,
+		InvoiceIDs: []string{w.invA, w.invB, chargeInv}, AmountCents: 60000,
+	})
+	if err != nil {
+		t.Fatalf("the receipt door: %v", err)
+	}
+	change := 60000 - 50000 - charge
+	if ans.OnAccountCents != change {
+		t.Fatalf("the receipt left %d on account, want %d", ans.OnAccountCents, change)
+	}
+	got := w.agree(t, "after the receipt", soon)
+	ja4Want(t, "after the receipt", got, w, -4000, 0, 10000-change)
+	w.tie(t, "after the receipt", soon)
+
+	w.bounce(t, ans.PaymentID, time.Now())
+	got = w.agree(t, "after the bounce", soon)
+	ja4Want(t, "after the bounce", got, w, 26000, 20000, 10000+charge+nsfFeeCents(t, w))
+	w.tie(t, "after the bounce", soon)
+}
+
+// TestIntegration_JA4Doors_MemoChargeReceiptBouncePast: a receipt aged six days and bounced yesterday,
+// then a memo on job B and the finance charge run now. The statement equals the aging per job three
+// days ago (receipt live), yesterday after the bounce (bounced, before the memo and the charge) and now.
+func TestIntegration_JA4Doors_MemoChargeReceiptBouncePast(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4d1past")
+	w.ageInvoices(t, 90)
+	p, err := w.pay.Pay(context.Background(), w.cust, "CHEQUE", "",
+		[]payments.Allocation{{InvoiceID: w.invA, AmountCents: 15000}, {InvoiceID: w.invB, AmountCents: 5000}})
+	if err != nil {
+		t.Fatalf("the receipt door: %v", err)
+	}
+	w.age(t, p.ID, 6*24*time.Hour)
+	// The steps sit on house days, never on elapsed hours: every read cuts by the dealer's day, so
+	// "twelve hours ago" was the same house day as the memo and the charge on every afternoon and
+	// evening (and on the fall back day, 24 hours ago is not yesterday after 23:00).
+	zone, err := time.LoadLocation("America/Toronto")
+	if err != nil {
+		t.Fatalf("load the house zone: %v", err)
+	}
+	n := time.Now().In(zone)
+	yesterdayNoon := time.Date(n.Year(), n.Month(), n.Day()-1, 12, 0, 0, 0, zone)
+	w.bounce(t, p.ID, yesterdayNoon)
+	w.memo(t, w.invB, 3000, "ja4-memo-past-"+w.cust)
+	_, charge := w.financeCharge(t)
+	fee := nsfFeeCents(t, w)
+
+	for _, c := range []struct {
+		label   string
+		at      time.Time
+		a, b, x int64
+	}{
+		{"three days ago", yesterdayNoon.AddDate(0, 0, -2), 15000, 15000, 10000},
+		{"yesterday after the bounce", yesterdayNoon.Add(time.Hour), 30000, 20000, 10000 + fee},
+		{"now", time.Now().Add(time.Hour), 30000, 17000, 10000 + fee + charge},
+	} {
+		ja4Want(t, c.label, w.agree(t, c.label, c.at), w, c.a, c.b, c.x)
+		w.tie(t, c.label, c.at)
+	}
+}
+
+// TestIntegration_JA4Doors_CreditApplyAcrossJobs (P2-1, the credit rows): a credit memo issued on job
+// A's invoice is applied through the real apply door to job B's invoice with a staff reason, then the
+// application is reversed through the real reverse door. Job A's lines show neither job B's invoice
+// number nor the reason (agree runs the words check at every step), and the statement still equals the
+// aging per job.
+func TestIntegration_JA4Doors_CreditApplyAcrossJobs(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4credit")
+	w.ageInvoices(t, 90)
+	soon := time.Now().Add(time.Hour)
+	memoID := w.memo(t, w.invA, 4000, "ja4-credit-memo-"+w.cust)
+	ja4Want(t, "after the memo", w.agree(t, "after the memo", soon), w, 26000, 20000, 10000)
+
+	app, err := w.bill.ApplyCredit(context.Background(), billing.ApplyCreditInput{
+		CustomerID: w.cust, CreditKind: billing.CreditKindMemo, CreditID: memoID, InvoiceID: w.invB,
+		AmountCents: 4000, Reason: ja4Reason, IdempotencyKey: "ja4-credit-apply-" + w.cust, OrgID: cmRoundNorthOrg,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("the credit apply door: %v", err)
+	}
+	w.agree(t, "after the credit applied to job B", soon)
+	w.tie(t, "after the credit applied to job B", soon)
+
+	if _, err := w.bill.ReverseCreditApplication(context.Background(), billing.ReverseCreditApplicationInput{
+		InvoiceID: w.invB, ApplicationID: app.ApplicationID, Reason: ja4Reason, OrgID: cmRoundNorthOrg,
+	}, time.Now()); err != nil {
+		t.Fatalf("the credit reverse door: %v", err)
+	}
+	ja4Want(t, "after the application is reversed", w.agree(t, "after the application is reversed", soon), w, 26000, 20000, 10000)
+	w.tie(t, "after the application is reversed", soon)
+}
+
+// TestIntegration_JA4Doors_UnknownMemoReadsFixedWords (P061 fix round 2, P3-1): a ledger row that no writer
+// this statement knows wrote (an unknown memo, in every transaction type, on a document of job A) reads the
+// fixed words of its type on the job's line, never the memo. A new or reworded writer is safe by default.
+func TestIntegration_JA4Doors_UnknownMemoReadsFixedWords(t *testing.T) {
+	w := ja4Plant(t)
+	ctx := context.Background()
+	for _, txn := range []struct {
+		typ   string
+		cents int64
+	}{{"ADJUSTMENT", -100}, {"CREDIT_MEMO", -200}, {"WRITE_OFF", -300}, {"NSF", 400}, {"PAYMENT", -500}, {"INVOICE", 600}} {
+		ja4Exec(t, w.pool, "plant an unknown "+txn.typ+" row", `
+INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type,
+                                   source_ref_id, branch_id, memo, occurred_at)
+VALUES ($1::uuid, $2, $3, 0, 'invoice', $4::uuid, $5::uuid, $6, now() - interval '1 hour')`,
+			w.cust, txn.typ, txn.cents, w.invA, trentonBranchID, "a future writer says: "+ja4Reason)
+	}
+	lines, err := w.bill.StatementLinesByJob(ctx, w.cust, time.Now().Add(time.Hour), billing.AllBranches)
+	if err != nil {
+		t.Fatalf("StatementLinesByJob: %v", err)
+	}
+	jobLinesReadOnlyTheirOwn(t, "unknown memo", lines, w.invoiceNumbers(t))
+	want := map[int64]string{
+		-100: "Adjustment", -200: "Credit memo", -300: "Write-off", 400: "Returned payment", -500: "Payment received, thank you",
+	}
+	seen := 0
+	for _, ln := range lines {
+		if ln.JobID != w.jobA {
+			continue
+		}
+		cents := ln.ChargeCents - ln.CreditCents
+		if w8, ok := want[cents]; ok {
+			seen++
+			if !strings.HasPrefix(ln.Description, w8) || strings.Contains(ln.Description, "future writer") {
+				t.Errorf("job A line of %d reads %q; want the fixed words %q", cents, ln.Description, w8)
+			}
+		}
+		if cents == 600 && strings.Contains(ln.Description, "future writer") {
+			t.Errorf("job A's unknown INVOICE row reads %q; want the invoice number", ln.Description)
+		}
+	}
+	if seen != len(want) {
+		t.Errorf("found %d of the %d planted lines on job A: %+v", seen, len(want), lines)
+	}
+}
+
+// TestIntegration_JA4Doors_WriteOff (P061 fix round 2, P2-1): a write off and its reversal, through the
+// real write off door with a reason that would leak if it could, read fixed words on the job's lines. The
+// statement by job still equals the aging per job at every step.
+func TestIntegration_JA4Doors_WriteOff(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4writeoff")
+	w.ageInvoices(t, 90)
+	soon := time.Now().Add(time.Hour)
+	ctx := context.Background()
+
+	res, err := w.bill.WriteOffInvoice(ctx, billing.WriteOffInput{
+		InvoiceID: w.invA, Reason: ja4Reason, IdempotencyKey: "ja4-writeoff-" + w.cust, OrgID: cmRoundNorthOrg, IsController: true,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("the write off door: %v", err)
+	}
+	ja4Want(t, "after the write off", w.agree(t, "after the write off", soon), w, 0, 20000, 10000)
+	w.tie(t, "after the write off", soon)
+
+	if _, err := w.bill.ReverseWriteOff(ctx, billing.ReverseWriteOffInput{
+		InvoiceID: w.invA, WriteOffID: res.WriteOffID, Reason: ja4Reason, OrgID: cmRoundNorthOrg,
+	}, time.Now()); err != nil {
+		t.Fatalf("the write off reversal door: %v", err)
+	}
+	ja4Want(t, "after the write off is reversed", w.agree(t, "after the write off is reversed", soon), w, 30000, 20000, 10000)
+	w.tie(t, "after the write off is reversed", soon)
+
+	words := map[string]bool{}
+	lines, err := w.bill.StatementLinesByJob(ctx, w.cust, soon, billing.AllBranches)
+	if err != nil {
+		t.Fatalf("StatementLinesByJob: %v", err)
+	}
+	for _, ln := range lines {
+		if ln.JobID == w.jobA {
+			words[ln.Description] = true
+		}
+	}
+	for _, want := range []string{"Write-off", "Write-off reversed"} {
+		if !words[want] {
+			t.Errorf("job A's lines read %v; want a line reading %q", words, want)
+		}
+	}
+}
+
+// ja4JobADescriptions reads every description of job A's lines at asOf, after the words check.
+func (w *ja4World) ja4JobADescriptions(t *testing.T, label string, asOf time.Time) []string {
+	t.Helper()
+	lines, err := w.bill.StatementLinesByJob(context.Background(), w.cust, asOf, billing.AllBranches)
+	if err != nil {
+		t.Fatalf("%s: StatementLinesByJob: %v", label, err)
+	}
+	jobLinesReadOnlyTheirOwn(t, label, lines, w.invoiceNumbers(t))
+	var out []string
+	for _, ln := range lines {
+		if ln.JobID == w.jobA {
+			out = append(out, ln.Description)
+		}
+	}
+	return out
+}
+
+// TestIntegration_JA4Doors_MemoOnJobReversingAccountInvoice (P061 fix round 3, P2-1): the account level
+// invoice reversed by a credit memo that the credit memo door puts on job A (the fresh choice through the
+// job fence). Job A's line reads "Credit memo <no>" and names no other invoice; the statement still equals
+// the aging per job.
+func TestIntegration_JA4Doors_MemoOnJobReversingAccountInvoice(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4acctrev")
+	w.ageInvoices(t, 90)
+	soon := time.Now().Add(time.Hour)
+	svc, _ := cmRoundService(t, w.pool)
+	svc = svc.WithJobFence(newCustomerJobFence(w.pool))
+	var userID string
+	if err := w.pool.QueryRow(context.Background(), `SELECT id::text FROM users ORDER BY id LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("pick a seeded user: %v", err)
+	}
+	caller := staffcontext.ContextWithStaff(context.Background(), staffcontext.StaffContext{
+		UserID: userID, Tier: staffcontext.TierLeadership, Scope: staffcontext.ScopeGlobal, Status: "ACTIVE",
+	})
+	res, err := svc.Issue(caller, billing.CreditMemoRouteRequest{
+		CustomerID: w.cust, BranchID: trentonBranchID, InvoiceID: w.invAcct, JobID: w.jobA, AmountCents: 1000,
+		Reason: ja4Reason, IdempotencyKey: "ja4-acct-reverse-" + w.cust,
+	}, billing.CreditMemoCaller{OrgID: cmRoundNorthOrg, Scope: staffcontext.ScopeGlobal})
+	if err != nil {
+		t.Fatalf("the credit memo door: %v", err)
+	}
+	if res.Status != billing.CreditMemoIssued {
+		t.Fatalf("the memo is %q, want ISSUED", res.Status)
+	}
+	t.Cleanup(func() {
+		ja4Exec(t, w.pool, "memo journals", `DELETE FROM gl_journals WHERE idempotency_key = $1`, billing.CreditMemoJournalKeyPrefix+res.CreditMemoID)
+	})
+	ja4Want(t, "after the memo on job A", w.agree(t, "after the memo on job A", soon), w, 29000, 20000, 10000)
+	w.tie(t, "after the memo on job A", soon)
+	found := false
+	for _, d := range w.ja4JobADescriptions(t, "after the memo on job A", soon) {
+		if strings.HasPrefix(d, "Credit memo ") {
+			found = true
+		}
+		if strings.Contains(d, "reverses") {
+			t.Errorf("job A's line reads %q; it names the account level invoice", d)
+		}
+	}
+	if !found {
+		t.Errorf("job A has no line reading \"Credit memo <no>\"")
+	}
+}
+
+// ja4PlantRow plants one ledger row on job A's invoice.
+func (w *ja4World) ja4PlantRow(t *testing.T, typ string, cents int64, memo string) {
+	t.Helper()
+	ja4Exec(t, w.pool, "plant "+typ, `
+INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type,
+                                   source_ref_id, branch_id, memo, occurred_at)
+VALUES ($1::uuid, $2, $3, 0, 'invoice', $4::uuid, $5::uuid, $6, now() - interval '1 hour')`,
+		w.cust, typ, cents, w.invA, trentonBranchID, memo)
+}
+
+func ja4NoneReads(t *testing.T, descs []string, bad ...string) {
+	t.Helper()
+	for _, d := range descs {
+		for _, b := range bad {
+			if strings.Contains(d, b) {
+				t.Errorf("job A reads %q; want fixed words", d)
+			}
+		}
+	}
+}
+
+func ja4Has(t *testing.T, descs []string, want string) {
+	t.Helper()
+	for _, d := range descs {
+		if d == want {
+			return
+		}
+	}
+	t.Errorf("job A has no line reading %q (lines %q)", want, descs)
+}
+
+// TestIntegration_JA4Doors_PlantedReversesReadsFixed (P061 fix round 3, P2-1; round 4, P3-1): a real credit
+// memo the door issues on job A's own invoice reads the writer's own shape; the same ledger row rewritten
+// off that shape (clerk text after the reversed invoice number) reads "Credit memo <no>".
+func TestIntegration_JA4Doors_PlantedReversesReadsFixed(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4rev")
+	w.ageInvoices(t, 90)
+	soon := time.Now().Add(time.Hour)
+	svc, _ := cmRoundService(t, w.pool)
+	svc = svc.WithJobFence(newCustomerJobFence(w.pool))
+	var userID string
+	if err := w.pool.QueryRow(context.Background(), `SELECT id::text FROM users ORDER BY id LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("pick a seeded user: %v", err)
+	}
+	caller := staffcontext.ContextWithStaff(context.Background(), staffcontext.StaffContext{
+		UserID: userID, Tier: staffcontext.TierLeadership, Scope: staffcontext.ScopeGlobal, Status: "ACTIVE",
+	})
+	res, err := svc.Issue(caller, billing.CreditMemoRouteRequest{
+		CustomerID: w.cust, BranchID: trentonBranchID, InvoiceID: w.invA, AmountCents: 1000,
+		Reason: ja4Reason, IdempotencyKey: "ja4-rev-shape-" + w.cust,
+	}, billing.CreditMemoCaller{OrgID: cmRoundNorthOrg, Scope: staffcontext.ScopeGlobal})
+	if err != nil {
+		t.Fatalf("the credit memo door: %v", err)
+	}
+	if res.Status != billing.CreditMemoIssued {
+		t.Fatalf("the memo is %q, want ISSUED", res.Status)
+	}
+	t.Cleanup(func() {
+		ja4Exec(t, w.pool, "memo journals", `DELETE FROM gl_journals WHERE idempotency_key = $1`, billing.CreditMemoJournalKeyPrefix+res.CreditMemoID)
+	})
+	no := w.invoiceNo(t, res.CreditMemoID)
+	own := no + ", reverses " + w.invoiceNo(t, w.invA)
+	d := w.ja4JobADescriptions(t, "the writer's own shape", soon)
+	ja4NoneReads(t, d, ja4Marker)
+	ja4Has(t, d, own)
+	ja4Exec(t, w.pool, "rewrite the memo off shape", `
+UPDATE customer_transactions SET memo = split_part(memo, ' (', 1) || ' ' || $2
+ WHERE txn_type = 'CREDIT_MEMO' AND source_ref_id = $1::uuid`, res.CreditMemoID, ja4Reason)
+	d = w.ja4JobADescriptions(t, "the memo off shape", soon)
+	ja4NoneReads(t, d, ja4Marker)
+	ja4Has(t, d, "Credit memo "+no)
+}
+
+// TestIntegration_JA4Doors_PlantedSupplierDepositReadsFixed (P061 fix round 3, P3-1): a supplier deposit
+// memo with clerk text in the middle reads "Adjustment"; the writer's exact words still pass.
+func TestIntegration_JA4Doors_PlantedSupplierDepositReadsFixed(t *testing.T) {
+	w := ja4Plant(t)
+	w.ja4PlantRow(t, "ADJUSTMENT", -111, "Supplier deposit "+ja4Reason+" closed on the order's cancel")
+	w.ja4PlantRow(t, "ADJUSTMENT", -112, "Supplier deposit "+w.invoiceNo(t, w.invA)+" closed on the order's cancel")
+	d := w.ja4JobADescriptions(t, "planted deposit", time.Now().Add(time.Hour))
+	ja4NoneReads(t, d, ja4Marker)
+	ja4Has(t, d, "Adjustment")
+	ja4Has(t, d, "Supplier deposit "+w.invoiceNo(t, w.invA)+" closed on the order's cancel")
+}
+
+// TestIntegration_JA4Doors_EarlyPaymentDiscountReadsItsWords (P061 fix round 3, P3-2).
+func TestIntegration_JA4Doors_EarlyPaymentDiscountReadsItsWords(t *testing.T) {
+	w := ja4Plant(t)
+	w.ja4PlantRow(t, "ADJUSTMENT", -222, "early payment discount (PAY-777)")
+	d := w.ja4JobADescriptions(t, "discount", time.Now().Add(time.Hour))
+	ja4NoneReads(t, d, "PAY-777")
+	ja4Has(t, d, "Early payment discount")
+}
+
+func (w *ja4World) invoiceNo(t *testing.T, id string) string {
+	t.Helper()
+	var no string
+	if err := w.pool.QueryRow(context.Background(), `SELECT invoice_no FROM invoices WHERE id = $1::uuid`, id).Scan(&no); err != nil {
+		t.Fatalf("read the invoice number: %v", err)
+	}
+	return no
 }

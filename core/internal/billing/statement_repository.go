@@ -723,6 +723,26 @@ func (r *Repository) RecordPaylinkDelivery(ctx context.Context, row PaylinkDeliv
 //	                 REVERSAL allocations the NSF door wrote under that payment, so each job returns to
 //	                 owing what it did before the receipt (the receipt's own act keeps its credit)
 //
+// An act's own ledger memo is for staff: the nsf memo names the whole bounce and the payment's internal
+// id, and the void, reversal and reapply memos carry the clerk's free text reason, which may name another
+// job and its figures. A job contact reads the job's lines, so each act reads in fixed words of its own
+// ("Returned payment", "Payment voided", "Payment reversed", "Payment applied") and never a blank, which
+// would fall back to "Payment received, thank you".
+//
+// The same holds for the rows a credit writes on a job (P2-1): a credit application row names the
+// invoice it was applied to (which may sit on another job) and the clerk's reason, and a credit memo
+// row carries its reason in brackets. A job's line reads the fixed words of the act ("Credit applied",
+// "Credit memo applied", "Credit application reversed", "Credit memo restored") or the memo's number
+// and the invoice it reverses (the same job's) without the reason. Account level lines keep the ledger
+// words, as the plain statement does.
+//
+// The job's lines are safe by default (P061 fix round 2): every ledger row on a job reads the fixed words
+// of its transaction type ("Adjustment", "Credit memo <no>", "Write-off", "Returned payment", "Payment
+// received, thank you", the invoice's own number), and only a memo this list names passes: the statement's
+// own synthesized lines (no ledger source), the discount give back words, the credit words above, a credit
+// memo's own number with the invoice it reverses, and the supplier deposit close. A new writer, or a
+// reworded one, reads as fixed words and never leaks a clerk's text.
+//
 // Each act reads as one line per job, dated at the act's first ledger row, and the act's ledger sum
 // less its shares is left at account level (the unapplied part).
 //
@@ -745,7 +765,13 @@ const statementByJobTail = `
 		), acts AS (
 			SELECT p.act_type, p.src_ref, MIN(p.txn_type) AS txn_type,
 			       MIN(p.occurred_at) AS occurred_at, MIN(p.created_at) AS created_at,
-			       SUM(p.amount_cents) AS amount_cents, MIN(p.memo) AS memo
+			       SUM(p.amount_cents) AS amount_cents,
+			       CASE p.act_type
+			            WHEN 'nsf' THEN 'Returned payment'
+			            WHEN 'payment_void' THEN 'Payment voided'
+			            WHEN 'payment_reversal' THEN 'Payment reversed'
+			            WHEN 'payment_reapply' THEN 'Payment applied'
+			            ELSE MIN(p.memo) END AS memo
 			  FROM paytxn p GROUP BY p.act_type, p.src_ref
 		), shares AS (
 			SELECT ac.act_type, ac.src_ref, inv.job_id,
@@ -775,7 +801,35 @@ const statementByJobTail = `
 			  LEFT JOIN (SELECT s.act_type, s.src_ref, SUM(s.share) AS net FROM shares s GROUP BY s.act_type, s.src_ref) sh
 			    ON sh.act_type = ac.act_type AND sh.src_ref = ac.src_ref
 		), parts AS (
-			SELECT a.occurred_at, a.created_at, a.txn_type, a.amount_cents, a.invoice_no, a.memo, a.job_id
+			SELECT a.occurred_at, a.created_at, a.txn_type, a.amount_cents, a.invoice_no,
+			       CASE WHEN a.job_id IS NULL THEN a.memo
+			            WHEN a.src_type IS NULL THEN a.memo
+			            WHEN a.memo IN ('voided receipt: early payment discount given back',
+			                            'reversal: early payment discount given back',
+			                            'NSF reversal: early payment discount given back') THEN a.memo
+			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit memo applied: %' THEN 'Credit memo applied'
+			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit applied to %' THEN 'Credit applied'
+			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit application reversed: %' THEN 'Credit application reversed'
+			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit memo restored: %' THEN 'Credit memo restored'
+			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo = 'Supplier deposit ' || a.invoice_no || ' closed on the order''s cancel' THEN a.memo
+			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'early payment discount (%' THEN 'Early payment discount'
+			            WHEN a.txn_type = 'ADJUSTMENT' THEN 'Adjustment'
+			            WHEN a.txn_type = 'CREDIT_MEMO' AND a.memo = 'Credit memo ' || a.invoice_no THEN a.memo
+			            WHEN a.txn_type = 'CREDIT_MEMO' AND a.memo = a.invoice_no THEN a.memo
+			            WHEN a.txn_type = 'CREDIT_MEMO' AND EXISTS (
+			                     SELECT 1 FROM invoices cm JOIN invoices r ON r.id = cm.reverses_invoice_id
+			                      WHERE cm.id = a.src_ref AND r.job_id = a.job_id
+			                        AND (a.memo = cm.invoice_no || ', reverses ' || r.invoice_no
+			                          OR left(a.memo, length(cm.invoice_no || ', reverses ' || r.invoice_no || ' (')) = cm.invoice_no || ', reverses ' || r.invoice_no || ' ('))
+			                 THEN split_part(a.memo, ' (', 1)
+			            WHEN a.txn_type = 'CREDIT_MEMO' THEN 'Credit memo ' || a.invoice_no
+			            WHEN a.txn_type = 'INVOICE' THEN a.invoice_no
+			            WHEN a.txn_type = 'WRITE_OFF' AND a.memo LIKE 'write off reversed %' THEN 'Write-off reversed'
+			            WHEN a.txn_type = 'WRITE_OFF' THEN 'Write-off'
+			            WHEN a.txn_type = 'NSF' THEN 'Returned payment'
+			            WHEN a.txn_type = 'PAYMENT' THEN 'Payment received, thank you'
+			            ELSE 'Adjustment' END AS memo,
+			       a.job_id
 			  FROM activity a
 			 WHERE NOT EXISTS (SELECT 1 FROM paytxn p WHERE p.src_id = a.src_id)
 			UNION ALL
