@@ -135,7 +135,7 @@ const registerSelect = `
 	       EXISTS (SELECT 1 FROM ar_invoice_disputes d2 WHERE d2.customer_id = c.id AND d2.status = 'OPEN'),
 	       pr.promised_date, COALESCE(pr.promised_cents, 0),
 	       snd.sent_at, snd.opened_at, (snd.id IS NOT NULL),
-	       invoice_oldest_due_on(i.id, now())
+	       invoice_oldest_due_on(i.id, now()) -- current state reader: see chipPredicates
 	  FROM invoices i
 	  JOIN customers c ON c.id = i.customer_id
 	  LEFT JOIN orders o ON o.id = i.order_id
@@ -227,6 +227,10 @@ func registerWhere(f RegisterFilter, args []any) (string, []any) {
 // The four C8 chips live alongside the legacy strings so every old client URL bookmark and stored
 // automation stays on the same screen. "on_hold" is the C8 wording for what the policy called CREDIT_HOLD
 // previously: a chip that selects every open invoice on an account whose credit is currently blocked.
+//
+// The invoice_oldest_due_on(.., now()) calls here, and in the register's select above, are CURRENT STATE
+// READERS: they read the stored balance and holdback, which are current state, so the released split is read
+// at now() while the chip's day argument is the caller's as of. In production every caller passes the clock.
 var chipPredicates = map[string]string{
 	StatusOpen:          `i.status IN ('FINALIZED','PARTIALLY_PAID')`,
 	StatusDueSoon:       `i.status IN ('FINALIZED','PARTIALLY_PAID') AND invoice_oldest_due_on(i.id, now()) >= $1::date AND invoice_oldest_due_on(i.id, now()) <= $1::date + $2::int`,

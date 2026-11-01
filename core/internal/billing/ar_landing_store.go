@@ -120,6 +120,10 @@ func (r *ARLandingRepository) UpsertARLandingPolicy(ctx context.Context, p ARLan
 // OpenInvoices projects the unpaid book. Same status set as the aging query next door
 // (FINALIZED / PARTIALLY_PAID) so the landing and the register can never disagree about which
 // invoices are open, two definitions of "open" is two totals and one very long meeting.
+//
+// CURRENT STATE READER: the stored balance and holdback it reads are current state, so the released split
+// (invoice_oldest_due_on) is read at now(), not at asOf. In production every caller passes the clock; with a
+// past asOf the released part would be today's while the day is the past one.
 func (r *ARLandingRepository) OpenInvoices(ctx context.Context, asOf time.Time, branchID string, reach BranchReach) ([]OpenInvoice, error) {
 	if r.pool == nil {
 		return nil, errNoDB

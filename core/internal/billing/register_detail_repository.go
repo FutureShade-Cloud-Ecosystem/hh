@@ -482,6 +482,9 @@ func (r *Repository) WorkspaceHeader(ctx context.Context, customerID string) (Cu
 	var apName, apEmail, apPhone string
 	var lastPaymentAt *time.Time
 	var lastPaymentCents int64
+	// The overdue figure is a CURRENT STATE READER: invoice_past_due_cents reads the stored balance and
+	// holdback (current state), so its released split is read at now() while its day argument is the header's
+	// own as of day. In production the two are the same instant.
 	err = r.pool.QueryRow(ctx,
 		`SELECT c.id::text, c.name, c.account_no::text, c.payment_terms_days, c.credit_limit_cents,
 		        COALESCE(c.home_branch_id::text, ''),
