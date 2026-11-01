@@ -112,10 +112,11 @@ func TestCheck_OverridePassesWhenTheJobReadFailsAsOnMain(t *testing.T) {
 	if b := g.Check(WithSaleJob(context.Background(), "job-1"), "cust", 1000, 0, 1000000, true, "br", true); b != nil {
 		t.Fatalf("failed job read under an override: %+v, want a pass as on main", b)
 	}
-	// the customer's own exposure read failing still denies, as on main
+	// the customer's own exposure read is not taken under an override (main read none), so its failure
+	// cannot refuse the sale
 	g = NewHoldAwareCreditGate(overrideHolds{}).WithExposure(custErrExposure{})
-	if b := g.Check(context.Background(), "cust", 1000, 0, 1000000, true, "br", true); b == nil || !strings.Contains(b.Detail, "unavailable") {
-		t.Fatalf("failed customer read under an override: %+v, want it denied", b)
+	if b := g.Check(context.Background(), "cust", 1000, 0, 1000000, true, "br", true); b != nil {
+		t.Fatalf("failed customer read under an override: %+v, want a pass as on main", b)
 	}
 }
 
@@ -133,8 +134,9 @@ func TestCheck_ANoCreditCustomerIsTreatedTheSameInsideAndOverTheJobLimit(t *test
 		if b := g.Check(jobCtx, "cust", sale, 0, 0, true, "br", true); b != nil {
 			t.Fatalf("sale %d, override: %+v, want a pass", sale, b)
 		}
-		if n := g.OverriddenLimit(jobCtx, "cust", sale, 0, 0, true, "br"); n != nil {
-			t.Fatalf("sale %d: a no credit customer waived no limit, got %+v", sale, n)
+		// the waiver is recorded the same for both sizes: the customer's no credit, never the job's limit
+		if n := g.OverriddenLimit(jobCtx, "cust", sale, 0, 0, true, "br"); n == nil || n.Data["limit_scope"] != LimitScopeCustomer || !strings.Contains(n.Detail, "no credit limit") {
+			t.Fatalf("sale %d: want the customer's no credit recorded as waived, got %+v", sale, n)
 		}
 	}
 }
@@ -144,5 +146,13 @@ func TestCheck_TheFallbackPathAttachesNoLimitData(t *testing.T) {
 	b := NewHoldAwareCreditGate(overrideHolds{}).Check(context.Background(), "cust", 60000, 50000, 100000, true, "br", false)
 	if b == nil || len(b.Data) != 0 {
 		t.Fatalf("fallback refusal = %+v, want a refusal with no Data", b)
+	}
+}
+
+func TestOverriddenLimit_ANoCreditCustomerRecordsTheWaiver(t *testing.T) {
+	g := NewHoldAwareCreditGate(overrideHolds{}).WithExposure(overrideExposure{})
+	b := g.OverriddenLimit(context.Background(), "cust", 1000, 0, 0, true, "br")
+	if b == nil || b.Data["overridden"] != "true" || b.Data["limit_scope"] != LimitScopeCustomer || !strings.Contains(b.Detail, "no credit limit") {
+		t.Fatalf("no credit customer under an override: %+v, want the waiver recorded", b)
 	}
 }

@@ -210,23 +210,14 @@ func (g *HoldAwareCreditGate) Check(ctx context.Context, customerID string, orde
 		}
 	}
 	// The approved override changes no decision but the limit it waives. As on main, it passes a
-	// customer with no credit, and it passes whatever the job read says (the job is not read); only a
-	// hold above, or a customer exposure read that failed, still denies the account tender.
+	// customer with no credit and reads neither the job nor the customer's exposure (main read neither),
+	// so a failed read cannot refuse it; only a hold above still denies the account tender.
 	//
 	// No door passes an approved override today: both the POS ring and the quote conversion pass
 	// false, so this branch is unreachable in production. It is built anyway; OverriddenLimit (below)
 	// says WHICH limit was waived, the job's own or the customer's, in words and in data, for the
 	// door that passes one to record.
 	if hasApprovedOverride {
-		if g.exposure != nil && termsAreCredit && customerID != "" {
-			if _, err := g.exposure.CustomerExposure(ctx, callerTxFrom(ctx), customerID); err != nil {
-				return &identity.ActionBlocked{
-					Policy:   identity.PolicyCOD,
-					BranchID: branchID,
-					Detail:   "credit exposure unavailable; account tender denied (cash or card only)",
-				}
-			}
-		}
 		return nil
 	}
 	return g.limitBreak(ctx, customerID, orderTotalCents, openBalanceCents, creditLimitCents, termsAreCredit, branchID)
@@ -288,6 +279,19 @@ func (g *HoldAwareCreditGate) limitBreak(ctx context.Context, customerID string,
 // waived. It is a note for the audit, never a block: Check still returns nil for an approved override.
 // A door that passes an approved override calls it beside Check and records the answer.
 func (g *HoldAwareCreditGate) OverriddenLimit(ctx context.Context, customerID string, orderTotalCents, openBalanceCents, creditLimitCents int64, termsAreCredit bool, branchID string) *identity.ActionBlocked {
+	if termsAreCredit && customerID != "" && creditLimitCents <= 0 {
+		// A customer with no credit at all: the override waives that, and the door records it as such.
+		return &identity.ActionBlocked{
+			Policy:   identity.PolicyCredit,
+			BranchID: branchID,
+			Detail:   "an approved override waives this: the customer has no credit limit",
+			Data: map[string]string{
+				"limit_scope":  LimitScopeCustomer,
+				"credit_limit": dollars(0),
+				"overridden":   "true",
+			},
+		}
+	}
 	blk := g.limitBreak(ctx, customerID, orderTotalCents, openBalanceCents, creditLimitCents, termsAreCredit, branchID)
 	if blk == nil || blk.Policy != identity.PolicyCredit {
 		return nil
