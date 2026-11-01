@@ -97,6 +97,9 @@ func (f *fakeStore) InsertRetentionOnce(ctx context.Context, e HoldbackEntry) (i
 	_, err := f.InsertHoldbackEntry(ctx, e)
 	return 1, err
 }
+func (f *fakeStore) InsertRetentionOnceIfLinked(ctx context.Context, e HoldbackEntry, _ string) (int64, error) {
+	return f.InsertRetentionOnce(ctx, e)
+}
 func (f *fakeStore) HoldbackEntriesForJob(_ context.Context, jobID string) ([]HoldbackEntry, error) {
 	var out []HoldbackEntry
 	for _, e := range f.entries {

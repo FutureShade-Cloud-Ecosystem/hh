@@ -30,6 +30,11 @@ type RetentionBooking struct {
 // BookRetention books one RETENTION row for an invoice's withholding on the lien job linked to the
 // invoice's customer job. It answers false (and writes nothing) when no lien job is linked or the
 // amount is not positive. A second call for the same invoice books nothing.
+//
+// Accepted (0.55): the invoice writer decides to withhold with the unlocked HasLinkedLienJob, so a move of
+// the link that commits between that decision and this call leaves the invoice with holdback_cents but no
+// RETENTION row (this answers false). The impossible end state, a ledger row under a job that left the
+// invoice's customer job, cannot happen; a later sync books the invoice onto whatever job is then linked.
 func (s *Service) BookRetention(ctx context.Context, b RetentionBooking) (bool, error) {
 	if b.AmountCents <= 0 || strings.TrimSpace(b.CustomerJobID) == "" {
 		return false, nil
