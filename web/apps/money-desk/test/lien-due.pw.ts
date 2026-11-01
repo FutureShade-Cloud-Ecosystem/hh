@@ -3,7 +3,7 @@
 // reversal with a reason, the lien doors (a preserved lien, its discharge, the three dates), and the old job level
 // press saying where the holdback is released now.
 import type { APIRequestContext, Page } from "@playwright/test";
-import { test, expect, openLiens, liensTab, noSidewaysScroll, CONTROLLER_ID, JOB5, dayFrom } from "./lien-helpers.js";
+import { test, expect, openLiens, liensTab, noSidewaysScroll, CONTROLLER_ID, JOB5, dayFrom, nb, shown } from "./lien-helpers.js";
 
 const due = (page: Page, lien: string) => page.locator(`[data-row="due"][data-lien-job="${lien}"]:visible`);
 
@@ -36,7 +36,7 @@ test("item 1: due to release lists each customer job with its invoices, its hold
   await expect(ready.locator("[data-last-day]")).not.toHaveText("");
   const waiting = due(page, "GLS-2103");
   await expect(waiting).toContainText(/Not due until/);
-  await expect(waiting).toContainText("The holdback is not due: lien job GLS-2103 counts 45 days from");
+  await expect(waiting).toContainText(nb("The holdback is not due: lien job GLS-2103 counts 45 days from"));
   await expect(waiting.getByRole("button", { name: "Release" })).toHaveCount(0);
   const none = due(page, "");
   await expect(none).toContainText("No lien job linked");
@@ -51,14 +51,17 @@ test("item 2: the Controller is asked first, naming the job, the invoices and ea
   await due(page, "GLS-2100").getByRole("button", { name: "Release" }).click();
   const panel = page.locator("[data-due-panel]");
   await expect(panel).toBeFocused();
-  await expect(panel.locator("[data-confirm-words]")).toContainText("lien job GLS-2100");
-  await expect(panel.locator("[data-confirm-words]")).toContainText("INV-4101 ($8,400.00)");
-  await expect(panel.locator("[data-confirm-words]")).toContainText("INV-4102 ($10,200.00)");
+  await expect(panel.locator("[data-confirm-words]")).toContainText(nb("lien job GLS-2100"));
+  // The total, the invoice count and the customer job, as well as each invoice (RT-3b fix round, finding 3).
+  await expect(panel.locator("[data-confirm-words]")).toContainText("Release $18,600.00 held on 2 invoices for ");
+  await expect(panel.locator("[data-confirm-words]")).toContainText("(demo)");
+  await expect(panel.locator("[data-confirm-words]")).toContainText(nb("INV-4101 ($8,400.00)"));
+  await expect(panel.locator("[data-confirm-words]")).toContainText(nb("INV-4102 ($10,200.00)"));
   await panel.getByRole("button", { name: "Cancel" }).click();
   await expect(page.locator("[data-due-panel]")).toHaveCount(0);
   await due(page, "GLS-2100").getByRole("button", { name: "Release" }).click();
   await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Released $18,600.00 on lien job GLS-2100: 2 invoices.");
+  await expect(page.locator("[data-notice]")).toContainText(nb("Released $18,600.00 on lien job GLS-2100: 2 invoices."));
   await expect(due(page, "GLS-2100")).toHaveCount(0);
   const rows = page.locator("[data-row='released']:visible");
   await expect(rows).toHaveCount(2);
@@ -72,8 +75,8 @@ test("item 2: what the core refuses is said in the core's sentence, and the list
   await due(page, "GLS-2100").getByRole("button", { name: "Release" }).click();
   await behind(request, "POST", `/api/v1/lien/jobs/${JOB5}/preserved-lien`, { preserved_on: dayFrom(-1), note: "filed while the screen was open" });
   await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
-  await expect(page.locator("[data-error]")).toContainText(`A lien was preserved on lien job GLS-2100 on ${dayFrom(-1)} and has not been discharged, so the holdback stays held until it is discharged or settled.`);
-  await expect(due(page, "GLS-2100")).toContainText("Blocked by a preserved lien on GLS-2100");
+  await expect(page.locator("[data-error]")).toContainText(nb(`A lien was preserved on lien job GLS-2100 on ${shown(dayFrom(-1))} and has not been discharged, so the holdback stays held until it is discharged or settled.`));
+  await expect(due(page, "GLS-2100")).toContainText(nb("Blocked by a preserved lien on GLS-2100"));
   await expect(due(page, "GLS-2100").getByRole("button", { name: "Release" })).toHaveCount(0);
 });
 
@@ -98,7 +101,7 @@ test("item 3: a release is reversed with a reason, asked first, and a release re
   await expect(page.locator("[data-error]")).toContainText("Say why the release is reversed.");
   await panel.getByLabel("Reason").fill("Released against the wrong job");
   await panel.getByRole("button", { name: "Reverse release" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Reversed the release of INV-4101: $8,400.00 is held back again.");
+  await expect(page.locator("[data-notice]")).toContainText(nb("Reversed the release on lien job GLS-2100: INV-4101 ($8,400.00) is held back again."));
   await expect(first).toContainText("Reversed");
   await expect(first.getByRole("button", { name: "Reverse" })).toHaveCount(0);
   await expect(due(page, "GLS-2100")).toContainText("INV-4101");
@@ -123,18 +126,18 @@ test("item 4: a preserved lien is recorded and discharged on a lien job, and the
   await doors.getByLabel("Lien preserved on").fill(dayFrom(-2));
   await doors.getByLabel("Note", { exact: true }).fill("Filed at the registry");
   await doors.getByRole("button", { name: "Record preserved lien" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Recorded: a lien was preserved on lien job GLS-2100.");
+  await expect(page.locator("[data-notice]")).toContainText(nb("Recorded: a lien was preserved on lien job GLS-2100."));
   await expect(doors.locator("[data-lien-state]")).toContainText("A lien was preserved on");
   await expect(doors.locator("[data-lien-state]")).toContainText("Filed at the registry");
   await liensTab(page, "due");
-  await expect(due(page, "GLS-2100")).toContainText("Blocked by a preserved lien on GLS-2100");
+  await expect(due(page, "GLS-2100")).toContainText(nb("Blocked by a preserved lien on GLS-2100"));
   await liensTab(page, "jobs");
   await doors.getByLabel("Discharged on").fill(dayFrom(-5));
   await doors.getByRole("button", { name: "Record discharge" }).click();
   await expect(page.locator("[data-error]")).toContainText("cannot be discharged on");
   await doors.getByLabel("Discharged on").fill(dayFrom(0));
   await doors.getByRole("button", { name: "Record discharge" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Recorded: the lien on lien job GLS-2100 was discharged.");
+  await expect(page.locator("[data-notice]")).toContainText(nb("Recorded: the lien on lien job GLS-2100 was discharged."));
   await liensTab(page, "due");
   await expect(due(page, "GLS-2100")).toContainText("Due now");
 });
@@ -150,14 +153,14 @@ test("item 4: the three dates are set, corrected and cleared, and a job with non
   await doors.getByLabel("Substantial performance date").fill("");
   await doors.getByLabel("Last supply date").fill("");
   await doors.getByRole("button", { name: "Save dates" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Saved the dates of lien job GLS-2103.");
+  await expect(page.locator("[data-notice]")).toContainText(nb("Saved the dates of lien job GLS-2103."));
   await expect(page.locator("[data-job-panel]")).toContainText("Certificate published");
   await liensTab(page, "due");
   await expect(due(page, "GLS-2103")).toContainText("Not due until");
   await liensTab(page, "jobs");
   await doors.getByLabel("Certificate published on").fill("");
   await doors.getByRole("button", { name: "Save dates" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Saved the dates of lien job GLS-2103.");
+  await expect(page.locator("[data-notice]")).toContainText(nb("Saved the dates of lien job GLS-2103."));
   await liensTab(page, "due");
   await expect(due(page, "GLS-2103")).toContainText("No date to count from");
 });
@@ -168,7 +171,42 @@ test("item 5: the old job level press on a job whose holdback is held on invoice
   await page.locator("[data-row='aging'][data-job-no='GLS-2103']:visible").getByRole("button", { name: "Release" }).click();
   await page.getByLabel("Co-signer").selectOption({ label: "Financial Controller (demo)" });
   await page.getByRole("button", { name: "Confirm release" }).click();
-  await expect(page.locator("[data-error]")).toContainText("Job GLS-2103 is linked to a customer job, so its holdback is released from Due to release by the Financial Controller, once its preservation period has run out, and not here.");
+  await expect(page.locator("[data-error]")).toContainText(nb("Job GLS-2103 is linked to a customer job, so its holdback is released from Due to release by the Financial Controller, once its preservation period has run out, and not here."));
   await page.locator("[data-job-level-refused]").getByRole("button", { name: "Go to Due to release" }).click();
   await expect(page.locator("[data-tab-id='due']")).toHaveAttribute("aria-current", "true");
+});
+
+test("fix 6 and 5: one date style and no jargon on any lien screen", async ({ page, request }) => {
+  await openDue(page, request);
+  const text = async () => page.locator("[data-liens]").innerText();
+  for (const tab of ["due", "triage", "jobs", "holdbacks"] as const) {
+    await liensTab(page, tab);
+    const words = await text();
+    expect(words, `${tab} shows a day written yyyy-mm-dd`).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    expect(words, `${tab} says the core`).not.toMatch(/the core/i);
+  }
+  await liensTab(page, "due");
+  await due(page, "GLS-2100").getByRole("button", { name: "Release" }).click();
+  await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
+  await expect(page.locator("[data-released]")).toBeVisible();
+  const words = await text();
+  expect(words).toContain("Released in this session");
+  expect(words).not.toMatch(/the core/i);
+});
+
+test("fix 9: a job with a preserved lien is not called Released and not called releasable", async ({ page, request }) => {
+  await openDue(page, request);
+  await due(page, "GLS-2100").getByRole("button", { name: "Release" }).click();
+  await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
+  await expect(page.locator("[data-notice]")).toBeVisible();
+  await liensTab(page, "jobs");
+  await page.locator("[data-row='job'][data-job-no='GLS-2100']:visible").getByRole("button", { name: "Open" }).click();
+  await expect(page.locator("[data-job-panel]")).toContainText("Released");
+  await page.locator("[data-doors]").getByLabel("Lien preserved on").fill(dayFrom(-2));
+  await page.locator("[data-doors]").getByRole("button", { name: "Record preserved lien" }).click();
+  await expect(page.locator("[data-lien-state]")).toContainText("has not been discharged");
+  const panel = page.locator("[data-job-panel]");
+  await expect(panel.locator(".li-status").first()).toHaveText("Lien preserved");
+  await expect(panel).not.toContainText("can be released");
+  await expect(page.locator("[data-row='job'][data-job-no='GLS-2100']:visible")).not.toContainText("Released");
 });

@@ -81,3 +81,15 @@ export async function noSidewaysScroll(page: Page): Promise<void> {
 }
 
 export const test = base;
+
+/** A written day as the screen shows it ("Oct 30, 2026"), cut from the same day dayFrom gives. */
+export function shown(day: string): string {
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const [year, month, date] = day.split("-").map(Number);
+  return `${months[(month ?? 1) - 1]} ${date}, ${year}`;
+}
+
+/** Job and invoice codes keep their hyphen on one line with a non breaking one; this writes a code the way the screen draws it. */
+export function nb(text: string): string {
+  return text.replace(/\b([A-Z][A-Z0-9]*)-(?=\d)/g, "$1\u2011");
+}

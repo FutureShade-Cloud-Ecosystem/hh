@@ -6,6 +6,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { Branch } from "@hardscapehouse/api-client";
 import type { BannerView, Tone } from "../compliance/compliance-logic.js";
+import { nonBreaking } from "./lien-logic.js";
 
 export function pill(tone: Tone, word: string): TemplateResult {
   return html`<span class="li-status li-status-${tone}">${word}</span>`;
@@ -13,8 +14,8 @@ export function pill(tone: Tone, word: string): TemplateResult {
 
 export function messages(error: string, notice: string): TemplateResult {
   return html`
-    ${error !== "" ? html`<p class="li-alert li-alert-error" role="alert" data-error>${error}</p>` : nothing}
-    ${notice !== "" ? html`<p class="li-alert li-alert-ok" role="status" data-notice>${notice}</p>` : nothing}
+    ${error !== "" ? html`<p class="li-alert li-alert-error" role="alert" data-error>${nonBreaking(error)}</p>` : nothing}
+    ${notice !== "" ? html`<p class="li-alert li-alert-ok" role="status" data-notice>${nonBreaking(notice)}</p>` : nothing}
   `;
 }
 

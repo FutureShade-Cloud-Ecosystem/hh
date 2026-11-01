@@ -4,7 +4,7 @@
 // co-signer the core will not take is refused in the core's words, a release another hand already made says there is
 // nothing outstanding, a load that fails says so and can be tried again, and an empty list says it is empty.
 import type { Page } from "@playwright/test";
-import { test, expect, openLiens, liensTab, noSidewaysScroll, GM_ID, handoffFor, dayFrom } from "./lien-helpers.js";
+import { test, expect, openLiens, liensTab, noSidewaysScroll, GM_ID, handoffFor, dayFrom, nb } from "./lien-helpers.js";
 
 const row = (page: Page, job: string, kind = "triage") => page.locator(`[data-row="${kind}"][data-job-no="${job}"]:visible`);
 
@@ -85,7 +85,7 @@ test("a new job is refused in words before anything is sent, then it lands first
   await form.getByLabel("Holdback percent").fill("");
   await form.getByLabel("Substantial performance date").fill(dayFrom(-3));
   await form.getByRole("button", { name: "Create job" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Job GLS-2201 created.");
+  await expect(page.locator("[data-notice]")).toContainText(nb("Job GLS-2201 created."));
   expect(sent).toBe(1);
   await expect(page.locator("[data-row='job']:visible").first()).toContainText("GLS-2201");
   await expect(page.locator("[data-row='job']:visible").first()).toContainText("$64,000.00");
@@ -151,7 +151,7 @@ test("the General Manager releases a holdback: the co-signer is picked from the 
   await expect(row(page, "GLS-2101", "aging")).toHaveCount(1);
   await panel.getByLabel("Co-signer").selectOption({ label: "Financial Controller (demo)" });
   await panel.getByRole("button", { name: "Confirm release" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Released $18,600.00 on job GLS-2101, co-signed by Financial Controller (demo).");
+  await expect(page.locator("[data-notice]")).toContainText(nb("Released $18,600.00 on job GLS-2101, co-signed by Financial Controller (demo)."));
   await expect(page.locator("[data-release-panel]")).toHaveCount(0);
   await expect(row(page, "GLS-2101", "aging")).toHaveCount(0);
   await liensTab(page, "triage");
@@ -171,7 +171,7 @@ test("a co-signer the core will not take is refused in the core's words and noth
   // The same press with a good co-signer then goes through: the refusal left everything as it was.
   await panel.getByLabel("Co-signer").selectOption({ label: "Payables and Receivables (demo)" });
   await panel.getByRole("button", { name: "Confirm release" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Released $18,600.00 on job GLS-2101");
+  await expect(page.locator("[data-notice]")).toContainText(nb("Released $18,600.00 on job GLS-2101"));
 });
 
 test("a holdback released by another hand meanwhile is refused as nothing outstanding, and the list is read again", async ({ page, request }) => {
@@ -331,7 +331,7 @@ test.describe("on a phone", () => {
     await form.getByLabel("Job number").fill("GLS-2301");
     await form.getByLabel("Branch").selectOption({ index: 1 });
     await form.getByRole("button", { name: "Create job" }).click();
-    await expect(page.locator("[data-notice]")).toContainText("Job GLS-2301 created.");
+    await expect(page.locator("[data-notice]")).toContainText(nb("Job GLS-2301 created."));
     await liensTab(page, "documents");
     await page.getByLabel("Job", { exact: true }).selectOption({ label: "GLS-2301" });
     await page.getByLabel("Form", { exact: true }).selectOption({ label: "Notice" });

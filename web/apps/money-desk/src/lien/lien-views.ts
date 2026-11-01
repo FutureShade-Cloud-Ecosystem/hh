@@ -24,12 +24,18 @@ import {
   type DueGroup,
   documentTone,
   dueConfirmWords,
+  dueTotalOf,
+  jobStatusToneFor,
+  jobStatusWordFor,
+  lienActive,
+  LIEN_HELD_LINE,
+  RELEASED_HEADING,
+  RELEASED_LINE,
   dueStateWords,
   dueTone,
   heldNowWords,
   holdingWords,
-  jobStatusTone,
-  jobStatusWord,
+  nonBreaking,
   noteWords,
   READ_ONLY_LIENS,
   refusalWords,
@@ -164,7 +170,7 @@ function triage(model: LiensModel): TemplateResult {
         : html`
             <div class="li-scroll li-hide-narrow">
               <table aria-label="Monday triage">
-                <thead><tr><th>Job</th><th>Branch</th><th>Status</th><th class="num">Held</th><th class="num">Oldest</th><th>What the core says</th><th></th></tr></thead>
+                <thead><tr><th>Job</th><th>Branch</th><th>Status</th><th class="num">Held</th><th class="num">Oldest</th><th>Note</th><th></th></tr></thead>
                 <tbody>${rows.map((t) => triageRow(model, t))}</tbody>
               </table>
             </div>
@@ -182,8 +188,8 @@ function dueInvoices(g: DueGroup): TemplateResult {
 
 function dueState(g: DueGroup): TemplateResult {
   return html`
-    <div data-due-state>${pill(dueTone(g), dueStateWords(g))}</div>
-    ${g.due || g.reason === "" ? nothing : html`<span class="li-sub" data-due-reason>${noteWords(g.reason)}</span>`}
+    <div data-due-state>${pill(dueTone(g), nonBreaking(dueStateWords(g)))}</div>
+    ${g.due || g.reason === "" ? nothing : html`<span class="li-sub" data-due-reason>${nonBreaking(noteWords(g.reason))}</span>`}
   `;
 }
 
@@ -204,10 +210,10 @@ function dueRow(model: LiensModel, g: DueGroup): TemplateResult {
 function dueCard(model: LiensModel, g: DueGroup): TemplateResult {
   return html`
     <li class="li-card" data-row="due" data-customer-job=${g.customerJobId} data-lien-job=${g.lienJobNo}>
-      <div class="li-card-top"><strong class="li-mono">${g.lienJobNo === "" ? "No lien job" : g.lienJobNo}</strong>${pill(dueTone(g), dueStateWords(g))}</div>
+      <div class="li-card-top"><strong class="li-mono">${g.lienJobNo === "" ? "No lien job" : g.lienJobNo}</strong>${pill(dueTone(g), nonBreaking(dueStateWords(g)))}</div>
       ${dueInvoices(g)}
       <span class="li-sub">${branchName(model.branches, g.branchId)} · Last day to preserve: <span data-last-day>${lastDayWords(g)}</span></span>
-      ${g.due || g.reason === "" ? nothing : html`<span class="li-sub" data-due-reason>${noteWords(g.reason)}</span>`}
+      ${g.due || g.reason === "" ? nothing : html`<span class="li-sub" data-due-reason>${nonBreaking(noteWords(g.reason))}</span>`}
       ${dueAction(model, g)}
     </li>
   `;
@@ -256,12 +262,19 @@ function dueAction(model: LiensModel, g: DueGroup): TemplateResult | typeof noth
   return html`<button type="button" class="btn btn-secondary" data-action="li-due-open" data-id=${g.customerJobId} aria-pressed="${open ? "true" : "false"}">Release</button>`;
 }
 
+/** The lien job's own description and its branch name the customer job in the confirm, when the lien job is known. */
+function jobAbout(model: LiensModel, g: DueGroup): string {
+  const desc = g.lienJobNo === "" ? "" : (model.jobs.find((j) => j.job_no === g.lienJobNo)?.description ?? "");
+  const branch = branchName(model.branches, g.branchId);
+  return [desc, branch === "" ? "" : `at ${branch}`].filter((p) => p !== "").join(" ");
+}
+
 /** The question first: the customer job, each invoice and its amount; the core releases the whole holdback of the job at once. */
 function duePanel(model: LiensModel, g: DueGroup): TemplateResult {
   return html`
     <section class="li-panel" data-due-panel tabindex="-1" role="region" aria-label="Release holdback">
       <div class="li-panel-head"><h2>Release holdback</h2></div>
-      <p class="li-confirm" data-confirm-words>${dueConfirmWords(g)}</p>
+      <p class="li-confirm" data-confirm-words>${nonBreaking(dueConfirmWords(g, dueTotalOf(model.due.groups, model.due.totals, g), jobAbout(model, g)))}</p>
       <div class="li-actions">
         <button type="button" class="btn btn-primary" data-action="li-due-confirm" ?disabled=${model.busy}>Confirm release</button>
         <button type="button" class="btn btn-secondary" data-action="li-due-close">Cancel</button>
@@ -303,8 +316,8 @@ function releasedList(model: LiensModel): TemplateResult | typeof nothing {
   if (model.released.length === 0) return nothing;
   return html`
     <section class="li-panel" data-released>
-      <div class="li-panel-head"><h2>Released on this visit</h2></div>
-      <p class="li-dim">Each release the core made for you since this page opened, one row per invoice.</p>
+      <div class="li-panel-head"><h2>${RELEASED_HEADING}</h2></div>
+      <p class="li-dim">${RELEASED_LINE}</p>
       <ul class="li-cards li-cards-always">${model.released.map((r) => releasedRow(model, r))}</ul>
     </section>
   `;
@@ -318,7 +331,7 @@ function jobRow(model: LiensModel, j: LienJob): TemplateResult {
     <tr data-row="job" data-job-no=${j.job_no} aria-current="${selected ? "true" : "false"}">
       <td><strong class="li-mono">${j.job_no}</strong><span class="li-sub">${branchName(model.branches, j.branch_id)} · ${directionWord(j.holdback_direction)}</span></td>
       <td class="num">${j.contract_cents === 0 ? "Not set" : formatMoney(j.contract_cents)}</td>
-      <td>${pill(jobStatusTone(j.status), jobStatusWord(j.status))}</td>
+      <td>${pill(jobStatusToneFor(j), jobStatusWordFor(j))}</td>
       <td><button type="button" class="li-link" data-action="li-select-job" data-id=${j.id} aria-pressed="${selected ? "true" : "false"}">Open</button></td>
     </tr>
   `;
@@ -328,7 +341,7 @@ function jobCard(model: LiensModel, j: LienJob): TemplateResult {
   const selected = model.selectedJob === j.id;
   return html`
     <li class="li-card" data-row="job" data-job-no=${j.job_no} aria-current="${selected ? "true" : "false"}">
-      <div class="li-card-top"><strong class="li-mono">${j.job_no}</strong>${pill(jobStatusTone(j.status), jobStatusWord(j.status))}</div>
+      <div class="li-card-top"><strong class="li-mono">${j.job_no}</strong>${pill(jobStatusToneFor(j), jobStatusWordFor(j))}</div>
       <span>${j.description}</span>
       <div class="li-card-amount">${j.contract_cents === 0 ? "Contract not set" : formatMoney(j.contract_cents)} <span class="li-dim">· ${directionWord(j.holdback_direction)}</span></div>
       <span class="li-sub">${branchName(model.branches, j.branch_id)}</span>
@@ -355,7 +368,7 @@ function jobForm(model: LiensModel): TemplateResult {
         <label class="li-field">Substantial performance date<input type="date" data-field="perf" aria-label="Substantial performance date" /></label>
         <label class="li-field">Last supply date<input type="date" data-field="supply" aria-label="Last supply date" /></label>
       </div>
-      <p class="li-hint">A blank percent is the core's own default. With no customer on the job, the sync reads every held invoice at the branch.</p>
+      <p class="li-hint">A blank percent is the default. With no customer on the job, the sync reads every held invoice at the branch.</p>
       <div class="li-actions">
         <button type="button" class="btn btn-primary" data-action="li-create-job" ?disabled=${model.busy}>Create job</button>
         <button type="button" class="btn btn-secondary" data-action="li-cancel-job">Cancel</button>
@@ -378,7 +391,7 @@ function doors(model: LiensModel, job: LienJob): TemplateResult {
   return html`
     <div class="li-doors" data-doors>
       <h3>Preservation</h3>
-      <p class="li-fact" data-lien-state>${lienStateWords(job)}</p>
+      <p class="li-fact" data-lien-state>${nonBreaking(lienStateWords(job))}</p>
       ${active
         ? html`
             <div class="li-form">
@@ -410,11 +423,11 @@ function jobPanel(model: LiensModel, job: LienJob): TemplateResult {
   const held = agingOf(model, job.id);
   return html`
     <section class="li-panel" data-job-panel>
-      <div class="li-panel-head"><h2>${job.job_no}</h2>${pill(jobStatusTone(job.status), jobStatusWord(job.status))}</div>
+      <div class="li-panel-head"><h2>${job.job_no}</h2>${pill(jobStatusToneFor(job), jobStatusWordFor(job))}</div>
       <p class="li-fact">${job.description}</p>
       <dl class="li-facts">
         <dt>Branch</dt><dd>${branchName(model.branches, job.branch_id)}</dd>
-        <dt>Holdback</dt><dd>${directionWord(job.holdback_direction)}. ${directionLine(job.holdback_direction)}</dd>
+        <dt>Holdback</dt><dd>${directionWord(job.holdback_direction)}. ${lienActive(job) ? LIEN_HELD_LINE : directionLine(job.holdback_direction)}</dd>
         <dt>Contract</dt><dd>${job.contract_cents === 0 ? "Not set" : formatMoney(job.contract_cents)}</dd>
         <dt>Held back</dt><dd>${bpsWords(job.holdback_pct_bps)}</dd>
         <dt>Certificate published</dt><dd>${job.csp_published_on === undefined ? "Not set" : dueWords(job.csp_published_on)}</dd>
@@ -538,7 +551,7 @@ function releasePanel(model: LiensModel, release: ReleaseModel): TemplateResult 
                 <label class="li-field">Co-signer
                   <select data-field="cosigner" aria-label="Co-signer"><option data-id="">Pick a co-signer</option>${people.map((p) => html`<option data-id=${p.user_id}>${p.display_name}</option>`)}</select>
                 </label>
-                <p class="li-hint">A Financial Controller or Payables and Receivables reviews the release with you. The core checks who they are.</p>
+                <p class="li-hint">A Financial Controller or Payables and Receivables reviews the release with you. Who they are is checked when you confirm.</p>
                 ${row === undefined
                   ? html`<p class="li-hint" data-nothing-held>Nothing is held on this job now, so there is nothing to release.</p>`
                   : html`<p class="li-confirm" data-confirm-words>${releaseConfirmWords(jobNo, amount)}</p>`}
@@ -695,7 +708,7 @@ function documentView(doc: LienDocument | null): TemplateResult {
   return html`
     <section class="li-panel">
       <div class="li-panel-head"><h2>${templateWord(doc.template_kind)}, version ${doc.version}</h2>${pill(documentTone(doc.status), documentStatusWord(doc.status))}</div>
-      ${doc.is_draft_banner ? html`<p class="li-hint">This is a draft. The core words the banner at its head.</p>` : nothing}
+      ${doc.is_draft_banner ? html`<p class="li-hint">This is a draft. Its banner is worded at its head.</p>` : nothing}
       <pre class="li-pre" data-doc-view>${doc.rendered_content}</pre>
     </section>
   `;

@@ -137,7 +137,7 @@ test("the new job form becomes the body the core takes, or says what is wrong", 
   assert.deepEqual(jobForm({ job_no: "J", branch_id: "b1", description: "", contract: "", percent: "150", direction: "RECEIVABLE", perf: "", supply: "" }), {
     ok: false,
     field: "percent",
-    words: "The holdback percent is a number from 0.01 to 100, like 10 or 7.5. Leave it blank for the core's default.",
+    words: "The holdback percent is a number from 0.01 to 100, like 10 or 7.5. Leave it blank for the default.",
   });
   assert.deepEqual(jobForm({ job_no: "J", branch_id: "b1", description: "", contract: "", percent: "", direction: "RECEIVABLE", perf: "yesterday", supply: "" }), {
     ok: false,
@@ -238,6 +238,13 @@ import {
   datesForm,
   dischargeForm,
   dueConfirmWords,
+  dueTotalOf,
+  displayDays,
+  heldOnInvoices,
+  jobStatusToneFor,
+  jobStatusWordFor,
+  nonBreaking,
+  reverseConfirmWords,
   dueStateWords,
   dueTone,
   groupDue,
@@ -297,7 +304,8 @@ test("only the Financial Controller releases a due holdback, and the screen asks
   assert.equal(canReleaseDue("general_manager"), false);
   assert.equal(canReleaseDue("payables_receivables"), false);
   const g = groupDue([dueRow({ lien_job_no: "GLS-1" }), dueRow({ invoice_id: "i2", invoice_no: "INV-2", holdback_cents: 1020000, lien_job_no: "GLS-1" })])[0];
-  const words = dueConfirmWords(g);
+  const words = dueConfirmWords(g, "$18,600.00", "Point Loma (demo)");
+  assert.match(words, /^Release \$18,600\.00 held on 2 invoices for Point Loma \(demo\), lien job GLS-1: /);
   assert.match(words, /lien job GLS-1/);
   assert.match(words, /INV-1 \(\$8,400\.00\)/);
   assert.match(words, /INV-2 \(\$10,200\.00\)/);
@@ -305,7 +313,50 @@ test("only the Financial Controller releases a due holdback, and the screen asks
   assert.match(words, /journal/);
   assert.equal(releasedDueWords("lien job GLS-1", "$18,600.00", 2, false), "Released $18,600.00 on lien job GLS-1: 2 invoices.");
   assert.equal(releasedDueWords("lien job GLS-1", "$18,600.00", 1, true), "That release was already made: $18,600.00 on lien job GLS-1, 1 invoice.");
-  assert.equal(reversedWords("INV-1", "$8,400.00"), "Reversed the release of INV-1: $8,400.00 is held back again.");
+  assert.equal(
+    reversedWords("lien job GLS-1", [{ invoiceNo: "INV-1", amount: "$8,400.00" }, { invoiceNo: "INV-2", amount: "$10,200.00" }]),
+    "Reversed the release on lien job GLS-1: INV-1 ($8,400.00) and INV-2 ($10,200.00) are held back again.",
+  );
+  assert.equal(reversedWords("lien job GLS-1", [{ invoiceNo: "INV-1", amount: "$8,400.00" }]), "Reversed the release on lien job GLS-1: INV-1 ($8,400.00) is held back again.");
+  assert.match(reverseConfirmWords("lien job GLS-1", [{ invoiceNo: "INV-1", amount: "$8,400.00" }]), /^Reverse the release on lien job GLS-1: INV-1 \(\$8,400\.00\)\./);
+  // Without a figure from the core for the job, the confirm names no total rather than adding one up.
+  assert.match(dueConfirmWords(g, null, ""), /^Release the holdback held on 2 invoices for lien job GLS-1: /);
+});
+
+test("the core's total is named only where it is the job's own: the sole due job at its branch", () => {
+  const a = groupDue([dueRow({ lien_job_no: "GLS-1", branch_id: "b1" }), dueRow({ invoice_id: "i2", customer_job_id: "cj2", invoice_no: "INV-2", lien_job_no: "GLS-2", branch_id: "b1" })]);
+  const totals = [{ branch_id: "b1", due_cents: 1860000 }];
+  assert.equal(dueTotalOf(a, totals, a[0]), null);
+  const one = groupDue([dueRow({ lien_job_no: "GLS-1", branch_id: "b1" })]);
+  assert.equal(dueTotalOf(one, totals, one[0]), "$18,600.00");
+  assert.equal(dueTotalOf(one, [], one[0]), null);
+});
+
+test("a job whose holdback is held on invoices is the one the due list names", () => {
+  const groups = groupDue([dueRow({ lien_job_no: "GLS-1" }), dueRow({ invoice_id: "i2", customer_job_id: "cj2", invoice_no: "INV-2", lien_job_no: "GLS-3", due: false, blocked_kind: "NOT_DUE" })]);
+  assert.equal(heldOnInvoices(groups, "GLS-1"), true);
+  assert.equal(heldOnInvoices(groups, "GLS-3"), true);
+  assert.equal(heldOnInvoices(groups, "GLS-9"), false);
+  assert.equal(heldOnInvoices(groups, ""), false);
+});
+
+test("one date style: days inside the core's sentences read as the columns do, and codes keep their hyphen", () => {
+  assert.equal(displayDays("preserved on 2026-10-20 and 2026-12-04"), "preserved on Oct 20, 2026 and Dec 4, 2026");
+  assert.equal(displayDays("not a day 2026-13-45"), "not a day 2026-13-45");
+  assert.equal(refusalWords("job", "lien: a lien was preserved on lien job GLS-2100 on 2026-10-30 and has not been discharged", 422), "A lien was preserved on lien job GLS-2100 on Oct 30, 2026 and has not been discharged.");
+  assert.equal(noteWords("counts 45 days from 2026-10-20"), "Counts 45 days from Oct 20, 2026.");
+  assert.equal(nonBreaking("Released on GLS-2100 and INV-4101."), "Released on GLS\u20112100 and INV\u20114101.");
+  assert.equal(nonBreaking("a 45-day window"), "a 45-day window");
+});
+
+test("a job with a preserved lien never reads as Released", () => {
+  const released = { status: "RELEASED" };
+  assert.equal(jobStatusWordFor(released), "Released");
+  const held = { status: "RELEASED", lien_preserved_on: "2030-01-01" };
+  assert.equal(jobStatusWordFor(held), "Lien preserved");
+  assert.equal(jobStatusToneFor(held), "stop");
+  const discharged = { status: "RELEASED", lien_preserved_on: "2030-01-01", lien_discharged_on: "2030-02-01" };
+  assert.equal(jobStatusWordFor(discharged), "Released");
 });
 
 test("a reversal needs a reason, and says so before anything is sent", () => {

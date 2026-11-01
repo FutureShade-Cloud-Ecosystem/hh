@@ -486,7 +486,7 @@ export class LienDesk {
       if (gone) await this.#refresh();
       return;
     }
-    this.#notice = reversedWords(item.invoiceNo, formatMoney(answer.value.restored_cents));
+    this.#notice = reversedWords(item.label, [{ invoiceNo: item.invoiceNo, amount: formatMoney(answer.value.restored_cents) }]);
     this.#reversing = "";
     await this.#refresh();
   }
