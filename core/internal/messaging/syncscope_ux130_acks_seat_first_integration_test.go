@@ -146,7 +146,7 @@ func TestUX130AckMalformedMessageIDIsRefusedAlone(t *testing.T) {
 	if res[0].Status == "applied" || ux108R3Err(res[0]) == "" {
 		t.Errorf("the malformed ack was not refused: %s", ux108R3Answer(res[0]))
 	}
-	if ux108R3Err(res[0]) != "message_id is not a valid id" {
+	if ux108R3Err(res[0]) != "sync: operation refused: message_id is not a valid id" {
 		t.Errorf("the refusal words: got %q", ux108R3Err(res[0]))
 	}
 	if res[1].Status != "applied" || res[1].Seq == nil {
