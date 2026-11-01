@@ -112,6 +112,9 @@ func fcJobRigNew(t *testing.T) *fcJobRig {
 		}
 		fcDelete(t, r.pool, "audit_log", `DELETE FROM audit_log WHERE action = $1 AND actor_id = $2::uuid`, fcJobAuditAct, fc1Controller)
 	})
+	// Every other schedule is quiet for the leg (another package's legs may have armed them), the AP job
+	// apart.
+	fcQuietOtherSchedules(t, r, FinanceChargeJobName, fcApJobName)
 	// The AP revaluation job is due for every leg, so a tick claims it too: the legs must count only the
 	// finance charge job (the snapshot above puts the row back).
 	fcDelete(t, r.pool, "job_schedules", `UPDATE job_schedules SET enabled = TRUE, next_run_at = now() - interval '1 minute' WHERE name = $1`, fcApJobName)
