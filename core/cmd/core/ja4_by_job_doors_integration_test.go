@@ -907,6 +907,7 @@ func TestIntegration_JA4Doors_PlantedSupplierDepositReadsFixed(t *testing.T) {
 	d := w.ja4JobADescriptions(t, "planted deposit", time.Now().Add(time.Hour))
 	ja4NoneReads(t, d, ja4Marker)
 	ja4Has(t, d, "Adjustment")
+	ja4Has(t, d, "Supplier deposit "+w.invoiceNo(t, w.invA)+" closed on the order's cancel")
 }
 
 // TestIntegration_JA4Doors_EarlyPaymentDiscountReadsItsWords (P061 fix round 3, P3-2).
