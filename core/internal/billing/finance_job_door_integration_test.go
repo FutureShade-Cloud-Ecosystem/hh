@@ -39,7 +39,8 @@ type fcJobRig struct {
 	repo   *jobs.Repository
 	audit  *fcTxAudit
 	runner *jobs.Runner
-	ran    atomic.Int64
+	ran    atomic.Int64 // the finance charge job's calls only
+	apRan  atomic.Int64 // the AP revaluation job's calls, kept apart so a due AP schedule never counts as ours
 }
 
 func fcJobRigNew(t *testing.T) *fcJobRig {
@@ -57,12 +58,14 @@ func fcJobRigNew(t *testing.T) *fcJobRig {
 	}).RegisterRoutes(mux, sg.Guards)
 	j := &fcJobRig{fcRoutes: &fcRoutes{rig: r, sg: sg, mux: mux, audit: &fcAuditStub{}, svc: svc}, repo: repo, audit: aud}
 	j.runner = jobs.NewRunner(repo, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	for _, name := range []string{FinanceChargeJobName, fcApJobName} {
-		j.runner.Register(name, func(context.Context) (jobs.Result, error) {
-			j.ran.Add(1)
-			return jobs.Result{}, nil
-		})
-	}
+	j.runner.Register(FinanceChargeJobName, func(context.Context) (jobs.Result, error) {
+		j.ran.Add(1)
+		return jobs.Result{}, nil
+	})
+	j.runner.Register(fcApJobName, func(context.Context) (jobs.Result, error) {
+		j.apRan.Add(1)
+		return jobs.Result{}, nil
+	})
 
 	// Put every schedule row back exactly as found (a tick claims any schedule that is due, not only the
 	// two under test, and stamps it), drop the runs the ticks recorded and the audit rows the toggles
@@ -109,6 +112,9 @@ func fcJobRigNew(t *testing.T) *fcJobRig {
 		}
 		fcDelete(t, r.pool, "audit_log", `DELETE FROM audit_log WHERE action = $1 AND actor_id = $2::uuid`, fcJobAuditAct, fc1Controller)
 	})
+	// The AP revaluation job is due for every leg, so a tick claims it too: the legs must count only the
+	// finance charge job (the snapshot above puts the row back).
+	fcDelete(t, r.pool, "job_schedules", `UPDATE job_schedules SET enabled = TRUE, next_run_at = now() - interval '1 minute' WHERE name = $1`, fcApJobName)
 	return j
 }
 
