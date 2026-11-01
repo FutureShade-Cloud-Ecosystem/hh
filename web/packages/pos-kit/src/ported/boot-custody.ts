@@ -180,6 +180,15 @@ export function entryAfter(outcome: Exclude<AppStart, { kind: "ready" }>): Entry
   return entryUnavailable();
 }
 
+/**
+ * The offline reason for an app that read the status of a failed start: no status means the call never got an
+ * answer (lost signal), 429 is a throttle, anything else is a server that is not answering.
+ */
+export function reasonForStatus(status: number | undefined): "offline" | "unavailable" | "rate_limited" {
+  if (status === undefined) return "offline";
+  return status === 429 ? "rate_limited" : "unavailable";
+}
+
 export interface BootDeps {
   sessions: SessionStore;
   /** The app's demo account: the controller's surface in demo mode. */
