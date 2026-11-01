@@ -210,17 +210,18 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 	var running int64
 	for rows.Next() {
 		var (
-			at      time.Time
-			txnType string
-			cents   int64
-			invNo   string
-			memo    string
-			srcType string
+			at         time.Time
+			txnType    string
+			cents      int64
+			invNo      string
+			memo       string
+			srcType    string
+			reversesNo string
 		)
 		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &srcType); err != nil {
 			return nil, fmt.Errorf("billing: scan statement line: %w", err)
 		}
-		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: statementDescription(txnType, srcType, memo, invNo)}
+		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: statementDescription(txnType, srcType, memo, invNo, reversesNo)}
 		// The subledger's sign convention: a charge raises AR (positive), a payment lowers it
 		// (negative). The statement shows both as positive numbers in their own column, which is what
 		// a reader expects, so the sign is translated here rather than shown raw.
@@ -281,7 +282,8 @@ var statementKnownWords = []struct{ prefix, words string }{
 // statementDescription turns a subledger row into a line a customer can read without a glossary. Nothing a
 // clerk typed and no internal id reaches it unless the memo is an allow listed shape or is the document's own
 // number.
-func statementDescription(txnType, sourceType, memo, docNo string) string {
+func statementDescription(txnType, sourceType, memo, docNo, reversesNo string) string {
+	_ = reversesNo
 	if memo != "" && memo == docNo {
 		return memo
 	}
@@ -290,16 +292,19 @@ func statementDescription(txnType, sourceType, memo, docNo string) string {
 			return memo
 		}
 	}
+	// The known prefixes run before the credit memo branch: a counter return credit applied or reversed copies
+	// its CREDIT_MEMO type onto the offsetting row, and that row says what happened, not "Credit memo". The
+	// prefixes are lower case and can never start a credit memo's own number.
+	for _, f := range statementKnownWords {
+		if strings.HasPrefix(memo, f.prefix) {
+			return f.words
+		}
+	}
 	if txnType == "CREDIT_MEMO" {
 		if m := creditMemoLine.FindStringSubmatch(memo); m != nil {
 			return m[1]
 		}
 		return "Credit memo"
-	}
-	for _, f := range statementKnownWords {
-		if strings.HasPrefix(memo, f.prefix) {
-			return f.words
-		}
 	}
 	switch txnType {
 	case "INVOICE":

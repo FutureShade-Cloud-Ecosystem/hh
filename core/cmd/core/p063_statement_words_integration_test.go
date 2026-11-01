@@ -184,6 +184,29 @@ func p063Has(t *testing.T, label string, ls []billing.StatementLine, want string
 	t.Errorf("%s: no line reads %q in %+v", label, want, ls)
 }
 
+func p063Count(t *testing.T, label string, ls []billing.StatementLine, want string, n int) {
+	t.Helper()
+	got := 0
+	for _, l := range ls {
+		if l.Description == want {
+			got++
+		}
+	}
+	if got != n {
+		t.Errorf("%s: %d line(s) read %q, want %d in %+v", label, got, want, n, ls)
+	}
+}
+
+// p063NoChargeReads fails if a charge line (money owed to us) reads the given words.
+func p063NoChargeReads(t *testing.T, label string, ls []billing.StatementLine, words string) {
+	t.Helper()
+	for _, l := range ls {
+		if l.ChargeCents > 0 && l.Description == words {
+			t.Errorf("%s: a charge line reads %q: %+v", label, words, l)
+		}
+	}
+}
+
 // staffMemo is what the customer AR read (staff) shows for the customer: the full memo survives.
 func (w *p063World) staffKeepsReason(t *testing.T, label string) {
 	t.Helper()
@@ -308,6 +331,46 @@ func TestIntegration_P063_PlainStatementWords(t *testing.T) {
 		p063Has(t, "credit reversed", ls, "Credit memo restored")
 		w.staffKeepsReason(t, "credit")
 	})
+
+	// A credit the account holds (a counter return, a receipt's change, a cancelled deposit) is applied and
+	// reversed through the real doors: its offsetting row copies the credit's own type, so a counter return
+	// credit (a CREDIT_MEMO row) must still read in the application's words, a charge line among them.
+	for _, fam := range []struct{ source, txn, memo string }{
+		{"pos_return", "CREDIT_MEMO", ""},
+		{"receipt_change", "ADJUSTMENT", "overpaid receipt left on account (4242)"},
+		{"deposit_cancel", "ADJUSTMENT", "Supplier deposit #INV-4242 credited back on the order's cancel"},
+	} {
+		fam := fam
+		t.Run("AccountCreditApplyAndReverse_"+fam.source, func(t *testing.T) {
+			w := p063Plant(t, pool)
+			var creditID string
+			if err := pool.QueryRow(ctx, `
+INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+VALUES ($1::uuid, $2, -4000, 46000, $3, gen_random_uuid(), $4::uuid, $5)
+RETURNING id::text`, w.cust, fam.txn, fam.source, trentonBranchID, fam.memo).Scan(&creditID); err != nil {
+				t.Fatalf("seed the account credit: %v", err)
+			}
+			app, err := w.bill.ApplyCredit(ctx, billing.ApplyCreditInput{
+				CustomerID: w.cust, CreditKind: billing.CreditKindAccount, CreditID: creditID, InvoiceID: w.invB,
+				AmountCents: 4000, Reason: p063Reason, IdempotencyKey: "p063-acct-" + fam.source + "-" + w.cust, OrgID: cmRoundNorthOrg,
+			}, time.Now())
+			if err != nil {
+				t.Fatalf("the credit apply door: %v", err)
+			}
+			ls := w.lines(t, fam.source+" applied")
+			p063Count(t, fam.source+" applied", ls, "Credit applied", 2)
+			p063NoChargeReads(t, fam.source+" applied", ls, "Credit memo")
+			if _, err := w.bill.ReverseCreditApplication(ctx, billing.ReverseCreditApplicationInput{
+				InvoiceID: w.invB, ApplicationID: app.ApplicationID, Reason: p063Reason, OrgID: cmRoundNorthOrg,
+			}, time.Now()); err != nil {
+				t.Fatalf("the credit reverse door: %v", err)
+			}
+			ls = w.lines(t, fam.source+" reversed", -4000) // the credit is open again
+			p063Count(t, fam.source+" reversed", ls, "Credit application reversed", 2)
+			p063NoChargeReads(t, fam.source+" reversed", ls, "Credit memo")
+			w.staffKeepsReason(t, fam.source)
+		})
+	}
 
 	t.Run("WriteOffAndReverse", func(t *testing.T) {
 		w := p063Plant(t, pool)
