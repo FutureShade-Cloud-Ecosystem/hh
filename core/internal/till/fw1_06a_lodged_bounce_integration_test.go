@@ -252,16 +252,23 @@ func TestIntegration_FW1_06a_BounceOfFeePayingPaymentReopensNSFFee(t *testing.T)
 		t.Fatalf("plant customer: %v", err)
 	}
 	t.Cleanup(func() {
-		c := context.Background()
-		_, _ = pool.Exec(c, `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE source_ref_id IN (SELECT id::text FROM payments WHERE customer_id = $1::uuid))`, custID)
-		_, _ = pool.Exec(c, `DELETE FROM gl_journals WHERE source_ref_id IN (SELECT id::text FROM payments WHERE customer_id = $1::uuid)`, custID)
-		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1 OR payload->>'payment_id' IN (SELECT id::text FROM payments WHERE customer_id = $1::uuid)`, custID)
-		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, custID)
-		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
-		_, _ = pool.Exec(c, `DELETE FROM payment_nsf WHERE customer_id = $1::uuid OR payment_id IN (SELECT id FROM payments WHERE customer_id = $1::uuid)`, custID)
-		_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, custID)
-		_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
-		_, _ = pool.Exec(c, `DELETE FROM customers WHERE id = $1::uuid`, custID)
+		// Dependency order; every delete fails the leg loudly, naming its table (FROM-PRINCIPAL 202).
+		del := func(table, sql string, args ...any) {
+			t.Helper()
+			if _, err := pool.Exec(context.Background(), sql, args...); err != nil {
+				t.Errorf("cleanup: delete from %s: %v", table, err)
+			}
+		}
+		del("gl_journal_lines", `DELETE FROM gl_journal_lines WHERE journal_id IN (SELECT id FROM gl_journals WHERE source_ref_id IN (SELECT id FROM payments WHERE customer_id = $1::uuid))`, custID)
+		del("gl_journals", `DELETE FROM gl_journals WHERE source_ref_id IN (SELECT id FROM payments WHERE customer_id = $1::uuid)`, custID)
+		del("events_outbox", `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1 OR payload->>'payment_id' IN (SELECT id::text FROM payments WHERE customer_id = $1::uuid)`, custID)
+		del("payment_allocations", `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, custID)
+		del("customer_transactions", `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, custID)
+		del("payment_nsf", `DELETE FROM payment_nsf WHERE customer_id = $1::uuid OR payment_id IN (SELECT id FROM payments WHERE customer_id = $1::uuid)`, custID)
+		del("payments", `DELETE FROM payments WHERE customer_id = $1::uuid`, custID)
+		del("invoices", `DELETE FROM invoices WHERE customer_id = $1::uuid`, custID)
+		del("credit_holds", `DELETE FROM credit_holds WHERE customer_id = $1::uuid`, custID)
+		del("customers", `DELETE FROM customers WHERE id = $1::uuid`, custID)
 	})
 
 	if err := pool.QueryRow(ctx, `
