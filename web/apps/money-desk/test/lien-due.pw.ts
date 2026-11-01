@@ -503,6 +503,30 @@ test("fix r3: a refused release (a 4xx) drops its key, so the next press is a ne
   expect(keys[1]).not.toBe(keys[0]);
 });
 
+test("delta: a release whose answer was lost but whose refresh shows it made drops its key, so a later release is a new press", async ({ page, request }) => {
+  await openDue(page, request);
+  const keys: string[] = [];
+  await page.route(RELEASES, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    keys.push((route.request().postDataJSON() as { idempotency_key: string }).idempotency_key);
+    // The core makes the release; the answer is lost on the way back.
+    await route.fetch();
+    return route.abort();
+  });
+  await pressRelease(page);
+  await expect(page.locator("[data-error]").first()).toBeVisible();
+  // The refresh shows the job no longer due: the outcome is known, so no lien-due key is held any more.
+  await expect(due(page, "GLS-2105").getByRole("button", { name: "Release" })).toHaveCount(0);
+  const held = await page.evaluate(() =>
+    Object.keys(window.sessionStorage)
+      .filter((k) => k.includes("lien-due."))
+      .map((k) => window.sessionStorage.getItem(k) ?? "")
+      .join(""),
+  );
+  expect(keys).toHaveLength(1);
+  expect(held).not.toContain(keys[0]);
+});
+
 test("fix r3: the key of a release with no answer survives a reload, held beside the other money presses' keys", async ({ page, request }) => {
   await openDue(page, request);
   const keys = await watchReleases(page, "abort");

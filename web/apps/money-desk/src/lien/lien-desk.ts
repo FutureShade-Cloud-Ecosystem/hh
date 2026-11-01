@@ -90,9 +90,18 @@ export class LienDesk {
   #reversing = "";
   #released: ReleasedPress[] = [];
   // The release key is held the way the other money presses hold theirs (src/ar/held-keys.ts): in the session mirror,
-  // one record per signed in user under its own namespace, so it outlives a reload. One entry per customer job.
+  // one record per signed in user under its own namespace, so it outlives a reload. One entry per customer job. One
+  // HeldKeys per signed in user, as the receivables desk keeps its own: where the session mirror is unavailable its
+  // in memory fallback is then the same map from press to press, so a retry still reuses its key.
+  #dueKeysHeld: HeldKeys | null = null;
+  #dueKeysUser = "";
   #dueKeys(): HeldKeys {
-    return new HeldKeys(this.#host.userId(), undefined, "lien-due.");
+    const user = this.#host.userId();
+    if (this.#dueKeysHeld === null || this.#dueKeysUser !== user) {
+      this.#dueKeysHeld = new HeldKeys(user, undefined, "lien-due.");
+      this.#dueKeysUser = user;
+    }
+    return this.#dueKeysHeld;
   }
   // The roster is read once, the first time a release opens, and kept.
   #people: IdentityStaffMember[] | null = null;
@@ -468,7 +477,12 @@ export class LienDesk {
       this.#host.repaint();
       await this.#refresh();
       // A job that is no longer due has nothing left to ask about; its refusal then reads at the head of the page.
-      if (!this.#due.groups.some((g) => g.customerJobId === group.customerJobId && g.due)) this.#dueOpen = "";
+      // The refresh then says the outcome is known, so the held key ends with it: a later release of the job, once it
+      // falls due again, is a new press with a new key, never a replay of this one.
+      if (!this.#due.groups.some((g) => g.customerJobId === group.customerJobId && g.due)) {
+        this.#dueOpen = "";
+        this.#dueKeys().delete(group.customerJobId);
+      }
       this.#host.repaint();
       return;
     }
