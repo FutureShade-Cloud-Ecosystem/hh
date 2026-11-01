@@ -527,4 +527,64 @@ UPDATE customer_transactions SET memo = '#INV-1, order #SO-P063LEAK-1'
 			t.Errorf("the crafted order memo reads %q, want Invoice", l.Description)
 		}
 	})
+
+	// 0.64 N2: the credit memo line's "reverses" half is the join's read of the reversed invoice, and
+	// that join is filtered to the account's own customer. A planted memo whose reverses_invoice_id
+	// names ANOTHER customer's invoice (the only writer refuses, credit_memo.go, so this row is the
+	// only way the filter can be reached) reads the memo's own number alone, never a number of that
+	// other invoice.
+	t.Run("CreditMemoReversesSameCustomerOnly", func(t *testing.T) {
+		w := p063Plant(t, pool)
+		ctx := context.Background()
+		tag := fmt.Sprintf("P064N2-%d", time.Now().UnixNano())
+		var otherCust, otherInv, otherNo string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO customers (account_no, name, customer_type, home_branch_id, credit_limit_cents)
+			 VALUES ($1, $2, 'CONTRACTOR', $3::uuid, 5000000) RETURNING id::text`, tag, "P064 "+tag, trentonBranchID).Scan(&otherCust); err != nil {
+			t.Fatalf("seed the other customer: %v", err)
+		}
+		t.Cleanup(func() {
+			for _, q := range []struct{ table, sql string }{
+				{"customer_transactions", `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`},
+				{"invoice_lines", `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`},
+				{"invoices", `DELETE FROM invoices WHERE customer_id = $1::uuid`},
+				{"customers", `DELETE FROM customers WHERE id = $1::uuid`},
+			} {
+				if _, err := pool.Exec(context.Background(), q.sql, otherCust); err != nil {
+					t.Errorf("cleanup %s: %v", q.table, err)
+				}
+			}
+		})
+		if err := pool.QueryRow(ctx, `
+INSERT INTO invoices (invoice_no, customer_id, branch_id, org_id, status, issue_date, due_date, subtotal_cents,
+                      tax_cents, total_cents, balance_cents, finalized_at, doc_type)
+VALUES ($1, $2::uuid, $3::uuid, (SELECT org_id FROM locations WHERE id = $3::uuid), 'FINALIZED',
+        current_date - 45, current_date - 15, 12000, 0, 12000, 12000, now() - interval '45 days', 'INVOICE')
+RETURNING id::text, invoice_no::text`, tag+"-OTHER", otherCust, trentonBranchID).Scan(&otherInv, &otherNo); err != nil {
+			t.Fatalf("seed the other customer's invoice: %v", err)
+		}
+		var cmID, cmNo string
+		if err := pool.QueryRow(ctx, `
+INSERT INTO invoices (invoice_no, customer_id, branch_id, org_id, status, issue_date, due_date, subtotal_cents,
+                      tax_cents, total_cents, balance_cents, finalized_at, doc_type, reverses_invoice_id)
+VALUES ('#CM-' || nextval('invoice_no_seq'), $1::uuid, $2::uuid, (SELECT org_id FROM locations WHERE id = $2::uuid),
+        'FINALIZED', current_date, current_date, -4000, 0, -4000, -4000, now(), 'CREDIT_MEMO', $3::uuid)
+RETURNING id::text, invoice_no::text`, w.cust, trentonBranchID, otherInv).Scan(&cmID, &cmNo); err != nil {
+			t.Fatalf("plant the credit memo: %v", err)
+		}
+		p063Exec(t, pool, "plant the credit memo's ledger row", `
+INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type,
+                                   source_ref_id, branch_id, memo, occurred_at)
+VALUES ($1::uuid, 'CREDIT_MEMO', -4000, 46000, 'invoice', $2::uuid, $3::uuid, '',
+        (current_date - 40)::timestamp AT TIME ZONE 'America/Toronto')`, w.cust, cmID, trentonBranchID)
+		ls := w.lines(t, "cross customer memo")
+		if l := p064LineFor(t, "cross customer memo", cmNo, ls); l.Description != cmNo {
+			t.Errorf("the cross customer memo line reads %q, want %q alone", l.Description, cmNo)
+		}
+		for _, l := range ls {
+			if strings.Contains(l.Description, otherNo) {
+				t.Errorf("the statement carries the other customer's invoice number %q: %q", otherNo, l.Description)
+			}
+		}
+	})
 }
