@@ -67,10 +67,13 @@ test("the screen walks the same story", async ({ page }, testInfo) => {
   await expect(page.locator("[data-pick-card]").first()).toBeVisible();
   const firstOpen = page.locator("[data-pick-card]").filter({ has: page.locator("[data-task-status]", { hasText: "Queued" }) }).first();
   await firstOpen.click();
-  await expect(page.locator("[data-task-status]")).toHaveText("Queued");
+  // The board's cards each carry a status pill, so a page-wide pill locator names every card. The
+  // opened pick's own pill is the one in its detail head.
+  const openedStatus = page.locator(".detail-head [data-task-status]");
+  await expect(openedStatus).toHaveText("Queued");
   await page.getByRole("button", { name: "Take this pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Claimed. It is yours to pull.");
-  await expect(page.locator("[data-task-status]")).toHaveText("Picking");
+  await expect(openedStatus).toHaveText("Picking");
   for (const line of await page.locator("[data-line]").all()) {
     await line.locator(".line-row").click();
   }
