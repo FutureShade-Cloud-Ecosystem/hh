@@ -149,7 +149,7 @@ func (w *p063World) lines(t *testing.T, label string, fees ...int64) []billing.S
 		t.Fatalf("%s: statement lines: %v", label, err)
 	}
 	for _, l := range ls {
-		for _, bad := range []string{"P063LEAK", "77777", "INVSECRET", "keyed", "mistake", "NSF reversal", "voided receipt", "reversal:", "re-applied", "credit applied to", "credit memo applied", "credit application reversed", "credit memo restored"} {
+		for _, bad := range []string{"P063LEAK", "77777", "INVSECRET", "keyed", "mistake", "NSF reversal", "voided receipt", "reversal:", "write off", "re-applied", "credit applied to", "credit memo applied", "credit application reversed", "credit memo restored"} {
 			if strings.Contains(l.Description, bad) || strings.Contains(l.DocNo, "INVSECRET") {
 				t.Errorf("%s: a plain statement line carries %q: %q (doc %q)", label, bad, l.Description, l.DocNo)
 			}
@@ -307,5 +307,41 @@ func TestIntegration_P063_PlainStatementWords(t *testing.T) {
 		p063Has(t, "credit reversed", ls, "Credit application reversed")
 		p063Has(t, "credit reversed", ls, "Credit memo restored")
 		w.staffKeepsReason(t, "credit")
+	})
+
+	t.Run("WriteOffAndReverse", func(t *testing.T) {
+		w := p063Plant(t, pool)
+		res, err := w.bill.WriteOffInvoice(ctx, billing.WriteOffInput{
+			InvoiceID: w.invA, Reason: p063Reason, IdempotencyKey: "p063-wo-" + w.cust, OrgID: cmRoundNorthOrg, IsController: true,
+		}, time.Now())
+		if err != nil {
+			t.Fatalf("the write off door: %v", err)
+		}
+		ls := w.lines(t, "write off")
+		p063Has(t, "write off", ls, "Write-off")
+		if _, err := w.bill.ReverseWriteOff(ctx, billing.ReverseWriteOffInput{
+			InvoiceID: w.invA, WriteOffID: res.WriteOffID, Reason: p063Reason, OrgID: cmRoundNorthOrg,
+		}, time.Now()); err != nil {
+			t.Fatalf("the write off reversal door: %v", err)
+		}
+		ls = w.lines(t, "write off reversed")
+		p063Has(t, "write off reversed", ls, "Write-off reversed")
+		w.staffKeepsReason(t, "write off")
+	})
+
+	// A writer the statement has never heard of reads as fixed words, never as its memo.
+	t.Run("AnUnknownMemoReadsAsFixedWords", func(t *testing.T) {
+		w := p063Plant(t, pool)
+		for _, txn := range []string{"ADJUSTMENT", "PAYMENT", "WRITE_OFF", "NSF"} {
+			p063Exec(t, pool, "plant a ledger row with an unknown memo", `
+INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
+VALUES ($1::uuid, $2, 0, 0, 'brand_new_writer', $3::uuid, $4::uuid, $5)`,
+				w.cust, txn, w.invA, trentonBranchID, "a future writer: "+p063Reason)
+		}
+		ls := w.lines(t, "unknown memo")
+		for _, want := range []string{"Adjustment", "Payment received, thank you", "Write-off", "Returned payment"} {
+			p063Has(t, "unknown memo", ls, want)
+		}
+		w.staffKeepsReason(t, "unknown memo")
 	})
 }

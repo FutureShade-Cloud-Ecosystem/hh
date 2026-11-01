@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -128,7 +129,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 	rows, err := r.pool.Query(ctx,
 		`WITH activity AS (
 			SELECT t.occurred_at, t.created_at, t.txn_type, t.amount_cents,
-			       COALESCE(i.invoice_no::text, '') AS invoice_no, COALESCE(t.memo,'') AS memo
+			       COALESCE(i.invoice_no::text, '') AS invoice_no, COALESCE(t.memo,'') AS memo, t.source_type
 			  FROM customer_transactions t
 			  LEFT JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
 			 WHERE t.customer_id = $1::uuid AND (t.occurred_at AT TIME ZONE $4::text)::date <= $2::date
@@ -139,7 +140,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			       i.doc_type AS txn_type,
 			       i.total_cents AS amount_cents,
 			       i.invoice_no::text AS invoice_no,
-			       i.invoice_no::text AS memo
+			       i.invoice_no::text AS memo, '' AS source_type
 			  FROM invoices i
 			 WHERE i.customer_id = $1::uuid
 			   AND i.status IN ('FINALIZED', 'PARTIALLY_PAID')
@@ -160,7 +161,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			-- (invoice_holdback_as_of), for every invoice issued by then, whatever its status or holdback is
 			-- today: a credit, a write off or a release taken after the date never rewrites the statement.
 			SELECT h.occurred_at, h.created_at, 'HOLDBACK' AS txn_type, -h.held AS amount_cents,
-			       h.invoice_no, 'Holdback withheld on ' || h.invoice_no AS memo
+			       h.invoice_no, 'Holdback withheld on ' || h.invoice_no AS memo, '' AS source_type
 			  FROM (
 			    SELECT (i.issue_date::timestamp AT TIME ZONE $4::text) AS occurred_at,
 			           i.created_at + interval '1 microsecond' AS created_at,
@@ -181,7 +182,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			-- "Holdback withheld" line vanish with no word of why. It moves no money (the amount is zero), so
 			-- the running balance and the closing figure are the aging's, unchanged.
 			SELECT r.occurred_at, r.created_at, 'HOLDBACK_RELEASED' AS txn_type, 0::bigint AS amount_cents,
-			       r.invoice_no, r.invoice_no || ' (holdback released ' || to_char(r.rel_on, 'YYYY-MM-DD') || ')' AS memo
+			       r.invoice_no, r.invoice_no || ' (holdback released ' || to_char(r.rel_on, 'YYYY-MM-DD') || ')' AS memo, '' AS source_type
 			  FROM (
 			    SELECT (invoice_released_on(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond')::timestamp AT TIME ZONE $4::text) AS occurred_at,
 			           i.created_at + interval '2 microsecond' AS created_at,
@@ -197,7 +198,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			  ) r
 			 WHERE r.rel_cents > 0
 		)
-		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo
+		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, source_type
 		  FROM activity
 		 ORDER BY occurred_at, created_at`, customerID, houseClockIn(zone, asOf), reach.SQLArg(), zone.Name())
 	if err != nil {
@@ -214,11 +215,12 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			cents   int64
 			invNo   string
 			memo    string
+			srcType string
 		)
-		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo); err != nil {
+		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &srcType); err != nil {
 			return nil, fmt.Errorf("billing: scan statement line: %w", err)
 		}
-		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: statementDescription(txnType, memo)}
+		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: statementDescription(txnType, srcType, memo, invNo)}
 		// The subledger's sign convention: a charge raises AR (positive), a payment lowers it
 		// (negative). The statement shows both as positive numbers in their own column, which is what
 		// a reader expects, so the sign is translated here rather than shown raw.
@@ -238,12 +240,31 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 // house zone, so the date shown must be too, or a late evening sale prints a day after its cut off.
 func statementLineDate(zone houseday.Zone, at time.Time) time.Time { return houseClockIn(zone, at) }
 
-// statementFixedWords are the words a customer's statement uses for the ledger writes that carry a clerk's
-// free text or an internal id in their memo. The ledger keeps the full memo for staff; a customer document
-// never prints it (item 254). The writers' memo prefixes are the key because the credit rows share a source
-// type and a transaction type with ordinary invoice rows. A fixed give back memo ("... early payment discount
-// given back") carries no clerk text and passes through unchanged.
-var statementFixedWords = []struct{ prefix, words string }{
+// What the plain statement says for a ledger row (item 254). A customer document never carries a clerk's
+// free text or an internal id, so a row reads in fixed words chosen by its transaction type and source, and
+// only a memo on the explicit allow list below passes through as written. A new or reworded writer therefore
+// reads as fixed words, never as a leak; to show a new memo, add its exact shape here. The ledger keeps the
+// full memo for staff views.
+var (
+	// safeMemoShapes are memos that carry only the account's own document numbers and fixed words.
+	safeMemoShapes = []*regexp.Regexp{
+		regexp.MustCompile(`^NSF fee$`),
+		regexp.MustCompile(`^(voided receipt|reversal|NSF reversal): early payment discount given back$`),
+		regexp.MustCompile(`^early payment discount \([A-Za-z0-9-]+\)$`),
+		regexp.MustCompile(`^overpaid receipt left on account \([A-Za-z0-9-]+\)$`),
+		regexp.MustCompile(`^Holdback withheld on [A-Za-z0-9-]+$`),
+		regexp.MustCompile(`^[A-Za-z0-9-]+ \(holdback released \d{4}-\d{2}-\d{2}\)$`),
+		regexp.MustCompile(`^Credit memo [#A-Za-z0-9-]+$`),
+		regexp.MustCompile(`^finance charge for [A-Za-z]+ \d{4}$`),
+	}
+	// creditMemoLine is the credit memo's own line, "#CM-n, reverses <invoice> (<reason>)": the numbers are
+	// the account's own and stay, the bracketed reason is the clerk's and goes.
+	creditMemoLine = regexp.MustCompile(`^([#A-Za-z0-9-]+(?:, reverses [A-Za-z0-9-]+)?)(?: \(.*)?$`)
+)
+
+// statementKnownWords are the undo and credit writes whose memo is a fixed prefix plus the clerk's reason,
+// given words of their own so the customer reads what happened.
+var statementKnownWords = []struct{ prefix, words string }{
 	{"voided receipt: ", "Payment voided"},
 	{"reversal: ", "Payment reversed"},
 	{"re-applied from a reversed payment: ", "Payment applied"},
@@ -253,44 +274,54 @@ var statementFixedWords = []struct{ prefix, words string }{
 	{"credit applied to ", "Credit applied"},
 	{"credit application reversed: ", "Credit application reversed"},
 	{"credit memo restored: ", "Credit memo restored"},
+	{"write off reversed ", "Write-off reversed"},
+	{"write off ", "Write-off"},
 }
 
-// statementMemoWords is the customer safe reading of a ledger memo.
-func statementMemoWords(txnType, memo string) string {
-	if strings.HasSuffix(memo, "early payment discount given back") {
+// statementDescription turns a subledger row into a line a customer can read without a glossary. Nothing a
+// clerk typed and no internal id reaches it unless the memo is an allow listed shape or is the document's own
+// number.
+func statementDescription(txnType, sourceType, memo, docNo string) string {
+	if memo != "" && memo == docNo {
 		return memo
 	}
-	for _, f := range statementFixedWords {
+	for _, re := range safeMemoShapes {
+		if re.MatchString(memo) {
+			return memo
+		}
+	}
+	if txnType == "CREDIT_MEMO" {
+		if m := creditMemoLine.FindStringSubmatch(memo); m != nil {
+			return m[1]
+		}
+		return "Credit memo"
+	}
+	for _, f := range statementKnownWords {
 		if strings.HasPrefix(memo, f.prefix) {
 			return f.words
 		}
-	}
-	// The credit memo line reads "#CM-n, reverses <invoice> (<reason>)": the document numbers are the
-	// account's own and stay, the bracketed reason is the clerk's and goes.
-	if txnType == "CREDIT_MEMO" {
-		if i := strings.Index(memo, " ("); i >= 0 {
-			return memo[:i]
-		}
-	}
-	return memo
-}
-
-// statementDescription turns a subledger row into a line a customer can read without a glossary.
-func statementDescription(txnType, memo string) string {
-	if memo = statementMemoWords(txnType, memo); memo != "" {
-		return memo
 	}
 	switch txnType {
 	case "INVOICE":
 		return "Invoice"
 	case "PAYMENT":
+		switch sourceType {
+		case "payment_void":
+			return "Payment voided"
+		case "payment_reversal":
+			return "Payment reversed"
+		case "payment_reapply":
+			return "Payment applied"
+		}
 		return "Payment received, thank you"
-	case "CREDIT_MEMO":
-		return "Credit memo"
 	case "NSF":
 		return "Returned payment"
 	case "WRITE_OFF":
 		return "Write-off"
+	case "HOLDBACK":
+		return "Holdback withheld"
+	case "HOLDBACK_RELEASED":
+		return "Holdback released"
 	default:
 		return "Adjustment"
 	}
