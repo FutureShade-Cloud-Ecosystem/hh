@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
@@ -111,9 +113,11 @@ const statementActivityCTE = `WITH activity AS (
 			SELECT t.occurred_at, t.created_at, t.txn_type, t.amount_cents,
 			       COALESCE(i.invoice_no::text, '') AS invoice_no, COALESCE(t.memo,'') AS memo,
 			       CASE WHEN t.source_type = 'invoice' THEN i.job_id END AS job_id,
-			       t.source_type AS src_type, t.source_ref_id AS src_ref, t.id AS src_id
+			       t.source_type AS src_type, t.source_ref_id AS src_ref, t.id AS src_id,
+			       COALESCE(ri.invoice_no::text, '') AS reverses_no
 			  FROM customer_transactions t
 			  LEFT JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
+			  LEFT JOIN invoices ri ON ri.id = i.reverses_invoice_id AND ri.customer_id = t.customer_id
 			 WHERE t.customer_id = $1::uuid AND (t.occurred_at AT TIME ZONE $4::text)::date <= $2::date
 			   AND ($3::uuid[] IS NULL OR t.branch_id = ANY($3::uuid[]))
 			UNION ALL
@@ -123,7 +127,7 @@ const statementActivityCTE = `WITH activity AS (
 			       i.total_cents AS amount_cents,
 			       i.invoice_no::text AS invoice_no,
 			       i.invoice_no::text AS memo,
-			       i.job_id, NULL::text, NULL::uuid, NULL::uuid
+			       i.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no
 			  FROM invoices i
 			 WHERE i.customer_id = $1::uuid
 			   AND i.status IN ('FINALIZED', 'PARTIALLY_PAID')
@@ -145,7 +149,7 @@ const statementActivityCTE = `WITH activity AS (
 			-- today: a credit, a write off or a release taken after the date never rewrites the statement.
 			SELECT h.occurred_at, h.created_at, 'HOLDBACK' AS txn_type, -h.held AS amount_cents,
 			       h.invoice_no, 'Holdback withheld on ' || h.invoice_no AS memo,
-			       h.job_id, NULL::text, NULL::uuid, NULL::uuid
+			       h.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no
 			  FROM (
 			    SELECT (i.issue_date::timestamp AT TIME ZONE $4::text) AS occurred_at,
 			           i.created_at + interval '1 microsecond' AS created_at,
@@ -167,7 +171,7 @@ const statementActivityCTE = `WITH activity AS (
 			-- the running balance and the closing figure are the aging's, unchanged.
 			SELECT r.occurred_at, r.created_at, 'HOLDBACK_RELEASED' AS txn_type, 0::bigint AS amount_cents,
 			       r.invoice_no, r.invoice_no || ' (holdback released ' || to_char(r.rel_on, 'YYYY-MM-DD') || ')' AS memo,
-			       r.job_id, NULL::text, NULL::uuid, NULL::uuid
+			       r.job_id, NULL::text, NULL::uuid, NULL::uuid, '' AS reverses_no
 			  FROM (
 			    SELECT (invoice_released_on(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond')::timestamp AT TIME ZONE $4::text) AS occurred_at,
 			           i.created_at + interval '2 microsecond' AS created_at,
@@ -205,7 +209,7 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 		return nil, err
 	}
 	rows, err := r.pool.Query(ctx, statementActivityCTE+`
-		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo
+		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, COALESCE(src_type, '') AS source_type, reverses_no
 		  FROM activity
 		 ORDER BY occurred_at, created_at`, customerID, houseClockIn(zone, asOf), reach.SQLArg(), zone.Name())
 	if err != nil {
@@ -217,16 +221,18 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 	var running int64
 	for rows.Next() {
 		var (
-			at      time.Time
-			txnType string
-			cents   int64
-			invNo   string
-			memo    string
+			at         time.Time
+			txnType    string
+			cents      int64
+			invNo      string
+			memo       string
+			srcType    string
+			reversesNo string
 		)
-		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo); err != nil {
+		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &srcType, &reversesNo); err != nil {
 			return nil, fmt.Errorf("billing: scan statement line: %w", err)
 		}
-		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: statementDescription(txnType, memo)}
+		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: statementDescription(txnType, srcType, memo, invNo, reversesNo)}
 		// The subledger's sign convention: a charge raises AR (positive), a payment lowers it
 		// (negative). The statement shows both as positive numbers in their own column, which is what
 		// a reader expects, so the sign is translated here rather than shown raw.
@@ -246,8 +252,58 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 // house zone, so the date shown must be too, or a late evening sale prints a day after its cut off.
 func statementLineDate(zone houseday.Zone, at time.Time) time.Time { return houseClockIn(zone, at) }
 
-// statementDescription turns a subledger row into a line a customer can read without a glossary.
-func statementDescription(txnType, memo string) string {
+// What the plain statement says for a ledger row (item 254). A customer document never carries a clerk's
+// free text or an internal id, so a row reads in fixed words chosen by its transaction type and source, and
+// only a memo on the explicit allow list below passes through as written. A new or reworded writer therefore
+// reads as fixed words, never as a leak; to show a new memo, add its exact shape here. The ledger keeps the
+// full memo for staff views.
+// stmtDocNo is an invoice or credit memo number in the forms the house mints them ('#INV-n', '#CM-n'). Every
+// slot of a safe shape is pinned to a minted form, so a uuid or a clerk's token typed into a slot reads as
+// fixed words; a payment number is digits from its sequence.
+const stmtDocNo = `#?(?:INV|CM)-\d+`
+
+// stmtOrderNo is an order number: the legacy '#SO-n' or the branch coded '#SO-TRT-n' (migration 0087).
+const stmtOrderNo = `#?SO-(?:[A-Z0-9]+-)?\d+`
+
+var (
+	// safeMemoShapes are memos that carry only the account's own document numbers and fixed words.
+	safeMemoShapes = []*regexp.Regexp{
+		regexp.MustCompile(`^NSF fee$`),
+		regexp.MustCompile(`^NSF fee payment$`),
+		regexp.MustCompile(`^Supplier deposit ` + stmtDocNo + ` (closed|credited back) on the order's cancel$`),
+		// The invoice writer's own system memos for an order (never the clerk's `#INV-n, <memo>` shape).
+		regexp.MustCompile(`^` + stmtDocNo + `, order ` + stmtOrderNo + `$`),
+		regexp.MustCompile(`^` + stmtDocNo + `, progress invoice for order ` + stmtOrderNo + ` \(\d+ shipment group\(s\)\)$`),
+		regexp.MustCompile(`^(voided receipt|reversal|NSF reversal): early payment discount given back$`),
+		regexp.MustCompile(`^early payment discount \(\d+\)$`),
+		regexp.MustCompile(`^overpaid receipt left on account \(\d+\)$`),
+		regexp.MustCompile(`^Holdback withheld on ` + stmtDocNo + `$`),
+		regexp.MustCompile(`^` + stmtDocNo + ` \(holdback released \d{4}-\d{2}-\d{2}\)$`),
+		regexp.MustCompile(`^Credit memo #?CM-\d+$`),
+		regexp.MustCompile(`^finance charge for [A-Za-z]+ \d{4}$`),
+	}
+)
+
+// statementKnownWords are the undo and credit writes whose memo is a fixed prefix plus the clerk's reason,
+// given words of their own so the customer reads what happened.
+var statementKnownWords = []struct{ prefix, words string }{
+	{"voided receipt: ", "Payment voided"},
+	{"reversal: ", "Payment reversed"},
+	{"re-applied from a reversed payment: ", "Payment applied"},
+	{"NSF reversal of payment ", "Returned payment"},
+	{"NSF reversal: ", "Returned payment"},
+	{"credit memo applied: ", "Credit memo applied"},
+	{"credit applied to ", "Credit applied"},
+	{"credit application reversed: ", "Credit application reversed"},
+	{"credit memo restored: ", "Credit memo restored"},
+	{"write off reversed ", "Write-off reversed"},
+	{"write off ", "Write-off"},
+}
+
+// jobLineDescription is the by job statement's line words (JA-4). The by job tail chooses each line's words
+// itself (0.61 makes them fixed words per act on the job), so a non blank memo is shown as the tail wrote it
+// and a blank one reads by type. The plain statement's own words are statementDescription's, below.
+func jobLineDescription(txnType, memo string) string {
 	if memo != "" {
 		return memo
 	}
@@ -262,6 +318,63 @@ func statementDescription(txnType, memo string) string {
 		return "Returned payment"
 	case "WRITE_OFF":
 		return "Write-off"
+	default:
+		return "Adjustment"
+	}
+}
+
+// statementDescription turns a subledger row into a line a customer can read without a glossary. Nothing a
+// clerk typed and no internal id reaches it unless the memo is an allow listed shape or is the document's own
+// number.
+func statementDescription(txnType, sourceType, memo, docNo, reversesNo string) string {
+	if memo != "" && memo == docNo {
+		return memo
+	}
+	for _, re := range safeMemoShapes {
+		if re.MatchString(memo) {
+			return memo
+		}
+	}
+	// The known prefixes run before the credit memo branch: a counter return credit applied or reversed copies
+	// its CREDIT_MEMO type onto the offsetting row, and that row says what happened, not "Credit memo". The
+	// prefixes are lower case and can never start a credit memo's own number.
+	for _, f := range statementKnownWords {
+		if strings.HasPrefix(memo, f.prefix) {
+			return f.words
+		}
+	}
+	if txnType == "CREDIT_MEMO" {
+		// The row's own document number and the reversed invoice's number, both read from the invoices by
+		// id (the joined docNo and reversesNo); nothing is taken from the memo's text.
+		if docNo != "" {
+			if reversesNo != "" {
+				return docNo + ", reverses " + reversesNo
+			}
+			return docNo
+		}
+		return "Credit memo"
+	}
+	switch txnType {
+	case "INVOICE":
+		return "Invoice"
+	case "PAYMENT":
+		switch sourceType {
+		case "payment_void":
+			return "Payment voided"
+		case "payment_reversal":
+			return "Payment reversed"
+		case "payment_reapply":
+			return "Payment applied"
+		}
+		return "Payment received, thank you"
+	case "NSF":
+		return "Returned payment"
+	case "WRITE_OFF":
+		return "Write-off"
+	case "HOLDBACK":
+		return "Holdback withheld"
+	case "HOLDBACK_RELEASED":
+		return "Holdback released"
 	default:
 		return "Adjustment"
 	}
@@ -733,8 +846,8 @@ func (r *Repository) RecordPaylinkDelivery(ctx context.Context, row PaylinkDeliv
 // invoice it was applied to (which may sit on another job) and the clerk's reason, and a credit memo
 // row carries its reason in brackets. A job's line reads the fixed words of the act ("Credit applied",
 // "Credit memo applied", "Credit application reversed", "Credit memo restored") or the memo's number
-// and the invoice it reverses (the same job's) without the reason. Account level lines keep the ledger
-// words, as the plain statement does.
+// and the invoice it reverses (the same job's) without the reason. Account level lines read the plain
+// statement's words (statementDescription), never the raw ledger memo.
 //
 // The job's lines are safe by default (P061 fix round 2): every ledger row on a job reads the fixed words
 // of its transaction type ("Adjustment", "Credit memo <no>", "Write-off", "Returned payment", "Payment
@@ -795,7 +908,7 @@ const statementByJobTail = `
 			 WHERE ac.act_type = 'payment_reapply'
 			 GROUP BY ac.act_type, ac.src_ref, inv.job_id
 		), leftover AS (
-			SELECT ac.occurred_at, ac.created_at, ac.txn_type, ac.memo,
+			SELECT ac.occurred_at, ac.created_at, ac.txn_type, ac.memo, ac.act_type,
 			       ac.amount_cents - COALESCE(sh.net, 0) AS amount_cents
 			  FROM acts ac
 			  LEFT JOIN (SELECT s.act_type, s.src_ref, SUM(s.share) AS net FROM shares s GROUP BY s.act_type, s.src_ref) sh
@@ -829,17 +942,17 @@ const statementByJobTail = `
 			            WHEN a.txn_type = 'NSF' THEN 'Returned payment'
 			            WHEN a.txn_type = 'PAYMENT' THEN 'Payment received, thank you'
 			            ELSE 'Adjustment' END AS memo,
-			       a.job_id
+			       a.job_id, COALESCE(a.src_type, '') AS src_type, a.reverses_no
 			  FROM activity a
 			 WHERE NOT EXISTS (SELECT 1 FROM paytxn p WHERE p.src_id = a.src_id)
 			UNION ALL
-			SELECT ac.occurred_at, ac.created_at, ac.txn_type, s.share, '', ac.memo, s.job_id
+			SELECT ac.occurred_at, ac.created_at, ac.txn_type, s.share, '', ac.memo, s.job_id, ac.act_type, ''
 			  FROM acts ac JOIN shares s ON s.act_type = ac.act_type AND s.src_ref = ac.src_ref
 			UNION ALL
-			SELECT l.occurred_at, l.created_at, l.txn_type, l.amount_cents, '', l.memo, NULL::uuid
+			SELECT l.occurred_at, l.created_at, l.txn_type, l.amount_cents, '', l.memo, NULL::uuid, l.act_type, ''
 			  FROM leftover l WHERE l.amount_cents <> 0
 		)
-		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, COALESCE(job_id::text, '')
+		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, COALESCE(job_id::text, ''), src_type, reverses_no
 		  FROM parts
 		 ORDER BY COALESCE(job_id::text, ''), occurred_at, created_at`
 
@@ -873,14 +986,21 @@ func (r *Repository) StatementLinesByJob(ctx context.Context, customerID string,
 			invNo   string
 			memo    string
 			jobID   string
+			srcType string
+			revNo   string
 		)
-		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &jobID); err != nil {
+		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &jobID, &srcType, &revNo); err != nil {
 			return nil, fmt.Errorf("billing: scan statement line by job: %w", err)
 		}
 		if len(out) == 0 || jobID != cur {
 			cur, running = jobID, 0
 		}
-		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: statementDescription(txnType, memo), JobID: jobID}
+		desc := jobLineDescription(txnType, memo)
+		if jobID == "" {
+			// Account level lines read the plain statement's words, never the raw ledger memo.
+			desc = statementDescription(txnType, srcType, memo, invNo, revNo)
+		}
+		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: desc, JobID: jobID}
 		if cents >= 0 {
 			ln.ChargeCents = cents
 		} else {
