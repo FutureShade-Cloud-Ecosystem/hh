@@ -29,6 +29,7 @@
 // record, the stops scope only the stops of those runs, and every pod or
 // attachment row must name one of those stops.
 import { describeHits, scanPayload } from "../_lib/fence.mjs";
+import { rowOnDriverStop } from "./row-fence.mjs";
 import { expect, myRuns, staff, test } from "./helpers.js";
 
 async function pullAll(page: import("@playwright/test").Page, scope: string): Promise<Array<{ id: string; data: Record<string, unknown> }>> {
@@ -83,8 +84,7 @@ test("the pod and attachments scopes name only the driver's own stops", async ({
   for (const scope of ["pod", "attachments"]) {
     const rows = await pullAll(page, scope);
     for (const row of rows) {
-      const text = JSON.stringify(row);
-      expect(driverStopIds.some((id) => text.includes(id)), `${scope} row ${row.id} names none of the driver's stops`).toBe(true);
+      expect(rowOnDriverStop(row, driverStopIds), `${scope} row ${row.id} is not on one of the driver's stops`).toBe(true);
     }
     expect(describeHits(scanPayload(scope, JSON.stringify(rows)))).toEqual([]);
   }
