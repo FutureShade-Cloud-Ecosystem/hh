@@ -169,6 +169,42 @@ func w25r8TieTheWorldAtItsEnd(t *testing.T, frame w25r8Frame) {
 	}
 }
 
+// w25r8TieTheARAtItsEnd ties the running month's receivables the way the stock side is tied: it reads the
+// subledger and 1100 at the month's end through the production seams and posts only the difference, dated
+// inside the month. It does not repost the open invoices outright. On the 1st of a month the closing
+// month's end is today's first instant, which the subledger reads from the books' own balances (an as of on
+// or after the house day), so the closing month's frame already opened every open invoice; posting them
+// again for the running month doubled 1100.
+func w25r8TieTheARAtItsEnd(t *testing.T, leg *w25Leg, openAt, monthEnd time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	sub, err := billing.NewRepository(leg.pool).ARBalanceCents(ctx, monthEnd, "")
+	if err != nil {
+		t.Fatalf("the receivables as of the running month's end: %v", err)
+	}
+	gl1100, _, err := gl.NewRepository(leg.pool).AccountBalanceAsOf(ctx, "1100", monthEnd, "")
+	if err != nil {
+		t.Fatalf("1100 at the running month's end: %v", err)
+	}
+	delta := sub - gl1100
+	if delta == 0 {
+		return
+	}
+	debit, credit := "1100", "3000"
+	amount := delta
+	if delta < 0 {
+		debit, credit, amount = "3000", "1100", -delta
+	}
+	w25Post(t, leg, gl.ExternalJournal{
+		Source: "MANUAL", IdempotencyKey: "w2-5:r8:running:ar:" + leg.suffix,
+		Memo: "opening accounts receivable", BranchID: leg.branchID, DocumentDate: openAt,
+		Lines: []gl.ExternalLine{
+			{AccountCode: debit, DebitCents: amount, Memo: "opening AR"},
+			{AccountCode: credit, CreditCents: amount, Memo: "opening equity"},
+		},
+	})
+}
+
 // w25r8Receive orders and receives through the purchasing module's real receiving
 // road into inventory's applyReceipt, and answers the receipt's move id and the
 // receipt id the move and the journals key on.
@@ -594,7 +630,7 @@ func TestW25R8TheMonthWalkStillWalks(t *testing.T) {
 	runningEnd := frame.monthEnd.AddDate(0, 1, 0)
 	runningOpen := frame.monthEnd.Add(12 * time.Hour)
 	w25r8Periods(t, leg, runningYear)
-	w25TieTheAR(t, leg, runningOpen)
+	w25r8TieTheARAtItsEnd(t, leg, runningOpen, runningEnd)
 	w25TieTheMonthAtItsEnd(t, leg, runningOpen, runningEnd)
 
 	code, body = w25Close(t, leg, runningYear, runningMonth)

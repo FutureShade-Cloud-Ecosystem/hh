@@ -146,7 +146,10 @@ func TestIntegration_FW1_06a_LodgedChequeBounceCreditsBank(t *testing.T) {
 			}
 
 			if mode == "auto" {
-				summary, err := bankrecSvc.AutoMatchReach(cctx, accountID, now.Add(-24*time.Hour), now.Add(24*time.Hour), userID, func(string) bool { return true })
+				// The window is calendar days (txn_date is a DATE and the upper bound is exclusive), so it
+				// steps by days in the dealer's zone: a 24 hour step is 23 hours short of the next day on the
+				// night the clocks fall back, and the line dated today then sat on the exclusive bound.
+				summary, err := bankrecSvc.AutoMatchReach(cctx, accountID, now.AddDate(0, 0, -1), now.AddDate(0, 0, 1), userID, func(string) bool { return true })
 				if err != nil {
 					t.Fatalf("AutoMatchReach: %v", err)
 				}
