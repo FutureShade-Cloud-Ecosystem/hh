@@ -762,6 +762,64 @@ func TestIntegration_JA4Doors_WriteOff(t *testing.T) {
 	}
 }
 
+// ja4AccountLinesReadPlain (P063 fix round 2, P1): the by job statement's account level lines (job "")
+// carry no staff reason, marker or id, and every one reads a word the plain statement reads for the same
+// rows. The by job and plain closing figures are checked by w.agree.
+func (w *ja4World) ja4AccountLinesReadPlain(t *testing.T, label string, asOf time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	byJob, err := w.bill.StatementLinesByJob(ctx, w.cust, asOf, billing.AllBranches)
+	if err != nil {
+		t.Fatalf("%s: StatementLinesByJob: %v", label, err)
+	}
+	plain, err := w.bill.StatementLines(ctx, w.cust, asOf, billing.AllBranches)
+	if err != nil {
+		t.Fatalf("%s: StatementLines: %v", label, err)
+	}
+	plainWords := map[string]bool{}
+	for _, ln := range plain {
+		plainWords[ln.Description] = true
+	}
+	for _, ln := range byJob {
+		if strings.Contains(ln.Description, ja4Marker) || strings.Contains(ln.Description, "INVSECRET") ||
+			strings.Contains(ln.Description, "77777") || ja4UUID.MatchString(ln.Description) {
+			t.Errorf("%s: job %q line %q carries a staff reason or an id", label, ln.JobID, ln.Description)
+		}
+		if ln.JobID == "" && !plainWords[ln.Description] {
+			t.Errorf("%s: account level line %q is not a word the plain statement reads (%v)", label, ln.Description, plainWords)
+		}
+	}
+}
+
+// TestIntegration_JA4Doors_AccountWriteOffReadsPlain (P063 fix round 2, P1): the account level invoice
+// written off through the real door with a reason that would leak reads the plain statement's words on the
+// grouped statement, and no balance moves.
+func TestIntegration_JA4Doors_AccountWriteOffReadsPlain(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4acctwo")
+	w.ageInvoices(t, 90)
+	soon := time.Now().Add(time.Hour)
+	if _, err := w.bill.WriteOffInvoice(context.Background(), billing.WriteOffInput{
+		InvoiceID: w.invAcct, Reason: ja4Reason, IdempotencyKey: "ja4-acct-writeoff-" + w.cust, OrgID: cmRoundNorthOrg, IsController: true,
+	}, time.Now()); err != nil {
+		t.Fatalf("the write off door: %v", err)
+	}
+	w.agree(t, "after the account write off", soon)
+	w.tie(t, "after the account write off", soon)
+	w.ja4AccountLinesReadPlain(t, "after the account write off", soon)
+}
+
+// TestIntegration_JA4Doors_AccountCreditMemoReadsPlain (P063 fix round 2, P1): a credit memo on the account
+// level invoice, through the memo door with a leaking reason, reads the plain statement's words.
+func TestIntegration_JA4Doors_AccountCreditMemoReadsPlain(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4acctcm")
+	w.ageInvoices(t, 90)
+	soon := time.Now().Add(time.Hour)
+	w.memo(t, w.invAcct, 1000, "ja4-acct-cm-"+w.cust)
+	w.agree(t, "after the account credit memo", soon)
+	w.tie(t, "after the account credit memo", soon)
+	w.ja4AccountLinesReadPlain(t, "after the account credit memo", soon)
+}
+
 // ja4JobADescriptions reads every description of job A's lines at asOf, after the words check.
 func (w *ja4World) ja4JobADescriptions(t *testing.T, label string, asOf time.Time) []string {
 	t.Helper()
