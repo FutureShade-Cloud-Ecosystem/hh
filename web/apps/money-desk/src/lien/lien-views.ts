@@ -329,7 +329,7 @@ function duePanel(model: LiensModel, g: DueGroup): TemplateResult {
       <div class="li-panel-head"><h2>Release holdback</h2></div>
       <p class="li-statement" data-confirm-words>${(() => {
         const total = dueTotalOf(model.due.groups, model.due.totals, g);
-        return emphasise(dueConfirmWords(g, total, jobAbout(model, g)), [total ?? "", g.customerName, g.label]);
+        return emphasise(dueConfirmWords(g, total, jobAbout(model, g)), [total ?? "", g.label]);
       })()}</p>
       ${besideField(model, "due")}
       <div class="li-actions">
