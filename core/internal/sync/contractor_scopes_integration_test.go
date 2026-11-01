@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"math/rand"
 	"os"
 	"strings"
@@ -176,6 +177,7 @@ func open169Pool(t *testing.T) *pgxpool.Pool {
 		fail("integration DB not reachable: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	legsweep.Register(t, pool)
 	if err := testkit.Build(context.Background(), testkit.PgxPool(pool)); err != nil {
 		t.Fatalf("fixture build: %v", err)
 	}
