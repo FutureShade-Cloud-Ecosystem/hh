@@ -197,6 +197,32 @@ func TestIntegration_W3FC1C_EnableRearmsAPastSlotAndKeepsAFutureOne(t *testing.T
 	}
 }
 
+// Enabling a job that is already enabled changes nothing: a stale slot is kept (a restarted worker
+// claims the overdue month at once) and the call still answers 200 with the row as it stands.
+func TestIntegration_W3FC1C_EnablingAnEnabledJobKeepsItsStaleSlotAndOneTickRunsIt(t *testing.T) {
+	j := fcJobRigNew(t)
+	if rec := j.put(fcController, FinanceChargeJobName, `{"enabled":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("W3-FC1c red: enable = %d (%s)", rec.Code, rec.Body.String())
+	}
+	j.setNext(t, FinanceChargeJobName, `date_trunc('second', now() - interval '3 days')`)
+	stale := j.listed(t, FinanceChargeJobName)["next_run_at"]
+	rec := j.put(fcController, FinanceChargeJobName, `{"enabled":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("W3-FC1c red: enable of an enabled job = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if it := j.listed(t, FinanceChargeJobName); it["enabled"] != true || it["next_run_at"] != stale {
+		t.Fatalf("W3-FC1c red: enabling an enabled job moved the slot %v to %v", stale, it["next_run_at"])
+	}
+	j.runner.RunDue(j.rig.ctx)
+	if got := j.ran.Load(); got != 1 {
+		t.Fatalf("W3-FC1c red: one tick after the no change enable ran the job %d times, want 1", got)
+	}
+	j.runner.RunDue(j.rig.ctx)
+	if got := j.ran.Load(); got != 1 {
+		t.Fatalf("W3-FC1c red: a second tick ran the job again (%d calls)", got)
+	}
+}
+
 // Disable: the job is never claimed, even with a slot long past.
 func TestIntegration_W3FC1C_DisableThenATickRunsNothing(t *testing.T) {
 	j := fcJobRigNew(t)

@@ -283,10 +283,11 @@ func (r *Repository) SchedulesNamed(ctx context.Context, names []string) ([]Sche
 	return out, rows.Err()
 }
 
-// SetEnabled turns one named schedule on or off and answers the row before and after. Turning it on
-// gives it its next slot from now when it has none or its slot is already past, so a running worker
-// claims it on the tick that finds the slot due, with no restart and no burst for an old stamp; a slot
-// still in the future is kept. Turning it off only clears the flag: ClaimDue never claims a disabled
+// SetEnabled turns one named schedule on or off and answers the row before and after. Switching it from
+// off to on gives it its next slot from now when it has none or its slot is already past, so a running
+// worker claims it on a later tick with no restart and no burst for an old stamp; a slot still in the
+// future is kept. Enabling a row that is already on changes nothing: its slot, even a stale one, is left
+// for the running worker to claim on its next tick. Turning it off only clears the flag: ClaimDue never claims a disabled
 // row. record, when given, runs on the same transaction before commit.
 func (r *Repository) SetEnabled(ctx context.Context, name string, enabled bool, now time.Time, record ScheduleChange) (Schedule, Schedule, error) {
 	if r.pool == nil {
@@ -307,7 +308,7 @@ func (r *Repository) SetEnabled(ctx context.Context, name string, enabled bool, 
 		return Schedule{}, Schedule{}, fmt.Errorf("jobs: read schedule %q: %w", name, err)
 	}
 	next := from.NextRunAt
-	if enabled && (next == nil || !next.After(now)) {
+	if enabled && !from.Enabled && (next == nil || !next.After(now)) {
 		n := nextRun(from, now, nil)
 		next = &n
 	}

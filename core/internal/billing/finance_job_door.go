@@ -12,8 +12,10 @@ package billing
 // this door never becomes a general switch for the job runner.
 //
 // -- ENABLE AND DISABLE -----------------------------------------------------------------
-// Enable gives the job its next slot from now when it has none or its slot is past (jobs.SetEnabled),
-// so a running worker claims it on the first tick that finds the slot due, with no restart. Disable
+// Enable, from off, gives the job its next slot from now when it has none or its slot is past
+// (jobs.SetEnabled), so a running worker claims it on the first tick that finds the slot due, with no
+// restart. Enabling a job that is already on changes nothing (a stale slot stays, so the overdue run
+// is claimed at once), is answered 200, and is still recorded: every click of the door has a row. Disable
 // only clears the flag; the runner never claims a disabled row.
 //
 // -- RECORDED IN THE SAME TRANSACTION ---------------------------------------------------
