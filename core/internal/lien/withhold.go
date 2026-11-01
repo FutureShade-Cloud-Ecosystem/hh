@@ -34,18 +34,23 @@ func (s *Service) BookRetention(ctx context.Context, b RetentionBooking) (bool, 
 	if b.AmountCents <= 0 || strings.TrimSpace(b.CustomerJobID) == "" {
 		return false, nil
 	}
-	jobID, ok, err := s.repo.LinkedLienJob(ctx, b.CustomerJobID)
-	if err != nil || !ok {
-		return false, err
-	}
-	n, err := s.repo.InsertRetentionOnce(ctx, HoldbackEntry{
-		JobID: jobID, InvoiceID: b.InvoiceID, BranchID: b.BranchID, EntryType: "RETENTION",
-		AmountCents: b.AmountCents, Reason: "withheld on invoice " + b.InvoiceNo,
+	// The pick and the write share one transaction (the invoice's own when it rides ctx), so the share lock
+	// on the lien job's row (0.55) holds until the RETENTION row is in: a move of the job's link waits for
+	// it and then sees the row. Lock order: the lien job row, then the invoice's advisory lock, then insert.
+	var booked bool
+	err := s.repo.InTx(ctx, func(ctx context.Context) error {
+		jobID, ok, err := s.repo.LinkedLienJobLocked(ctx, b.CustomerJobID)
+		if err != nil || !ok {
+			return err
+		}
+		n, err := s.repo.InsertRetentionOnce(ctx, HoldbackEntry{
+			JobID: jobID, InvoiceID: b.InvoiceID, BranchID: b.BranchID, EntryType: "RETENTION",
+			AmountCents: b.AmountCents, Reason: "withheld on invoice " + b.InvoiceNo,
+		})
+		booked = n > 0
+		return err
 	})
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
+	return booked, err
 }
 
 // HasLinkedLienJob answers whether a lien job (a RECEIVABLE one, not closed) is linked to the customer

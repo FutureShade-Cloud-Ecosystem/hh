@@ -32,6 +32,38 @@ func (r *Repository) LinkedLienJob(ctx context.Context, customerJobID string) (s
 	return id, true, nil
 }
 
+// LinkedLienJobLocked answers LinkedLienJob's job after taking its row FOR SHARE on the caller's transaction,
+// so a move of its link (LockJobLink, FOR UPDATE) waits for the transaction and a withhold booking on the
+// job is never one whose link moved away under it. Shares are compatible, so withholds do not queue behind
+// one another. When the candidate's link moved before the lock was won, the pick is made again.
+func (r *Repository) LinkedLienJobLocked(ctx context.Context, customerJobID string) (string, bool, error) {
+	q, err := r.q(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	for attempt := 0; attempt < 8; attempt++ {
+		id, ok, err := r.LinkedLienJob(ctx, customerJobID)
+		if err != nil || !ok {
+			return "", false, err
+		}
+		var locked string
+		err = q.QueryRow(ctx, `
+			SELECT id::text FROM lien_jobs
+			 WHERE id = $1::uuid AND customer_job_id = $2::uuid
+			   AND status <> 'CLOSED'
+			   AND COALESCE(metadata->>'holdback_direction', 'RECEIVABLE') = 'RECEIVABLE'
+			   FOR SHARE`, id, customerJobID).Scan(&locked)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue // the link moved while the lock was awaited
+		}
+		if err != nil {
+			return "", false, fmt.Errorf("lien: lock the lien job linked to a customer job: %w", err)
+		}
+		return locked, true, nil
+	}
+	return "", false, fmt.Errorf("lien: the lien job linked to a customer job kept moving")
+}
+
 // LinkedLienJobs answers EVERY open RECEIVABLE lien job linked to a customer job, oldest first. More than one
 // may be linked; RT-3 judges them all (LinkedLienJob names only the oldest).
 func (r *Repository) LinkedLienJobs(ctx context.Context, customerJobID string) ([]string, error) {
