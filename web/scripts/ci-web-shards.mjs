@@ -56,7 +56,7 @@ export const WEIGHTS = {
   "shell-chrome": 0.1,
   "work-offline": 0.1,
   [EVENING_GUARD]: 3.7,
-  [WORK_SHELL_ASSEMBLED]: 1.0, // local figure: 6 s assemble plus 46 s suite; replace with the runner's
+  [WORK_SHELL_ASSEMBLED]: 1.0, // read from the per unit timestamps of its first sharded run, as above
 };
 // Playwright's --shard=k/m deals whole test files out, and a part's time
 // moves several minutes between runs with the files it holds (measured: the
