@@ -76,13 +76,37 @@ test(`${appId} on a console box with no session: sign in line, link takes the wh
   const path = launch[appId];
   expect(path).toBeTruthy();
   await page.route("**/config.json", (route) => route.fulfill({ json: CONSOLE_CONFIG }));
-  await page.route("https://console.invalid/**", (route) => route.abort());
-  // the app sends a person with no session to the front door at the origin root: hold that move so the line can be read
-  await page.route(`${shellUrl}/`, (route) => route.abort());
+  // the console answers "no session" (a refused call would read as offline, which is another line)
+  await page.route("https://console.invalid/**", (route) => {
+    const origin = route.request().headers()["origin"] ?? "";
+    const cors = { "access-control-allow-origin": origin, "access-control-allow-credentials": "true", "access-control-allow-headers": route.request().headers()["access-control-request-headers"] ?? "content-type", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS" };
+    return route.request().method() === "OPTIONS" ? route.fulfill({ status: 204, headers: cors }) : route.fulfill({ status: 401, json: { message: "no session" }, headers: cors });
+  });
+  // The app sends a person with no session to the front door at the origin root, which replaces the page. A watcher
+  // written to local storage (the same origin) records what the app showed on the way out.
+  await page.addInitScript(() => {
+    const scan = (): void => {
+      let line = "";
+      let target = "";
+      let all = "";
+      const walk = (root: Document | ShadowRoot): void => {
+        const link = root.querySelector(".signin-link");
+        if (link) {
+          line = (link.parentElement?.textContent ?? "").replace(/\s+/g, " ").trim();
+          target = link.getAttribute("target") ?? "";
+        }
+        all += root.textContent ?? "";
+        for (const el of Array.from(root.querySelectorAll("*"))) if (el.shadowRoot) walk(el.shadowRoot);
+      };
+      walk(document);
+      if (line !== "") window.localStorage.setItem("ux128-seen", JSON.stringify({ line, target, demo: /demo roles/i.test(all) }));
+    };
+    window.setInterval(scan, 25);
+  });
+  await page.route(`${shellUrl}/`, (route) => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>front door</title><p>front door</p>" }));
   await page.goto(`${shellUrl}${path}`);
-  const line = page.getByText(`Sign in to open`, { exact: false });
-  await expect(line).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator("body")).not.toContainText(/demo roles/i);
-  await expect(page.locator("a.signin-link")).toHaveAttribute("target", "_top");
+  await expect
+    .poll(() => page.evaluate(() => JSON.parse(window.localStorage.getItem("ux128-seen") ?? "{}")), { timeout: 20_000 })
+    .toMatchObject({ target: "_top", demo: false, line: expect.stringMatching(/^Sign in to open .+\. Go to sign in$/) });
 });
 }
