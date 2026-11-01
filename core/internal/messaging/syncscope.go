@@ -226,8 +226,8 @@ func (s *messagesSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter,
 }
 
 func (s *messagesSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	// The canonical 36 character form only (UX-133): a form uuid.Validate accepts and Postgres refuses is a miss,
-	// the answer an id that does not exist gets, never a fault that fails the whole push.
+	// The canonical 36 character form only (UX-133): every non-canonical form is a miss, the answer an id that does
+	// not exist gets, never a fault that fails the whole push (Postgres refuses urn:uuid: outright).
 	if !validChannelID(id) {
 		return sync.RowState{}, false, nil
 	}
@@ -275,8 +275,17 @@ func (s *messagesSyncStore) BoundEntityExists(ctx context.Context, f sync.ScopeF
 // gate calls it before the hidden refusal, so an invalid body meets this
 // refusal under a spent key and a free one. The words are exactly Create's.
 func (s *messagesSyncStore) ValidateCreate(_ context.Context, _ sync.ScopeFilter, fields map[string]any) error {
-	if channelID, _ := fields["channel_id"].(string); channelID == "" {
+	channelID, _ := fields["channel_id"].(string)
+	if channelID == "" {
 		return syncRefused(fmt.Errorf("channel_id is required"))
+	}
+	// The canonical 36 character form only (UX-133): both ids reach a `::uuid` cast, and the refusal names the
+	// body's shape alone, so it reads the same for every caller and every key state.
+	if !validChannelID(channelID) {
+		return syncRefused(fmt.Errorf("channel_id is not a valid id"))
+	}
+	if threadRoot, _ := fields["thread_root_id"].(string); threadRoot != "" && !validChannelID(threadRoot) {
+		return syncRefused(fmt.Errorf("thread_root_id is not a valid id"))
 	}
 	if body, _ := fields["body"].(string); body == "" {
 		return syncRefused(fmt.Errorf("message body is empty"))
@@ -378,8 +387,8 @@ func (s *acksSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key
 }
 
 func (s *acksSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	// The canonical 36 character form only (UX-133): a form uuid.Validate accepts and Postgres refuses is a miss,
-	// the answer an id that does not exist gets, never a fault that fails the whole push.
+	// The canonical 36 character form only (UX-133): every non-canonical form is a miss, the answer an id that does
+	// not exist gets, never a fault that fails the whole push (Postgres refuses urn:uuid: outright).
 	if !validChannelID(id) {
 		return sync.RowState{}, false, nil
 	}
@@ -530,8 +539,8 @@ func (s *notifyPrefsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilt
 }
 
 func (s *notifyPrefsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	// The canonical 36 character form only (UX-133): a form uuid.Validate accepts and Postgres refuses is a miss,
-	// the answer an id that does not exist gets, never a fault that fails the whole push.
+	// The canonical 36 character form only (UX-133): every non-canonical form is a miss, the answer an id that does
+	// not exist gets, never a fault that fails the whole push (Postgres refuses urn:uuid: outright).
 	if !validChannelID(id) {
 		return sync.RowState{}, false, nil
 	}

@@ -1,8 +1,9 @@
 //go:build integration
 
 // syncscope_ux133_id_shape_integration_test.go: UX-133. Every messaging sync id gate takes the canonical 36 character
-// id form only. uuid.Validate also accepts urn:uuid:, braced and 32 hex forms, which a store's Load and existence
-// reads then hand to `$n::uuid` and Postgres refuses; the fault would fail a whole push (UX-130's case).
+// id form only. uuid.Validate also accepts urn:uuid:, braced and 32 hex forms. Postgres refuses the urn:uuid: form
+// in a `$n::uuid` cast (the fault would fail a whole push, UX-130's case) and accepts the other two; every
+// non-canonical form is refused alike, for one shape with the engine.
 //
 // Reach, settled on a real database: the engine's bound key gate takes its id from the ledger's EntityID (written by
 // the store or by validOp checked update and delete ids, so canonical) and falls back to payload["id"] only when the
