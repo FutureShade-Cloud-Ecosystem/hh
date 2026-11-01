@@ -142,6 +142,19 @@ export async function startServer(dist, { holdApi = false } = {}) {
       json(response, 200, { mode: "demo" });
       return;
     }
+    // The demo core's public tenant config (core/internal/demo/dealer_config.go): the bands name the dealer from it,
+    // so a held read would leave every real bundle's lockup blank.
+    if (path === "/api/v1/tenant/config" && request.method === "GET") {
+      json(response, 200, {
+        id: "gable",
+        dealer_name: "Gable Landscape Supply",
+        logo_url: "",
+        primary_color: "#0B2338",
+        support_email: "support@hh-demo.invalid",
+        support_phone: "(619) 555-0142",
+      });
+      return;
+    }
     if (path.startsWith("/api/")) {
       if (!holdApi) json(response, 404, { error: "not found" });
       return;

@@ -10,6 +10,11 @@ import type { Page } from "@playwright/test";
 
 const KEYS = ["hh-demo.front-door.session.v1", "hh-auth.session.v2"];
 
+// The legs that read a fixture page's own text: an assembled dist (WS_DIST) ships the real bundles, which have no
+// fixture text, so those legs run on the composed dist alone (real-bundles.pw.ts opens every app for two roles there).
+const assembled = (process.env["WS_DIST"] ?? "") !== "";
+const FIXTURE_ONLY = "reads the composed fixture pages, which an assembled dist does not ship";
+
 async function open(page: Page, shellUrl: string): Promise<void> {
   await page.goto(`${shellUrl}/`);
   await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-phase", "door");
@@ -41,6 +46,7 @@ async function switchRole(page: Page): Promise<void> {
 }
 
 test("Sales signs in through the front door's picker and lands on the Counter Till", async ({ page, shellUrl }) => {
+  test.skip(assembled, FIXTURE_ONLY);
   await signInAs(page, shellUrl, "Sales");
   const shell = page.getByTestId("ws-shell");
   await expect(shell).toHaveAttribute("data-role", "inside_sales");
@@ -60,6 +66,7 @@ test("the switcher is built from the profile by the signed in role", async ({ pa
 });
 
 test("a sales manager lands on Manager Home, not the Counter Till", async ({ page, shellUrl }) => {
+  test.skip(assembled, FIXTURE_ONLY);
   await signInAs(page, shellUrl, "Sales manager");
   const shell = page.getByTestId("ws-shell");
   await expect(shell).toHaveAttribute("data-current-app", "manager-home");
@@ -78,6 +85,7 @@ test("an app the role does not hold is not offered in its switcher", async ({ pa
 });
 
 test("switching apps hosts the chosen app and hands it the session again", async ({ page, shellUrl }) => {
+  test.skip(assembled, FIXTURE_ONLY);
   await signInAs(page, shellUrl, "Sales");
   const frame = page.frameLocator('[data-testid="app-frame"]');
   await expect(frame.getByTestId("fixture")).toHaveText("fixture:/till/:inside_sales");
@@ -127,6 +135,7 @@ test("a second role sees none of the first role's pins, and the first gets them 
 });
 
 test("an app that asks for the origin root (its own Switch role) returns the host to the picker", async ({ page, shellUrl }) => {
+  test.skip(assembled, FIXTURE_ONLY);
   await signInAs(page, shellUrl, "Sales");
   await page.frameLocator('[data-testid="app-frame"]').getByTestId("fixture-switch-role").click();
   await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-phase", "door");
@@ -136,6 +145,7 @@ test("an app that asks for the origin root (its own Switch role) returns the hos
 });
 
 test("a role holding only House Messages lands on it, with Switch role in the header", async ({ page, shellUrl }) => {
+  test.skip(assembled, FIXTURE_ONLY);
   await signInAs(page, shellUrl, "Driver");
   await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-current-app", "house-messages");
   await expect(page.frameLocator('[data-testid="app-frame"]').getByTestId("fixture")).toHaveText("fixture:/messages/:driver");
