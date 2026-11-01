@@ -48,7 +48,8 @@ func (r *Repository) InvoiceForGL(ctx context.Context, invoiceID string) (gl.Inv
 // ARBalanceCents returns the AR subledger balance as-of asOf for the 1100 tie-out. It sums the SAME two
 // sources the 0034 v_ar_aging view unions, open invoice balances + non-invoice AR customer_transactions
 // (NSF / ADJUSTMENT / CREDIT_MEMO / WRITE_OFF), so the aging grand total ties to this figure by
-// construction. branchID "" = consolidated (all branches). The issue date arm cuts on the house day of
+// construction for the same reading (a past date, or now); at today's own first instant this figure
+// rebuilds while the aging at today's date reads now (W3 0.57). branchID "" = consolidated (all branches). The issue date arm cuts on the house day of
 // the as-of (an invoice joins the dealer's books on the dealer's calendar, never the server zone's
 // reading of the date); the transaction arm stays on the raw instant, because a payment or an NSF is
 // an instant and not a day.

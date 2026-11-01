@@ -72,7 +72,9 @@ func onOrAfterHouseDay(day, today time.Time) bool {
 // itself is NOT current: it is a past instant, the end of the day before, and the close preflight
 // reads the month's end there on the 1st, so it rebuilds (W3 0.57, FROM-PRINCIPAL 234). A later
 // day is the future and reads the books as they stand. The aging keeps its day based reading
-// (onOrAfterHouseDay), because its as of is a calendar date.
+// (onOrAfterHouseDay), because its as of is a calendar date. The contract for callers: pass now, the
+// first instant of a day (a month's end), or a past day's end; an instant inside today but before now is
+// read as now, so no caller may pass one (none does: the preflight and TieOut are the only callers).
 func asOfIsCurrentState(asOf, now time.Time, zone houseday.Zone) bool {
 	n := houseClockIn(zone, now)
 	todayStart := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, zone.Location())
