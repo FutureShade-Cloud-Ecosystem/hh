@@ -75,7 +75,7 @@ func NewExposureReader(pool *pgxpool.Pool, jobs JobLimits) *ExposureReader {
 // remainder.
 const openOrdersPredicate = `o.status NOT IN ('CANCELLED','INVOICED','CLOSED')
 	   AND (o.status <> 'DRAFT' OR o.quote_id IS NOT NULL)
-	   AND NOT EXISTS (SELECT 1 FROM invoices c WHERE c.order_id = o.id AND c.status <> 'VOID' AND c.closes_order)`
+	   AND NOT EXISTS (SELECT 1 FROM invoices c WHERE c.order_id = o.id AND c.status <> 'VOID' AND c.doc_type <> 'CREDIT_MEMO' AND c.closes_order)`
 
 // openOrderCents is the ONE open order term: what an open order has committed the customer to
 // beyond what has been invoiced on it. An order's total less its non void, non credit memo
