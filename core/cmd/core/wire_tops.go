@@ -327,7 +327,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithJobFence(posJobFence{svc: customerSvc}).
 		WithLineResolver(pricingSvc).
 		WithTenderTaker(tillSvc).
-		WithCreditGate(till.NewHoldAwareCreditGate(ops.tillRepo)).
+		WithCreditGate(newCreditGate(pool, ops.tillRepo)).
 		WithSignatureProvider(pos.NewSimulatedSignatureProvider(payVault)).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).

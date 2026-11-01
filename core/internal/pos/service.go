@@ -1062,8 +1062,16 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	//    leg; a fully-captured sale exposes nothing and is not gated (unchanged). No tx is opened if
 	//    it blocks.
 	if exposure := total - capturedCents - applied; exposure > 0 {
-		if blk := s.credit.Check(ctx, customerID, exposure, cust.OpenBalanceCents, cust.CreditLimitCents, true, in.BranchID, false); blk != nil {
-			return nil, nil, ErrCreditBlocked{Policy: string(blk.Policy)}
+		// JA-3: the job the sale is on rides the context, so the gate checks the job's own limit as well
+		// as the customer's over the customer's whole exposure.
+		if blk := s.credit.Check(till.WithSaleJob(ctx, jobID), customerID, exposure, cust.OpenBalanceCents, cust.CreditLimitCents, true, in.BranchID, false); blk != nil {
+			cb := ErrCreditBlocked{Policy: string(blk.Policy), LimitScope: blk.Data["limit_scope"]}
+			// The words and the figures name the limit, but only for a caller the dealer lets read the
+			// account position (the same gate the on account refusal honours).
+			if cb.LimitScope != "" && s.positionAllowed(ctx, in.BranchID) {
+				cb.Detail = blk.Detail
+			}
+			return nil, nil, cb
 		}
 	}
 

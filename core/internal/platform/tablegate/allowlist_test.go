@@ -200,6 +200,17 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "billing",
+		file:   "core/internal/billing/job_exposure.go",
+		tables: []string{"orders"},
+		// the file's own header: the customer's exposure is its running AR balance plus its open
+		// orders, and a job's exposure is its invoices plus its open orders. An order not yet
+		// invoiced is committed money no invoice carries, so the gates read it here; the read is
+		// the same one credit_repository.go already makes for the credit gates, and the file
+		// writes nothing.
+		reason: "the one exposure reader the credit gates share counts the open (uninvoiced) orders a customer and a job have committed, stated in the file header; read only",
+	},
+	{
+		module: "billing",
 		file:   "core/internal/billing/customer_ar_read.go",
 		tables: []string{"payments"},
 		// the file's own header: the arithmetic is not re-implemented here;
