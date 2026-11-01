@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
-# shift.sh <evening|postgres-url>: print, with an explicit sign, the whole seconds that move the Go
+# shift.sh <evening|target|postgres-url>: print, with an explicit sign, the whole seconds that move the Go
 # wall clock (scripts/evening-guard/prepare.sh's overlay, through HH_CLOCK_SHIFT_SECONDS) into the
-# house evening window: half past UTC midnight of the current UTC day. At that instant the UTC day
-# has rolled over while the house zone (four or five hours behind) is still on the previous evening,
-# so any read that follows the UTC day is one day ahead of the dealer's day. The shift is a
+# house month end window: half past UTC midnight on the 1st of the most recent month whose instant has
+# already passed (never ahead of the real clock). At that instant the UTC day has rolled over while the
+# house zone (four or five hours behind) is still on the previous evening, so any read that follows the
+# UTC day is one day ahead of the dealer's day (the day class); and the UTC month has rolled over while
+# the house month is still the previous one, so any read that follows the UTC month is a month ahead of
+# the dealer's month (the month class). The 1st's instant is both boundaries at once. The shift is a
 # constant: the clock keeps running from there, so the legs still see time pass and a long run stays
 # inside the window for hours.
 #
 #   evening        target minus now: for a run with no database to couple to (the unit packages).
+#
+#   target         the target instant itself, in whole epoch seconds, unsigned: for the step that pins
+#                  the Postgres clock (libfaketime) to the same instant the Go overlay uses.
 #
 #   <postgres-url> the database's pinned clock minus now: for the integration packages, which run
 #                  against a Postgres started under libfaketime at the same target instant (see
@@ -21,10 +27,24 @@
 # disagree during the window's own hours, so a daytime run pinned by zone alone would guard
 # nothing.
 set -euo pipefail
-mode="${1:?usage: shift.sh <evening|postgres-url>}"
+mode="${1:?usage: shift.sh <evening|target|postgres-url>}"
 now="$(date -u +%s)"
-if [ "$mode" = "evening" ]; then
-	target=$(( now - now % 86400 + 1800 ))
+# Half past UTC midnight on the 1st of this UTC month, or of the month before while this month's is
+# still ahead (the first half hour of a month). A pin ahead of the real clock would keep a
+# libfaketime Postgres from firing its timers (see ci.yml's guard step), so it is never chosen.
+month_target() {
+	local first
+	first="$(date -u -d "$(date -u -d "@$now" +%Y-%m-01) 00:30:00" +%s)"
+	if [ "$first" -gt "$now" ]; then
+		first="$(date -u -d "$(date -u -d "$(date -u -d "@$now" +%Y-%m-01) -1 month" +%Y-%m-01) 00:30:00" +%s)"
+	fi
+	echo "$first"
+}
+if [ "$mode" = "target" ]; then
+	month_target
+	exit 0
+elif [ "$mode" = "evening" ]; then
+	target="$(month_target)"
 else
 	# Wait for the server, then read its pinned clock once; it advances while we look at it, so
 	# re-read the wall clock in the same breath to keep the difference tight.
