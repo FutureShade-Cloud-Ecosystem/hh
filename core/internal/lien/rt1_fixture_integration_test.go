@@ -57,9 +57,19 @@ func rt1Plant(t *testing.T) *rt1World {
 	// The planted province: first planted, last removed (cleanups run in reverse).
 	exec("province ZA", `INSERT INTO holdback_province_rules (province, holdback_pct_bps, preserve_days, perfect_days) VALUES ('ZA', 500, 30, 45)`)
 	t.Cleanup(func() { rt1Del(t, pool, "holdback_province_rules", "province = 'ZA'") })
-	// The dealer rule is a shared singleton: every leg puts it back as the migration made it.
+	// The dealer rule is a shared singleton: every leg puts it back exactly as it found it, updated_at
+	// included (row 0.46), by the row image read here.
+	var ruleProvince string
+	var rulePct *int
+	var ruleSetBy *string
+	var ruleAt time.Time
+	if err := pool.QueryRow(ctx,
+		`SELECT province, holdback_pct_bps, set_by::text, updated_at FROM holdback_dealer_rule`).Scan(&ruleProvince, &rulePct, &ruleSetBy, &ruleAt); err != nil {
+		t.Fatalf("plant: read holdback_dealer_rule: %v", err)
+	}
 	t.Cleanup(func() {
-		if _, err := pool.Exec(ctx, `UPDATE holdback_dealer_rule SET province = 'ON', holdback_pct_bps = NULL, set_by = NULL`); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE holdback_dealer_rule SET province = $1, holdback_pct_bps = $2, set_by = $3::uuid, updated_at = $4`,
+			ruleProvince, rulePct, ruleSetBy, ruleAt); err != nil {
 			t.Errorf("cleanup: reset holdback_dealer_rule: %v", err)
 		}
 	})
