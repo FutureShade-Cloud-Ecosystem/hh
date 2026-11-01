@@ -71,7 +71,7 @@ export class ReceivingDesk implements AreaDesk {
     const [branches, worklist] = await Promise.all([this.#api.branches(), this.#api.worklist()]);
     if (!worklist.ok) {
       this.#phase = "error";
-      this.#error = refusalWords("load", worklist.error, worklist.status);
+      this.#error = refusalWords("load", worklist.error, worklist.status, worklist.code);
       this.#host.repaint();
       return;
     }
@@ -185,7 +185,7 @@ export class ReceivingDesk implements AreaDesk {
 
   #fail(result: Failure, at: ErrorAt): void {
     this.#notice = "";
-    this.#error = refusalWords("receive", result.error, result.status);
+    this.#error = refusalWords("receive", result.error, result.status, result.code);
     this.#errorAt = at;
   }
 

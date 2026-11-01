@@ -899,6 +899,6 @@ export function renderInventory(model: InvModel): TemplateResult {
 }
 
 /** A refusal or failure as the inventory area words it. */
-export function invRefusalWords(action: string, error: string, status: number | undefined): string {
-  return refusalWords(action, error, status);
+export function invRefusalWords(action: string, error: string, status: number | undefined, code?: string): string {
+  return refusalWords(action, error, status, undefined, code);
 }

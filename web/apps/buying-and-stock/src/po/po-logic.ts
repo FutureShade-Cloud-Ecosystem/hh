@@ -8,6 +8,7 @@
 // f8f4973db317b92296ae8ec7e62a3f54f5dc82ab); the refusal words follow the role
 // gate's shared body ("Forbidden") and the decided role matrix (ROLE-ACCESS-r3,
 // the Procurement Manager and Payables and Receivables sections, row 457).
+import { isLostSignal } from "@hardscapehouse/api-client";
 import type {
   InventoryShortfallPage,
   InventoryShortfallRow,
@@ -136,7 +137,7 @@ function sentence(text: string): string {
  * names who may do the move; a 403 that carries the server's own sentence (the
  * branch fence's words) reads as it is, capitalised and ended.
  */
-export function refusalWords(action: string, error: string, status: number | undefined): string {
+export function refusalWords(action: string, error: string, status: number | undefined, code?: string): string {
   if (status === 403) {
     // The role gate's body is the wordless "Forbidden"; the branch fence's 403 carries its own
     // sentence, which says what actually went wrong and must not be swapped for the wall's words.
@@ -145,8 +146,9 @@ export function refusalWords(action: string, error: string, status: number | und
     return WHO_MAY[action] ?? "Your role may not do that. Ask the General Manager.";
   }
   if (status === 401) return "Your sign in has ended. Sign in again.";
-  if (status === undefined) return "The server could not be reached. Nothing was changed. Try again.";
-  if (status >= 500) return "The server hit a problem. Nothing was changed. Try again.";
+  // Only a lost signal is "could not be reached"; a malformed success answered, so it reads as the server's problem.
+  if (isLostSignal({ ok: false, ...(status === undefined ? {} : { status }), ...(code === undefined ? {} : { code }) })) return "The server could not be reached. Nothing was changed. Try again.";
+  if (status === undefined || status >= 500) return "The server hit a problem. Nothing was changed. Try again.";
   const words = sentence(error);
   return words === "" ? "The server refused that." : words;
 }

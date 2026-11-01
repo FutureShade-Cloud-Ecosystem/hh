@@ -363,3 +363,11 @@ test("a request aborted by the caller resolves an error Result naming the abort"
   assert.equal(result.ok, false);
   if (!result.ok) assert.match(result.error, /the request was aborted/);
 });
+
+test("isLostSignal is true only for a failure with no status that is not a malformed success", () => {
+  assert.equal(api.isLostSignal(api.err("network down")), true);
+  assert.equal(api.isLostSignal(api.err("timed out", undefined, "timeout")), true);
+  assert.equal(api.isLostSignal(api.err("the success response is not valid JSON", undefined, api.MALFORMED_SUCCESS_CODE)), false);
+  assert.equal(api.isLostSignal(api.err("server fault", 503)), false);
+  assert.equal(api.isLostSignal(api.err("refused", 403)), false);
+});

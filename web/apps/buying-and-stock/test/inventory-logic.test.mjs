@@ -189,3 +189,10 @@ test("the bootstrap confirm names the yard it will open lines at", () => {
   const b = bootstrapConfirm("Julian yard");
   assert.ok([b.title, ...b.lines].join(" ").includes("Julian yard"));
 });
+
+test("UX-134: a malformed success reads as the server's problem, a lost signal as unreachable", () => {
+  const malformed = refusalWords("write", "not valid JSON", undefined, undefined, "malformed_success_body");
+  assert.equal(malformed, refusalWords("write", "boom", 503));
+  assert.doesNotMatch(malformed, /could not be reached/);
+  assert.match(refusalWords("write", "network down", undefined), /could not be reached/);
+});
