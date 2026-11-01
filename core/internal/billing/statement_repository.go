@@ -250,16 +250,16 @@ var (
 	safeMemoShapes = []*regexp.Regexp{
 		regexp.MustCompile(`^NSF fee$`),
 		regexp.MustCompile(`^(voided receipt|reversal|NSF reversal): early payment discount given back$`),
-		regexp.MustCompile(`^early payment discount \([A-Za-z0-9-]+\)$`),
-		regexp.MustCompile(`^overpaid receipt left on account \([A-Za-z0-9-]+\)$`),
-		regexp.MustCompile(`^Holdback withheld on [A-Za-z0-9-]+$`),
-		regexp.MustCompile(`^[A-Za-z0-9-]+ \(holdback released \d{4}-\d{2}-\d{2}\)$`),
+		regexp.MustCompile(`^early payment discount \([#A-Za-z0-9._/-]+\)$`),
+		regexp.MustCompile(`^overpaid receipt left on account \([#A-Za-z0-9._/-]+\)$`),
+		regexp.MustCompile(`^Holdback withheld on [#A-Za-z0-9._/-]+$`),
+		regexp.MustCompile(`^[#A-Za-z0-9._/-]+ \(holdback released \d{4}-\d{2}-\d{2}\)$`),
 		regexp.MustCompile(`^Credit memo [#A-Za-z0-9-]+$`),
 		regexp.MustCompile(`^finance charge for [A-Za-z]+ \d{4}$`),
 	}
 	// creditMemoLine is the credit memo's own line, "#CM-n, reverses <invoice> (<reason>)": the numbers are
 	// the account's own and stay, the bracketed reason is the clerk's and goes.
-	creditMemoLine = regexp.MustCompile(`^([#A-Za-z0-9-]+(?:, reverses [A-Za-z0-9-]+)?)(?: \(.*)?$`)
+	creditMemoLine = regexp.MustCompile(`^([#A-Za-z0-9-]+(?:, reverses [#A-Za-z0-9._/-]+)?)(?: \(.*)?$`)
 )
 
 // statementKnownWords are the undo and credit writes whose memo is a fixed prefix plus the clerk's reason,
