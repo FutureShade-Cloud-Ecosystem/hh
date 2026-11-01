@@ -605,7 +605,7 @@ func TestIntegration_JA4Doors_MemoChargeReceiptBounceNow(t *testing.T) {
 
 // TestIntegration_JA4Doors_MemoChargeReceiptBouncePast: a receipt aged six days and bounced yesterday,
 // then a memo on job B and the finance charge run now. The statement equals the aging per job three
-// days ago (receipt live), twelve hours ago (bounced, before the memo and the charge) and now.
+// days ago (receipt live), yesterday after the bounce (bounced, before the memo and the charge) and now.
 func TestIntegration_JA4Doors_MemoChargeReceiptBouncePast(t *testing.T) {
 	w := ja4PlantFresh(t, "ja4d1past")
 	w.ageInvoices(t, 90)
@@ -615,7 +615,16 @@ func TestIntegration_JA4Doors_MemoChargeReceiptBouncePast(t *testing.T) {
 		t.Fatalf("the receipt door: %v", err)
 	}
 	w.age(t, p.ID, 6*24*time.Hour)
-	w.bounce(t, p.ID, time.Now().Add(-24*time.Hour))
+	// The steps sit on house days, never on elapsed hours: every read cuts by the dealer's day, so
+	// "twelve hours ago" was the same house day as the memo and the charge on every afternoon and
+	// evening (and on the fall back day, 24 hours ago is not yesterday after 23:00).
+	zone, err := time.LoadLocation("America/Toronto")
+	if err != nil {
+		t.Fatalf("load the house zone: %v", err)
+	}
+	n := time.Now().In(zone)
+	yesterdayNoon := time.Date(n.Year(), n.Month(), n.Day()-1, 12, 0, 0, 0, zone)
+	w.bounce(t, p.ID, yesterdayNoon)
 	w.memo(t, w.invB, 3000, "ja4-memo-past-"+w.cust)
 	_, charge := w.financeCharge(t)
 	fee := nsfFeeCents(t, w)
@@ -625,8 +634,8 @@ func TestIntegration_JA4Doors_MemoChargeReceiptBouncePast(t *testing.T) {
 		at      time.Time
 		a, b, x int64
 	}{
-		{"three days ago", time.Now().Add(-3 * 24 * time.Hour), 15000, 15000, 10000},
-		{"twelve hours ago", time.Now().Add(-12 * time.Hour), 30000, 20000, 10000 + fee},
+		{"three days ago", yesterdayNoon.AddDate(0, 0, -2), 15000, 15000, 10000},
+		{"yesterday after the bounce", yesterdayNoon.Add(time.Hour), 30000, 20000, 10000 + fee},
 		{"now", time.Now().Add(time.Hour), 30000, 17000, 10000 + fee + charge},
 	} {
 		ja4Want(t, c.label, w.agree(t, c.label, c.at), w, c.a, c.b, c.x)
