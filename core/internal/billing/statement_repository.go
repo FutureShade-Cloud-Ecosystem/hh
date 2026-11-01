@@ -814,7 +814,12 @@ const statementByJobTail = `
 			            WHEN a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'Supplier deposit % closed on the order''s cancel' THEN a.memo
 			            WHEN a.txn_type = 'ADJUSTMENT' THEN 'Adjustment'
 			            WHEN a.txn_type = 'CREDIT_MEMO' AND a.memo = 'Credit memo ' || a.invoice_no THEN a.memo
-			            WHEN a.txn_type = 'CREDIT_MEMO' AND (a.memo = a.invoice_no OR a.memo LIKE a.invoice_no || ', reverses %')
+			            WHEN a.txn_type = 'CREDIT_MEMO' AND a.memo = a.invoice_no THEN a.memo
+			            WHEN a.txn_type = 'CREDIT_MEMO' AND EXISTS (
+			                     SELECT 1 FROM invoices cm JOIN invoices r ON r.id = cm.reverses_invoice_id
+			                      WHERE cm.id = a.src_ref AND r.job_id = a.job_id
+			                        AND (a.memo = cm.invoice_no || ', reverses ' || r.invoice_no
+			                          OR left(a.memo, length(cm.invoice_no || ', reverses ' || r.invoice_no || ' (')) = cm.invoice_no || ', reverses ' || r.invoice_no || ' ('))
 			                 THEN split_part(a.memo, ' (', 1)
 			            WHEN a.txn_type = 'CREDIT_MEMO' THEN 'Credit memo ' || a.invoice_no
 			            WHEN a.txn_type = 'INVOICE' THEN a.invoice_no

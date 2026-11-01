@@ -761,3 +761,115 @@ func TestIntegration_JA4Doors_WriteOff(t *testing.T) {
 		}
 	}
 }
+
+// ja4JobADescriptions reads every description of job A's lines at asOf, after the words check.
+func (w *ja4World) ja4JobADescriptions(t *testing.T, label string, asOf time.Time) []string {
+	t.Helper()
+	lines, err := w.bill.StatementLinesByJob(context.Background(), w.cust, asOf, billing.AllBranches)
+	if err != nil {
+		t.Fatalf("%s: StatementLinesByJob: %v", label, err)
+	}
+	jobLinesReadOnlyTheirOwn(t, label, lines, w.invoiceNumbers(t))
+	var out []string
+	for _, ln := range lines {
+		if ln.JobID == w.jobA {
+			out = append(out, ln.Description)
+		}
+	}
+	return out
+}
+
+// TestIntegration_JA4Doors_MemoOnJobReversingAccountInvoice (P061 fix round 3, P2-1): the account level
+// invoice reversed by a credit memo that the credit memo door puts on job A (the fresh choice through the
+// job fence). Job A's line reads "Credit memo <no>" and names no other invoice; the statement still equals
+// the aging per job.
+func TestIntegration_JA4Doors_MemoOnJobReversingAccountInvoice(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4acctrev")
+	w.ageInvoices(t, 90)
+	soon := time.Now().Add(time.Hour)
+	svc, _ := cmRoundService(t, w.pool)
+	svc = svc.WithJobFence(newCustomerJobFence(w.pool))
+	var userID string
+	if err := w.pool.QueryRow(context.Background(), `SELECT id::text FROM users ORDER BY id LIMIT 1`).Scan(&userID); err != nil {
+		t.Fatalf("pick a seeded user: %v", err)
+	}
+	caller := staffcontext.ContextWithStaff(context.Background(), staffcontext.StaffContext{
+		UserID: userID, Tier: staffcontext.TierLeadership, Scope: staffcontext.ScopeGlobal, Status: "ACTIVE",
+	})
+	res, err := svc.Issue(caller, billing.CreditMemoRouteRequest{
+		CustomerID: w.cust, BranchID: trentonBranchID, InvoiceID: w.invAcct, JobID: w.jobA, AmountCents: 1000,
+		Reason: ja4Reason, IdempotencyKey: "ja4-acct-reverse-" + w.cust,
+	}, billing.CreditMemoCaller{OrgID: cmRoundNorthOrg, Scope: staffcontext.ScopeGlobal})
+	if err != nil {
+		t.Fatalf("the credit memo door: %v", err)
+	}
+	if res.Status != billing.CreditMemoIssued {
+		t.Fatalf("the memo is %q, want ISSUED", res.Status)
+	}
+	t.Cleanup(func() {
+		ja4Exec(t, w.pool, "memo journals", `DELETE FROM gl_journals WHERE idempotency_key = $1`, billing.CreditMemoJournalKeyPrefix+res.CreditMemoID)
+	})
+	ja4Want(t, "after the memo on job A", w.agree(t, "after the memo on job A", soon), w, 29000, 20000, 10000)
+	w.tie(t, "after the memo on job A", soon)
+	found := false
+	for _, d := range w.ja4JobADescriptions(t, "after the memo on job A", soon) {
+		if strings.HasPrefix(d, "Credit memo ") {
+			found = true
+		}
+		if strings.Contains(d, "reverses") {
+			t.Errorf("job A's line reads %q; it names the account level invoice", d)
+		}
+	}
+	if !found {
+		t.Errorf("job A has no line reading \"Credit memo <no>\"")
+	}
+}
+
+// ja4PlantRow plants one ledger row on job A's invoice.
+func (w *ja4World) ja4PlantRow(t *testing.T, typ string, cents int64, memo string) {
+	t.Helper()
+	ja4Exec(t, w.pool, "plant "+typ, `
+INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type,
+                                   source_ref_id, branch_id, memo, occurred_at)
+VALUES ($1::uuid, $2, $3, 0, 'invoice', $4::uuid, $5::uuid, $6, now() - interval '1 hour')`,
+		w.cust, typ, cents, w.invA, trentonBranchID, memo)
+}
+
+func ja4NoneReads(t *testing.T, descs []string, bad ...string) {
+	t.Helper()
+	for _, d := range descs {
+		for _, b := range bad {
+			if strings.Contains(d, b) {
+				t.Errorf("job A reads %q; want fixed words", d)
+			}
+		}
+	}
+}
+
+func ja4Has(t *testing.T, descs []string, want string) {
+	t.Helper()
+	for _, d := range descs {
+		if d == want {
+			return
+		}
+	}
+	t.Errorf("job A has no line reading %q (lines %q)", want, descs)
+}
+
+// TestIntegration_JA4Doors_PlantedReversesReadsFixed (P061 fix round 3, P2-1): a credit memo row whose
+// memo is not the writer's shape (clerk text after "reverses") reads "Credit memo <no>".
+func TestIntegration_JA4Doors_PlantedReversesReadsFixed(t *testing.T) {
+	w := ja4Plant(t)
+	w.ja4PlantRow(t, "CREDIT_MEMO", -333, "CM-9, reverses "+ja4Reason)
+	d := w.ja4JobADescriptions(t, "planted reverses", time.Now().Add(time.Hour))
+	ja4NoneReads(t, d, "reverses")
+}
+
+func (w *ja4World) invoiceNo(t *testing.T, id string) string {
+	t.Helper()
+	var no string
+	if err := w.pool.QueryRow(context.Background(), `SELECT invoice_no FROM invoices WHERE id = $1::uuid`, id).Scan(&no); err != nil {
+		t.Fatalf("read the invoice number: %v", err)
+	}
+	return no
+}
