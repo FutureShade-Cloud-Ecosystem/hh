@@ -186,7 +186,7 @@ var allowlist = []allowlistEntry{
 	{
 		module: "billing",
 		file:   "core/internal/billing/credit_repository.go",
-		tables: []string{"credit_holds", "customers", "orders", "payment_allocations", "payment_reapplications", "payments"},
+		tables: []string{"credit_holds", "customer_jobs", "customers", "orders", "payment_allocations", "payment_reapplications", "payments"},
 		writes: []string{"credit_holds"},
 		// the file's own header, restating the module note: billing WRITES
 		// credit_holds, deliberate and documented in migration 0104, the
@@ -196,7 +196,7 @@ var allowlist = []allowlistEntry{
 		// as-of instant inside the one aging query, from the dated acts
 		// that moved it: the payments module's allocations, contra
 		// allocations and reapplications.
-		reason: "AR credit gates place and read holds (documented in migration 0104, stated in the file header), read the customer and order facts the gates decide on, and the as-of aging rebuild reads the dated payment acts per document in the one aging query; read only",
+		reason: "AR credit gates place and read holds (documented in migration 0104, stated in the file header), read the customer and order facts the gates decide on, and the as-of aging rebuild reads the dated payment acts per document in the one aging query, and the by job aging (JA-4) names each job by its number and name; read only",
 	},
 	{
 		module: "billing",
@@ -267,10 +267,16 @@ var allowlist = []allowlistEntry{
 	},
 	{
 		module: "billing",
+		file:   "core/internal/billing/statement_by_job.go",
+		tables: []string{"customer_contacts", "customer_jobs", "customers"},
+		reason: "the statement by job (JA-4) names the customer, each job by number and name, and addresses a job statement to the job's own contact or the customer's primary contact; read only",
+	},
+	{
+		module: "billing",
 		file:   "core/internal/billing/statement_repository.go",
-		tables: []string{"customers", "locations"},
+		tables: []string{"customer_contacts", "customer_jobs", "customers", "locations", "payment_allocations", "payment_reapplications"},
 		writes: []string{"print_queue"},
-		reason: "statements carry the customer and branch names they are addressed by, and print through the shared print_queue substrate (0088)",
+		reason: "statements carry the customer and branch names they are addressed by, and print through the shared print_queue substrate (0088); the by job statement (JA-4) splits a receipt by its allocations, names each job, and addresses a job statement to the job's contact or the customer's primary contact; read only",
 	},
 	{
 		module: "billing",

@@ -43,8 +43,9 @@ test("two fresh generations are byte-identical and match the committed tree", ()
     // billingReleaseHoldback: 839, plus the RT-3 fix round's billingReverseHoldbackRelease, lienRecordPreservedLien,
     // lienDischargeLien and lienSetPreservationDates: 843, plus FC-1b's four finance charge doors
     // (billingRunFinanceCharges, billingListFinanceCharges, billingSetFinanceChargeWaiver and billingClearFinanceChargeWaiver): 847, plus FC-1c's two finance job doors
-    // (billingListFinanceJobs and billingSetFinanceJobEnabled) and its waiver read (billingListFinanceChargeWaivers): 850.
-    if (!out1.includes("850 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
+    // (billingListFinanceJobs and billingSetFinanceJobEnabled) and its waiver read (billingListFinanceChargeWaivers): 850, plus JA-4's three by job
+    // doors (billingGetAgingByJob, billingGetCustomerStatementByJob and billingGetJobStatement): 853.
+    if (!out1.includes("853 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
     const a = snapshot(one);
     const b = snapshot(two);
     const c = snapshot(committed);

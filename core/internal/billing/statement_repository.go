@@ -104,30 +104,14 @@ type PaylinkDeliveryRow struct {
 	SentAt      time.Time
 }
 
-// StatementLines returns the account's activity up to asOf, oldest first, with a running balance.
-//
-// It unions the two things a customer recognises on a statement, invoices they were billed and
-// payments they made, from customer_transactions, which is the AR subledger both already write to.
-// Reading the subledger rather than joining invoices and payments separately is what makes a reversed
-// payment (DIB-170) appear correctly: the reversal is a subledger row like any other, so it shows up
-// as a line on the statement instead of silently altering an earlier one.
-//
-// reach cuts the subledger rows by the branch they were posted at, so a statement made for a branch
-// reach lists that reach's lines and its running balance follows the same cut as its closing figure
-// (the aging the run read with the same reach). A row with no branch is the whole book's, not any
-// branch's, and is left out of a reach limited statement.
-func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf time.Time, reach BranchReach) ([]StatementLine, error) {
-	if r.pool == nil {
-		return nil, errNoDB
-	}
-	zone, err := r.zoneFor(ctx)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := r.pool.Query(ctx,
-		`WITH activity AS (
+// statementActivityCTE is the statement's activity, shared with the by job statement (JA-4). job_id is
+// the document's job (NULL: account level); src_type, src_ref and src_id are the ledger row's own, kept
+// so the by job read can split a payment by its allocations.
+const statementActivityCTE = `WITH activity AS (
 			SELECT t.occurred_at, t.created_at, t.txn_type, t.amount_cents,
-			       COALESCE(i.invoice_no::text, '') AS invoice_no, COALESCE(t.memo,'') AS memo
+			       COALESCE(i.invoice_no::text, '') AS invoice_no, COALESCE(t.memo,'') AS memo,
+			       CASE WHEN t.source_type = 'invoice' THEN i.job_id END AS job_id,
+			       t.source_type AS src_type, t.source_ref_id AS src_ref, t.id AS src_id
 			  FROM customer_transactions t
 			  LEFT JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
 			 WHERE t.customer_id = $1::uuid AND (t.occurred_at AT TIME ZONE $4::text)::date <= $2::date
@@ -138,7 +122,8 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			       i.doc_type AS txn_type,
 			       i.total_cents AS amount_cents,
 			       i.invoice_no::text AS invoice_no,
-			       i.invoice_no::text AS memo
+			       i.invoice_no::text AS memo,
+			       i.job_id, NULL::text, NULL::uuid, NULL::uuid
 			  FROM invoices i
 			 WHERE i.customer_id = $1::uuid
 			   AND i.status IN ('FINALIZED', 'PARTIALLY_PAID')
@@ -159,11 +144,12 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			-- (invoice_holdback_as_of), for every invoice issued by then, whatever its status or holdback is
 			-- today: a credit, a write off or a release taken after the date never rewrites the statement.
 			SELECT h.occurred_at, h.created_at, 'HOLDBACK' AS txn_type, -h.held AS amount_cents,
-			       h.invoice_no, 'Holdback withheld on ' || h.invoice_no AS memo
+			       h.invoice_no, 'Holdback withheld on ' || h.invoice_no AS memo,
+			       h.job_id, NULL::text, NULL::uuid, NULL::uuid
 			  FROM (
 			    SELECT (i.issue_date::timestamp AT TIME ZONE $4::text) AS occurred_at,
 			           i.created_at + interval '1 microsecond' AS created_at,
-			           i.invoice_no::text AS invoice_no,
+			           i.invoice_no::text AS invoice_no, i.job_id,
 			           invoice_holdback_as_of(i.id,
 			             (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond') AS held
 			      FROM invoices i
@@ -180,11 +166,12 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			-- "Holdback withheld" line vanish with no word of why. It moves no money (the amount is zero), so
 			-- the running balance and the closing figure are the aging's, unchanged.
 			SELECT r.occurred_at, r.created_at, 'HOLDBACK_RELEASED' AS txn_type, 0::bigint AS amount_cents,
-			       r.invoice_no, r.invoice_no || ' (holdback released ' || to_char(r.rel_on, 'YYYY-MM-DD') || ')' AS memo
+			       r.invoice_no, r.invoice_no || ' (holdback released ' || to_char(r.rel_on, 'YYYY-MM-DD') || ')' AS memo,
+			       r.job_id, NULL::text, NULL::uuid, NULL::uuid
 			  FROM (
 			    SELECT (invoice_released_on(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond')::timestamp AT TIME ZONE $4::text) AS occurred_at,
 			           i.created_at + interval '2 microsecond' AS created_at,
-			           i.invoice_no::text AS invoice_no,
+			           i.invoice_no::text AS invoice_no, i.job_id,
 			           invoice_released_on(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond') AS rel_on,
 			           invoice_released_cents_as_of(i.id, (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond') AS rel_cents
 			      FROM invoices i
@@ -195,7 +182,29 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 			       AND ($3::uuid[] IS NULL OR i.branch_id = ANY($3::uuid[]))
 			  ) r
 			 WHERE r.rel_cents > 0
-		)
+		)`
+
+// StatementLines returns the account's activity up to asOf, oldest first, with a running balance.
+//
+// It unions the two things a customer recognises on a statement, invoices they were billed and
+// payments they made, from customer_transactions, which is the AR subledger both already write to.
+// Reading the subledger rather than joining invoices and payments separately is what makes a reversed
+// payment (DIB-170) appear correctly: the reversal is a subledger row like any other, so it shows up
+// as a line on the statement instead of silently altering an earlier one.
+//
+// reach cuts the subledger rows by the branch they were posted at, so a statement made for a branch
+// reach lists that reach's lines and its running balance follows the same cut as its closing figure
+// (the aging the run read with the same reach). A row with no branch is the whole book's, not any
+// branch's, and is left out of a reach limited statement.
+func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf time.Time, reach BranchReach) ([]StatementLine, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	zone, err := r.zoneFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.pool.Query(ctx, statementActivityCTE+`
 		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo
 		  FROM activity
 		 ORDER BY occurred_at, created_at`, customerID, houseClockIn(zone, asOf), reach.SQLArg(), zone.Name())
@@ -699,4 +708,133 @@ func (r *Repository) RecordPaylinkDelivery(ctx context.Context, row PaylinkDeliv
 		return fmt.Errorf("billing: record paylink delivery: %w", err)
 	}
 	return nil
+}
+
+// statementByJobTail finishes statementActivityCTE for the by job read. The money of a receipt is split
+// by the payment ACT, not by the ledger row: the doors write one PAYMENT row per allocation, all under
+// one (source_type, source_ref_id), so the rows of an act are grouped, and the act's share for each job
+// is the allocations that belong to it and existed at the end of the as of day:
+//
+//	payment          the APPLICATION allocations of the payment
+//	payment_void     the REVERSAL allocations under the same payment
+//	payment_reversal the contra allocations of the reversal payment
+//	payment_reapply  the payment_reapplications of the reversed payment
+//	nsf              a bounce: the one NSF ledger row written under the payment's id, credited back by the
+//	                 REVERSAL allocations the NSF door wrote under that payment, so each job returns to
+//	                 owing what it did before the receipt (the receipt's own act keeps its credit)
+//
+// Each act reads as one line per job, dated at the act's first ledger row, and the act's ledger sum
+// less its shares is left at account level (the unapplied part).
+//
+// An act whose rows span several days (a reapplication made in two batches) reads as ONE line at its
+// first date, even on a read taken after the second batch. This is an accepted presentation choice:
+// the figures per job are right at every as of day, because the ledger rows are cut by day and the
+// shares by the end of the same day, so no past read mixes the batches; only that line's date is early.
+const statementByJobTail = `
+		, cutoff AS (
+			SELECT (($2::date + 1)::timestamp AT TIME ZONE $4::text) - interval '1 microsecond' AS at
+		), paytxn AS (
+			SELECT a.occurred_at, a.created_at, a.txn_type, a.amount_cents, a.memo, a.src_id, a.src_ref,
+			       CASE WHEN a.txn_type = 'NSF' THEN 'nsf' ELSE a.src_type END AS act_type
+			  FROM activity a
+			 WHERE a.src_ref IS NOT NULL
+			   AND ((a.txn_type = 'PAYMENT'
+			         AND a.src_type IN ('payment', 'payment_void', 'payment_reversal', 'payment_reapply'))
+			     OR (a.txn_type = 'NSF' AND a.src_type = 'invoice' AND a.job_id IS NULL
+			         AND EXISTS (SELECT 1 FROM payment_allocations pb WHERE pb.payment_id = a.src_ref)))
+		), acts AS (
+			SELECT p.act_type, p.src_ref, MIN(p.txn_type) AS txn_type,
+			       MIN(p.occurred_at) AS occurred_at, MIN(p.created_at) AS created_at,
+			       SUM(p.amount_cents) AS amount_cents, MIN(p.memo) AS memo
+			  FROM paytxn p GROUP BY p.act_type, p.src_ref
+		), shares AS (
+			SELECT ac.act_type, ac.src_ref, inv.job_id,
+			       SUM(CASE WHEN ac.act_type = 'payment_reversal' THEN pa.amount_cents ELSE -pa.amount_cents END) AS share
+			  FROM acts ac
+			  JOIN payment_allocations pa ON pa.payment_id = ac.src_ref
+			   AND pa.created_at <= (SELECT at FROM cutoff)
+			   AND ((ac.act_type = 'payment' AND pa.kind = 'APPLICATION')
+			     OR (ac.act_type = 'payment_void' AND pa.kind = 'REVERSAL')
+			     OR (ac.act_type = 'payment_reversal' AND pa.kind = 'APPLICATION')
+			     OR (ac.act_type = 'nsf' AND pa.kind = 'REVERSAL'))
+			  JOIN invoices inv ON inv.id = pa.invoice_id
+			 WHERE ac.act_type <> 'payment_reapply'
+			 GROUP BY ac.act_type, ac.src_ref, inv.job_id
+			UNION ALL
+			SELECT ac.act_type, ac.src_ref, inv.job_id, -SUM(ra.amount_cents)
+			  FROM acts ac
+			  JOIN payment_reapplications ra ON ra.payment_id = ac.src_ref
+			   AND ra.created_at <= (SELECT at FROM cutoff)
+			  JOIN invoices inv ON inv.id = ra.invoice_id
+			 WHERE ac.act_type = 'payment_reapply'
+			 GROUP BY ac.act_type, ac.src_ref, inv.job_id
+		), leftover AS (
+			SELECT ac.occurred_at, ac.created_at, ac.txn_type, ac.memo,
+			       ac.amount_cents - COALESCE(sh.net, 0) AS amount_cents
+			  FROM acts ac
+			  LEFT JOIN (SELECT s.act_type, s.src_ref, SUM(s.share) AS net FROM shares s GROUP BY s.act_type, s.src_ref) sh
+			    ON sh.act_type = ac.act_type AND sh.src_ref = ac.src_ref
+		), parts AS (
+			SELECT a.occurred_at, a.created_at, a.txn_type, a.amount_cents, a.invoice_no, a.memo, a.job_id
+			  FROM activity a
+			 WHERE NOT EXISTS (SELECT 1 FROM paytxn p WHERE p.src_id = a.src_id)
+			UNION ALL
+			SELECT ac.occurred_at, ac.created_at, ac.txn_type, s.share, '', ac.memo, s.job_id
+			  FROM acts ac JOIN shares s ON s.act_type = ac.act_type AND s.src_ref = ac.src_ref
+			UNION ALL
+			SELECT l.occurred_at, l.created_at, l.txn_type, l.amount_cents, '', l.memo, NULL::uuid
+			  FROM leftover l WHERE l.amount_cents <> 0
+		)
+		SELECT occurred_at, txn_type, amount_cents, invoice_no, memo, COALESCE(job_id::text, '')
+		  FROM parts
+		 ORDER BY COALESCE(job_id::text, ''), occurred_at, created_at`
+
+// StatementLinesByJob is StatementLines with each line's job (JA-4): the same activity, the same
+// cut off and branch reach, and a receipt applied across jobs split by its allocations, the part of
+// it no allocation names left at account level. The lines are ordered by job (account level first),
+// and BalanceRun restarts at zero for each job, so the last line of a job is its subtotal. The
+// subtotals of every job together are StatementLines' closing balance.
+func (r *Repository) StatementLinesByJob(ctx context.Context, customerID string, asOf time.Time, reach BranchReach) ([]StatementLine, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	zone, err := r.zoneFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.pool.Query(ctx, statementActivityCTE+statementByJobTail,
+		customerID, houseClockIn(zone, asOf), reach.SQLArg(), zone.Name())
+	if err != nil {
+		return nil, fmt.Errorf("billing: statement lines by job: %w", err)
+	}
+	defer rows.Close()
+	var out []StatementLine
+	var running int64
+	var cur string
+	for rows.Next() {
+		var (
+			at      time.Time
+			txnType string
+			cents   int64
+			invNo   string
+			memo    string
+			jobID   string
+		)
+		if err := rows.Scan(&at, &txnType, &cents, &invNo, &memo, &jobID); err != nil {
+			return nil, fmt.Errorf("billing: scan statement line by job: %w", err)
+		}
+		if len(out) == 0 || jobID != cur {
+			cur, running = jobID, 0
+		}
+		ln := StatementLine{Date: statementLineDate(zone, at), DocNo: invNo, Description: statementDescription(txnType, memo), JobID: jobID}
+		if cents >= 0 {
+			ln.ChargeCents = cents
+		} else {
+			ln.CreditCents = -cents
+		}
+		running += cents
+		ln.BalanceRun = running
+		out = append(out, ln)
+	}
+	return out, rows.Err()
 }
