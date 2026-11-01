@@ -14,8 +14,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
 
 // customerJobFence adapts the customer module's job read to the error-only fence the money desk's
@@ -60,4 +62,13 @@ func newCustomerJobFence(pool *pgxpool.Pool) customerJobFence {
 func newQuoteJobFence(pool *pgxpool.Pool) quoteJobFence {
 	repo := customer.NewRepository(pool)
 	return quoteJobFence{svc: customer.NewService(repo).WithJobs(repo)}
+}
+
+// newCreditGate is the ONE credit gate every sale door shares (wave 3 JA-3): the hold-aware gate
+// reading the customer's whole exposure and a job's own limit from the billing module's single
+// exposure reader. The counter, the POS account card and the quote conversion are all built from
+// it, so no door decides exposure on its own.
+func newCreditGate(pool *pgxpool.Pool, holds till.HoldChecker) *till.HoldAwareCreditGate {
+	reader := billing.NewExposureReader(pool, customer.NewRepository(pool))
+	return till.NewHoldAwareCreditGate(holds).WithExposure(billing.GateExposure{R: reader})
 }

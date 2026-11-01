@@ -26,6 +26,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
 
 // ExposureQuerier is the one read the exposure SQL needs. A pool satisfies it, and so does a
@@ -118,4 +120,31 @@ func (e *ExposureReader) JobPosition(ctx context.Context, q ExposureQuerier, cus
 		return JobPosition{}, fmt.Errorf("billing: read the exposure of job %q: %w", jobID, err)
 	}
 	return JobPosition{OwnLimitCents: own, ExposureCents: open + orders, CustomerLimitCents: custLimit}, nil
+}
+
+// GateExposure adapts the reader to the seam the credit gate (till.HoldAwareCreditGate) declares.
+type GateExposure struct{ R *ExposureReader }
+
+var _ till.ExposureSource = GateExposure{}
+
+// CustomerExposure reads the customer's whole exposure on tx, or the pool when tx is nil.
+func (g GateExposure) CustomerExposure(ctx context.Context, tx pgx.Tx, customerID string) (int64, error) {
+	var q ExposureQuerier
+	if tx != nil {
+		q = tx
+	}
+	return g.R.CustomerExposure(ctx, q, customerID)
+}
+
+// JobPosition reads a job's own position on tx, or the pool when tx is nil.
+func (g GateExposure) JobPosition(ctx context.Context, tx pgx.Tx, customerID, jobID string) (till.JobCreditPosition, error) {
+	var q ExposureQuerier
+	if tx != nil {
+		q = tx
+	}
+	p, err := g.R.JobPosition(ctx, q, customerID, jobID)
+	if err != nil {
+		return till.JobCreditPosition{}, err
+	}
+	return till.JobCreditPosition{OwnLimitCents: p.OwnLimitCents, ExposureCents: p.ExposureCents, CustomerLimitCents: p.CustomerLimitCents}, nil
 }

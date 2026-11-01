@@ -825,7 +825,14 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		h.log.Error("pos: account standing unavailable", "path", r.URL.Path, "err", err)
 		httpx.Error(w, http.StatusServiceUnavailable, ErrStandingUnavailable.Error())
 	case errors.As(err, &cb):
-		httpx.ErrorWith(w, http.StatusConflict, "credit_blocked", map[string]any{"policy": cb.Policy, "queue": "staff_approvals"})
+		fields := map[string]any{"policy": cb.Policy, "queue": "staff_approvals"}
+		if cb.LimitScope != "" {
+			fields["limit_scope"] = cb.LimitScope
+		}
+		if cb.Detail != "" {
+			fields["message"] = cb.Detail
+		}
+		httpx.ErrorWith(w, http.StatusConflict, "credit_blocked", fields)
 	case errors.As(err, &ra):
 		// The contract's PosRefundApprovalRequired: the Error envelope whose
 		// error string discriminates the approval refusal, the approval body
