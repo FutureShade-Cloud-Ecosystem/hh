@@ -82,9 +82,35 @@ test(`${appId} on a console box with no session: sign in line, link takes the wh
     const cors = { "access-control-allow-origin": origin, "access-control-allow-credentials": "true", "access-control-allow-headers": route.request().headers()["access-control-request-headers"] ?? "content-type", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS" };
     return route.request().method() === "OPTIONS" ? route.fulfill({ status: 204, headers: cors }) : route.fulfill({ status: 401, json: { message: "no session" }, headers: cors });
   });
-  // The app sends a person with no session to the front door at the origin root. Round 3: that navigation is HELD (the
-  // route waits on a gate), so the page under it keeps the sign in line until the leg has read it. The leg then asserts
-  // the navigation itself as the outcome, and releases it. Nothing here polls against a page that is leaving.
+  // The app renders the sign in line and leaves for the front door at the origin root in the same turn, so a poll cannot
+  // be trusted to see it. Round 3, two deterministic parts: (1) an init script records the line from a MutationObserver
+  // on every shadow root (it fires in the microtask after the render, before the page can leave) into local storage,
+  // which the front door page under the same origin keeps; (2) the leave itself is the outcome: the navigation to the
+  // origin root is asserted as a request, and held until the leg has seen it.
+  await page.addInitScript(() => {
+    const scan = (): void => {
+      let line = "";
+      let target = "";
+      let all = "";
+      const walk = (root: Document | ShadowRoot): void => {
+        const link = root.querySelector(".signin-link");
+        if (link) {
+          line = (link.parentElement?.textContent ?? "").replace(/\s+/g, " ").trim();
+          target = link.getAttribute("target") ?? "";
+        }
+        all += root.textContent ?? "";
+        for (const el of Array.from(root.querySelectorAll("*"))) if (el.shadowRoot) walk(el.shadowRoot);
+      };
+      walk(document);
+      if (line !== "") window.localStorage.setItem("ux128-seen", JSON.stringify({ line, target, demo: /demo roles/i.test(all) }));
+    };
+    const original = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init: ShadowRootInit): ShadowRoot {
+      const root = original.call(this, init);
+      new MutationObserver(scan).observe(root, { childList: true, subtree: true, characterData: true });
+      return root;
+    };
+  });
   let release: () => void = () => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -97,24 +123,9 @@ test(`${appId} on a console box with no session: sign in line, link takes the wh
   });
   await page.goto(`${shellUrl}${path}`);
   await expect.poll(() => asked, { timeout: 20_000 }).toBeGreaterThan(0); // the app left for the front door
-  const read = (): Promise<{ line: string; target: string; demo: boolean }> => page.evaluate(() => {
-    let line = "";
-    let target = "";
-    let all = "";
-    const walk = (root: Document | ShadowRoot): void => {
-      const link = root.querySelector(".signin-link");
-      if (link) {
-        line = (link.parentElement?.textContent ?? "").replace(/\s+/g, " ").trim();
-        target = link.getAttribute("target") ?? "";
-      }
-      all += root.textContent ?? "";
-      for (const el of Array.from(root.querySelectorAll("*"))) if (el.shadowRoot) walk(el.shadowRoot);
-    };
-    walk(document);
-    return { line, target, demo: /demo roles/i.test(all) };
-  });
-  // the page is held, so it cannot leave; the poll only waits out the render
-  await expect.poll(read).toMatchObject({ target: "_top", demo: false, line: expect.stringMatching(/^Sign in to open .+\. Go to sign in$/) });
   release();
+  await expect(page).toHaveTitle("front door");
+  const seen = await page.evaluate(() => JSON.parse(window.localStorage.getItem("ux128-seen") ?? "{}"));
+  expect(seen).toMatchObject({ target: "_top", demo: false, line: expect.stringMatching(/^Sign in to open .+\. Go to sign in$/) });
 });
 }
