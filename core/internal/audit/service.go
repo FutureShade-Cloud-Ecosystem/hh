@@ -676,6 +676,13 @@ var allowedExtraKeys = map[string]bool{
 	// became, in basis points, an int (0 to 10000) like the cents above, never an identifier. A set
 	// carries it and a clear carries none (a nil value is skipped), which tells the two apart.
 	"holdback_pct_bps": true,
+	// The finance charge run records (FINANCE_CHARGE_RUN, FC-1b): the house month pressed (a YYYY-MM
+	// word) and the run's counts in ints and integer cents, so a press that charged and a replay that
+	// charged nothing read differently. None is an identifier.
+	"month":           true,
+	"charged":         true,
+	"charged_cents":   true,
+	"already_charged": true,
 }
 
 // redactCleartext returns the value with cleartext-looking identifiers stripped. A value is treated as

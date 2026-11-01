@@ -77,6 +77,9 @@ var allowlisted = map[string]exemption{
 	"internal/billing/finance_charge_integration_test.go": {[]string{"time.Now()"},
 		"the run's month, due dates and writer clock are fixed and injected; time.Now().Add(time.Hour) is only the aging and AR reads' as-of, always after every row the leg made, so the comparison's outcome cannot change with the calendar."},
 
+	"internal/billing/finance_charge_job_integration_test.go": {[]string{"SQL now()"},
+		"the sweep legs' dates are fixed and injected through the writer's clock; the one now() pair only makes the job's schedule row due or checks no other row is, against the jobs runner's own real clock (ClaimDue), a comparison the fixed dates never meet."},
+
 	// -- real clock is used for UNIQUENESS, never as a date --------------------------------------
 	"internal/quote/qd1_ownership_integration_test.go": {[]string{"time.Now()"},
 		"time.Now().UnixNano() only mints unique row tags; every date compared is the test's own fixed `now`, passed explicitly (the edit_integration_test.go pattern)."},
