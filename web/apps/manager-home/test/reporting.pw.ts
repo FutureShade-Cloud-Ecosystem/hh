@@ -123,6 +123,10 @@ test("the rules pane reads for a manager and draws no write controls", async ({ 
 test("the register previews the period, marks the line that earned nothing, and carries the server's own caveat", async ({ page }) => {
   await openReporting(page);
   await page.locator(".kind-tab", { hasText: "Accruals" }).click();
+  // The form opens on the current month to date from the clock; the stub's stored run sits in its fixed
+  // period, so the window is set to that period and the test no longer follows the month (month end class).
+  await page.locator("[data-field='commission-from']").fill("2026-10-01");
+  await page.locator("[data-field='commission-to']").fill("2026-10-31");
   await page.getByRole("button", { name: "Preview period" }).click();
   const periods = page.locator("[data-test='reporting-periods']");
   await expect(periods).toBeVisible();
