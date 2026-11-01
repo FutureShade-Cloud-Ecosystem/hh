@@ -26,7 +26,7 @@ import (
 
 const (
 	ux129RefusedRoom  = "a5000000-0000-4000-9000-000000000449" // payments-trenton: branch reach refuses inside sales
-	ux129BranchRoom   = "a5000000-0000-4000-9000-000000000450" // payments-kingston: trail and branch reach admit
+	ux129BranchRoom   = "a5000000-0000-4000-9000-000000000129" // built here: a branch A money room, trail and branch reach admit
 	ux129TrailRoom    = "a5000000-0000-4000-9000-000000000451" // payments, branchless: the trail alone admits
 	ux129OpenRoom     = "a5000000-0000-4000-9000-000000000003" // office, no member_roles
 	ux129UnseatedRoom = "a5000000-0000-4000-9000-000000000002" // yard-kingston, caller not seated
@@ -41,6 +41,15 @@ func TestSyncAckHonoursTheMoneyRoomFenceAtTheComposition(t *testing.T) {
 	var uid string
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM users WHERE platform_user_id = $1`, testkit.SubInsideSales).Scan(&uid); err != nil {
 		t.Fatalf("the staff fixture user: %v", err)
+	}
+	// A money room on inside sales' own branch (north A), with the seeded money rooms' member roles: the
+	// trail holder it reaches is admitted through both arms of the fence.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO msg_channels (id, kind, branch_id, slug, name, topic, tier, member_roles)
+		 SELECT $1::uuid, 'TEAM', $2::uuid, 'ux129-payments-fxna', '#ux129-payments-fxna', 'ux129 branch A money room', 'STANDARD', member_roles
+		 FROM msg_channels WHERE id = $3::uuid
+		 ON CONFLICT (id) DO NOTHING`, ux129BranchRoom, testkit.BranchNorthAID, ux129RefusedRoom); err != nil {
+		t.Fatalf("build the branch A money room: %v", err)
 	}
 	seated := []string{ux129RefusedRoom, ux129BranchRoom, ux129TrailRoom, ux129OpenRoom}
 	for _, ch := range seated {
@@ -72,6 +81,7 @@ func TestSyncAckHonoursTheMoneyRoomFenceAtTheComposition(t *testing.T) {
 		for _, ch := range seated {
 			_, _ = pool.Exec(c, `DELETE FROM msg_members WHERE channel_id = $1::uuid AND user_id = $2::uuid`, ch, uid)
 		}
+		_, _ = pool.Exec(c, `DELETE FROM msg_channels WHERE id = $1::uuid`, ux129BranchRoom)
 	})
 
 	push := func(messageID string) (status, errText string) {

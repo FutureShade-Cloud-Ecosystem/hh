@@ -538,7 +538,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("messages", messaging.NewMessagesSyncStore(messagingRepo, link).WithRoomFence(messagingSvc.RoomAdmits)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("acks", messaging.NewAcksSyncStore(messagingRepo, link)); err != nil {
+	if err := syncEngine.RegisterScope("acks", messaging.NewAcksSyncStore(messagingRepo, link).WithRoomFence(messagingSvc.RoomAdmits)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("notify_prefs", messaging.NewNotifyPrefsSyncStore(messagingRepo, link)); err != nil {
