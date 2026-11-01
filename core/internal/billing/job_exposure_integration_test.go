@@ -190,7 +190,7 @@ func TestIntegration_Exposure_AProgressInvoiceLeavesTheUnbilledRemainder(t *test
 
 	order := plantOrder(t, pool, w.cust, w.jobB, "EXP-PO-"+tag, "PARTIALLY_FULFILLED", 100000)
 	plantInvoice(t, pool, w.cust, w.jobB, "EXP-PI-"+tag, 30000)
-	if _, err := pool.Exec(ctx, `UPDATE invoices SET order_id = $1::uuid WHERE invoice_no = $2`, order, "EXP-PI-"+tag); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE invoices SET order_id = $1::uuid, closes_order = FALSE WHERE invoice_no = $2`, order, "EXP-PI-"+tag); err != nil {
 		t.Fatalf("link the progress invoice: %v", err)
 	}
 	plantLedger(t, pool, w.cust, 30000, 30000)
@@ -228,7 +228,7 @@ func TestIntegration_Exposure_AProgressInvoiceLeavesTheUnbilledRemainder(t *test
 	}
 	over := plantOrder(t, pool, w.cust, w.jobA, "EXP-PX-"+tag, "CONFIRMED", 1000)
 	plantInvoice(t, pool, w.cust, w.jobA, "EXP-PXI-"+tag, 4000)
-	if _, err := pool.Exec(ctx, `UPDATE invoices SET order_id = $1::uuid WHERE invoice_no = $2`, over, "EXP-PXI-"+tag); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE invoices SET order_id = $1::uuid, closes_order = FALSE WHERE invoice_no = $2`, over, "EXP-PXI-"+tag); err != nil {
 		t.Fatalf("link the over invoice: %v", err)
 	}
 	if got, _ := rd.CustomerExposure(ctx, nil, w.cust); got != 100000 {
