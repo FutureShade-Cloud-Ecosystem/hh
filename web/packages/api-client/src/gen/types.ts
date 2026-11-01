@@ -1367,6 +1367,21 @@ export type BillingFinanceJobList = {
   items: BillingFinanceJob[];
   next_cursor: string | null;
 };
+export type BillingFinanceChargeWaiverListItem = {
+  customer_id: string;
+  customer_name: string;
+  account_no: string;
+  reason: string;
+  active: boolean;
+  waived_by?: string;
+  waived_at: string;
+  cleared_by?: string;
+  cleared_at?: string;
+};
+export type BillingFinanceChargeWaiverList = {
+  items: BillingFinanceChargeWaiverListItem[];
+  next_cursor: string | null;
+};
 export type BillingFinanceChargeWaiverRequest = {
   reason: string;
 };

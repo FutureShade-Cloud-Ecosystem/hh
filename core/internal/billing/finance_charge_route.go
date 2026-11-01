@@ -31,6 +31,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -229,6 +230,7 @@ func (h *FinanceChargeRouteHandler) WithUserLinker(link identity.UserIDLinker) *
 func (h *FinanceChargeRouteHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/ar/finance-charges", g.RequireAdmin(h.staff(h.press)))
 	r.Handle("GET /api/v1/ar/finance-charges", g.RequireAdmin(h.staff(h.list)))
+	r.Handle("GET /api/v1/ar/finance-charge-waivers", g.RequireAdmin(h.staff(h.waiversList)))
 	r.Handle("GET /api/v1/ar/finance-jobs", g.RequireAdmin(h.staff(h.jobsList)))
 	r.Handle("PUT /api/v1/ar/finance-jobs/{name}", g.RequireAdmin(h.staff(h.jobSet)))
 	r.Handle("PUT /api/v1/ar/customers/{customerID}/finance-charge-waiver", g.RequireAdmin(h.staff(h.waive)))
@@ -372,4 +374,97 @@ func (h *FinanceChargeRouteHandler) writeErr(w http.ResponseWriter, err error) {
 		slog.Error("finance charge door", "err", err)
 		httpx.Error(w, http.StatusInternalServerError, "internal error")
 	}
+}
+
+// FinanceChargeWaiverListItem is one waiver as the screen lists it: the customer (id, name and
+// account number), the Controller's reason, who set it and when, and who cleared it and when.
+type FinanceChargeWaiverListItem struct {
+	FinanceChargeWaiverView
+	CustomerName string `json:"customer_name"`
+	AccountNo    string `json:"account_no"`
+}
+
+// Waivers reads finance charge waivers for the screen, active and cleared alike, newest first: a
+// branch's (the customers whose home branch it is or that have a document at it), one customer's, or
+// both together. At least one of the two is required. A branch outside the caller's reach is refused;
+// a customer read shows only what the caller's branches own.
+func (s *FinanceChargeService) Waivers(ctx context.Context, rawBranch, rawCustomer string) ([]FinanceChargeWaiverListItem, error) {
+	c, err := s.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(rawBranch) == "" && strings.TrimSpace(rawCustomer) == "" {
+		return nil, httpx.BadRequestf("billing: name a branch_id or a customer_id to read finance charge waivers for")
+	}
+	reach := reachOfCaller(c)
+	customer := ""
+	if strings.TrimSpace(rawCustomer) != "" {
+		if customer, err = canonicalUUID(rawCustomer, "customer_id"); err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(rawBranch) != "" {
+		branch, err := s.branch(c, rawBranch)
+		if err != nil {
+			return nil, err
+		}
+		reach = BranchReach{IDs: []string{branch}}
+	}
+	return s.repo.FinanceChargeWaivers(ctx, customer, reach)
+}
+
+// FinanceChargeWaivers reads the waiver rows for an optional customer, held to a branch reach: a
+// waiver is listed when its customer's home branch or any of its documents' branch is in the reach.
+func (r *Repository) FinanceChargeWaivers(ctx context.Context, customerID string, reach BranchReach) ([]FinanceChargeWaiverListItem, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	var customer any
+	if customerID != "" {
+		customer = customerID
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT w.customer_id::text, c.name, c.account_no::text, w.reason, COALESCE(w.waived_by::text, ''),
+		       w.waived_at, COALESCE(w.cleared_by::text, ''), w.cleared_at, w.cleared_at IS NULL
+		  FROM finance_charge_waivers w
+		  JOIN customers c ON c.id = w.customer_id
+		 WHERE ($1::uuid IS NULL OR w.customer_id = $1::uuid)
+		   AND ($2::uuid[] IS NULL
+		        OR c.home_branch_id = ANY($2::uuid[])
+		        OR EXISTS (SELECT 1 FROM invoices i
+		                    WHERE i.customer_id = w.customer_id AND i.branch_id = ANY($2::uuid[])))
+		 ORDER BY w.waived_at DESC, w.customer_id`, customer, reach.SQLArg())
+	if err != nil {
+		return nil, fmt.Errorf("billing: read the finance charge waivers: %w", err)
+	}
+	defer rows.Close()
+	out := []FinanceChargeWaiverListItem{}
+	for rows.Next() {
+		var it FinanceChargeWaiverListItem
+		var waivedAt time.Time
+		var clearedAt *time.Time
+		if err := rows.Scan(&it.CustomerID, &it.CustomerName, &it.AccountNo, &it.Reason, &it.WaivedBy,
+			&waivedAt, &it.ClearedBy, &clearedAt, &it.Active); err != nil {
+			return nil, fmt.Errorf("billing: scan a finance charge waiver: %w", err)
+		}
+		it.WaivedAt = waivedAt.UTC().Format(time.RFC3339)
+		if clearedAt != nil {
+			it.ClearedAt = clearedAt.UTC().Format(time.RFC3339)
+		}
+		out = append(out, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("billing: the finance charge waivers: %w", err)
+	}
+	return out, nil
+}
+
+func (h *FinanceChargeRouteHandler) waiversList(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	q := r.URL.Query()
+	items, err := h.svc.Waivers(r.Context(), q.Get("branch_id"), q.Get("customer_id"))
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil})
 }

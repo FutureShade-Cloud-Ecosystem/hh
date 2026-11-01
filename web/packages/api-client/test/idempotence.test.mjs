@@ -41,8 +41,8 @@ test("two fresh generations are byte-identical and match the committed tree", ()
     // revaluation routes (purchasingRunAPRevaluation, purchasingReverseAPRevaluation and
     // purchasingListAPRevaluations), plus FC-1b's four finance charge doors (billingRunFinanceCharges,
     // billingListFinanceCharges, billingSetFinanceChargeWaiver and billingClearFinanceChargeWaiver), plus FC-1c's two finance job doors (billingListFinanceJobs and
-    // billingSetFinanceJobEnabled): 843.
-    if (!out1.includes("843 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
+    // billingSetFinanceJobEnabled), plus FC-1c's waiver read (billingListFinanceChargeWaivers): 844.
+    if (!out1.includes("844 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
     const a = snapshot(one);
     const b = snapshot(two);
     const c = snapshot(committed);

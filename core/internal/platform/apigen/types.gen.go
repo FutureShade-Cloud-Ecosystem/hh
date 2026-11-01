@@ -1560,6 +1560,23 @@ type BillingFinanceJobList struct {
 	NextCursor *string             `json:"next_cursor"`
 }
 
+type BillingFinanceChargeWaiverListItem struct {
+	CustomerId   string     `json:"customer_id"`
+	CustomerName string     `json:"customer_name"`
+	AccountNo    string     `json:"account_no"`
+	Reason       string     `json:"reason"`
+	Active       bool       `json:"active"`
+	WaivedBy     *string    `json:"waived_by,omitempty"`
+	WaivedAt     time.Time  `json:"waived_at"`
+	ClearedBy    *string    `json:"cleared_by,omitempty"`
+	ClearedAt    *time.Time `json:"cleared_at,omitempty"`
+}
+
+type BillingFinanceChargeWaiverList struct {
+	Items      []BillingFinanceChargeWaiverListItem `json:"items"`
+	NextCursor *string                              `json:"next_cursor"`
+}
+
 type BillingFinanceChargeWaiverRequest struct {
 	Reason string `json:"reason"`
 }
