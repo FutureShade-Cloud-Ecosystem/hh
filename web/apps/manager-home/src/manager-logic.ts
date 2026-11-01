@@ -11,7 +11,7 @@ import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.
 import { stampDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { needsLink } from "./landing-links.js";
 import { sinceWords } from "./drivers-logic.js";
-import type { NeedsRow, ReceivingRow, Shortage, WidgetDatum, WidgetView } from "./manager-api.js";
+import type { NeedsRow, QueueEntry, ReceivingRow, Shortage, WidgetDatum, WidgetView } from "./manager-api.js";
 
 // -- the words a state carries ----------------------------------------------------------------------
 
@@ -222,6 +222,32 @@ export interface ShortageCard {
   readonly when: string;
   readonly status: string;
   readonly resolved: boolean;
+}
+
+/**
+ * The resolve answer merged into the entries the sheet renders (UX-136). The shortage turns done in
+ * its own place, so the manager's eye stays where they acted, and the pick's open count follows.
+ * An answer for a shortage the sheet does not hold changes nothing.
+ */
+export function settleShortage(entries: readonly QueueEntry[], resolved: Shortage): readonly QueueEntry[] {
+  if (!entries.some((e) => e.shortages.some((s) => s.id === resolved.id))) return entries;
+  return entries.map((e) => {
+    if (!e.shortages.some((s) => s.id === resolved.id)) return e;
+    const shortages = e.shortages.map((s) => (s.id === resolved.id ? resolved : s));
+    return { ...e, task: { ...e.task, open_shortages: shortages.filter((s) => s.resolved_at === null).length }, shortages };
+  });
+}
+
+/** The cards the sheet shows: picks with an open shortage, and picks the manager settled this visit. */
+export function cardsToShow(entries: readonly QueueEntry[], kept: readonly string[]): readonly QueueEntry[] {
+  return entries.filter(
+    (e) => e.task.open_shortages > 0 || e.shortages.some((s) => s.resolved_at === null) || kept.includes(e.task.id),
+  );
+}
+
+/** A card's header count; a card with nothing left open says so in words, never "0 open". */
+export function headCountWords(open: number): string {
+  return open > 0 ? `${open} open` : "All resolved";
 }
 
 export function shortageCard(s: Shortage, nowMs: number): ShortageCard {

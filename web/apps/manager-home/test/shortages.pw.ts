@@ -122,3 +122,46 @@ test("each open shortage is a review card: what, how much, who by role, when, an
   await expect(done).toHaveCount(1);
   await expect(done.locator(".status")).toHaveText("Resolved");
 });
+
+// UX-136: the core's queue serves open shortages only, so after a resolve the sheet must hold what the
+// manager settled: the done row with its words, the card even when its last open shortage is gone, and a
+// clean list when the sheet is next opened.
+test("a resolved shortage stays on its card with its words until the sheet is next opened", async ({ request, page }) => {
+  await useScenario(request, "open-only-queue");
+  await openShortages(page);
+  const card = page.locator("[data-task]").first();
+  await expect(card.locator("[data-shortage]")).toHaveCount(2);
+  await expect(card.locator(".task-head .meta").last()).toHaveText("2 open");
+
+  // Resolve one of two: its done row shows the words in place, and the other stays open.
+  await card.locator("[data-shortage]").first().getByRole("button", { name: "Resolve" }).click();
+  await page.getByRole("button", { name: "Backorder the shortfall" }).click();
+  await page.locator("[data-field='resolution-note']").fill("Customer ok with Thursday");
+  await page.locator("[data-action='confirm-resolve']").click();
+  await expect(page.locator("[data-test='shortages-notice']")).toContainText("1 still open");
+  await expect(card.locator("[data-shortage]")).toHaveCount(2);
+  await expect(card.locator("[data-shortage]").first().locator(".resolved-word")).toContainText(
+    "Resolved: Backordered the shortfall; the order keeps the short line open. Customer ok with Thursday",
+  );
+  await expect(card.locator("[data-card='shortage-review']")).toHaveCount(1);
+  await expect(card.locator(".task-head .meta").last()).toHaveText("1 open");
+
+  // Leave and come back: the sheet starts clean from the queue, the resolved row gone, one still open.
+  await page.getByRole("button", { name: "Back to Home" }).click();
+  await page.locator("[data-needs='tasks.open_shortages'] button", { hasText: "Resolve" }).click();
+  await expect(page.getByRole("heading", { name: "Shortages · open" })).toBeVisible();
+  await expect(page.locator(".resolved-word")).toHaveCount(0);
+  await expect(card.locator("[data-shortage]")).toHaveCount(1);
+  await expect(card.locator(".task-head .meta").last()).toHaveText("1 open");
+
+  // Resolve the last: the card stays with its done row and says all are resolved, never vanishing.
+  await card.locator("[data-card='shortage-review']").getByRole("button", { name: "Resolve" }).click();
+  await page.getByRole("button", { name: "Substitute from stock" }).click();
+  await page.locator("[data-action='confirm-resolve']").click();
+  await expect(page.locator("[data-test='shortages-notice']")).toContainText("Nothing is waiting");
+  await expect(page.locator("[data-task]")).toHaveCount(1);
+  await expect(card.locator(".resolved-word")).toHaveCount(1);
+  await expect(card.locator("[data-card='shortage-review']")).toHaveCount(0);
+  await expect(card.locator(".task-head .meta").last()).toHaveText("All resolved");
+  await expect(card.locator("[data-shortage]").locator(".status")).toHaveText("Resolved");
+});

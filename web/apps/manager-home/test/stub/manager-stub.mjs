@@ -1727,11 +1727,16 @@ async function handle(req, res) {
   }
 
   if (req.method === "GET" && path === "/api/v1/yard/pick-queue") {
-    const items = world.tasks.map((entry) => ({
-      task: { ...entry.task, open_shortages: entry.shortages.filter((s) => s.resolved_at === undefined).length },
-      ticket: entry.ticket,
-      shortages: entry.shortages,
-    }));
+    // The scenario "open-only-queue" is the core's own queue: open shortages only, and a pick with
+    // none left open is not served at all (yard_service.go), so a resolved shortage is gone on re-read.
+    const openOnly = scenario === "open-only-queue";
+    const items = world.tasks
+      .map((entry) => ({
+        task: { ...entry.task, open_shortages: entry.shortages.filter((s) => s.resolved_at === undefined).length },
+        ticket: entry.ticket,
+        shortages: openOnly ? entry.shortages.filter((s) => s.resolved_at === undefined) : entry.shortages,
+      }))
+      .filter((item) => !openOnly || item.shortages.length > 0 || item.task.id !== TASK_IN_PROGRESS);
     return json(res, { items, next_cursor: null, limit: 50 });
   }
 
