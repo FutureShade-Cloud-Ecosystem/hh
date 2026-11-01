@@ -218,6 +218,14 @@ func TestIntegration_Exposure_AProgressInvoiceLeavesTheUnbilledRemainder(t *test
 	if got, _ := rd.CustomerExposure(ctx, nil, w.cust); got != 100000 {
 		t.Fatalf("with a void invoice, customer exposure = %d, want 100000", got)
 	}
+	// a credit memo naming the order (a negative total) is not a bill of it either
+	plantInvoice(t, pool, w.cust, w.jobB, "EXP-PC-"+tag, 500)
+	if _, err := pool.Exec(ctx, `UPDATE invoices SET order_id = $1::uuid, doc_type = 'CREDIT_MEMO', total_cents = -5000, subtotal_cents = -5000, balance_cents = 0 WHERE invoice_no = $2`, order, "EXP-PC-"+tag); err != nil {
+		t.Fatalf("credit memo: %v", err)
+	}
+	if got, _ := rd.CustomerExposure(ctx, nil, w.cust); got != 100000 {
+		t.Fatalf("with a credit memo, customer exposure = %d, want 100000", got)
+	}
 	over := plantOrder(t, pool, w.cust, w.jobA, "EXP-PX-"+tag, "CONFIRMED", 1000)
 	plantInvoice(t, pool, w.cust, w.jobA, "EXP-PXI-"+tag, 4000)
 	if _, err := pool.Exec(ctx, `UPDATE invoices SET order_id = $1::uuid WHERE invoice_no = $2`, over, "EXP-PXI-"+tag); err != nil {
@@ -225,6 +233,32 @@ func TestIntegration_Exposure_AProgressInvoiceLeavesTheUnbilledRemainder(t *test
 	}
 	if got, _ := rd.CustomerExposure(ctx, nil, w.cust); got != 100000 {
 		t.Fatalf("with an over billed order, customer exposure = %d, want 100000 (floored at zero)", got)
+	}
+}
+
+// JA-3 fix r2 P3-a: an order whose closing invoice bills less than the order stops counting once
+// that closing invoice exists, even while the order has not reached INVOICED.
+func TestIntegration_Exposure_AShortClosingInvoiceLeavesNoPhantomRemainder(t *testing.T) {
+	pool := intPool(t)
+	w := plantExposureWorld(t, pool)
+	ctx := context.Background()
+	rd := NewExposureReader(pool, customer.NewRepository(pool))
+	tag := fmt.Sprint(time.Now().UnixNano() % 1_000_000_000)
+
+	order := plantOrder(t, pool, w.cust, w.jobB, "EXP-CL-"+tag, "CONFIRMED", 10000)
+	if got, _ := rd.CustomerExposure(ctx, nil, w.cust); got != 10000 {
+		t.Fatalf("an open order alone: customer exposure = %d, want 10000", got)
+	}
+	plantInvoice(t, pool, w.cust, w.jobB, "EXP-CLI-"+tag, 9800)
+	if _, err := pool.Exec(ctx, `UPDATE invoices SET order_id = $1::uuid, closes_order = TRUE WHERE invoice_no = $2`, order, "EXP-CLI-"+tag); err != nil {
+		t.Fatalf("link the closing invoice: %v", err)
+	}
+	plantLedger(t, pool, w.cust, 9800, 9800)
+	if got, _ := rd.CustomerExposure(ctx, nil, w.cust); got != 9800 {
+		t.Fatalf("with a short closing invoice, customer exposure = %d, want 9800 (AR only, no 200 remainder)", got)
+	}
+	if _, jobExp, _, _ := rd.JobPosition(ctx, nil, w.cust, w.jobB); jobExp != 9800 {
+		t.Fatalf("with a short closing invoice, job exposure = %d, want 9800", jobExp)
 	}
 }
 

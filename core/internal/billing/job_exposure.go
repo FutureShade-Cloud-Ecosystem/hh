@@ -69,9 +69,13 @@ func NewExposureReader(pool *pgxpool.Pool, jobs JobLimits) *ExposureReader {
 // openOrdersPredicate selects the orders that count as open for alias o: committed and not
 // cancelled, invoiced in full or closed. A DRAFT counts only when it is a converted quote's order
 // (quote_id set, the order a conversion writes before anything is confirmed); an untouched reorder
-// or duplicate draft someone opened and abandoned is not a commitment.
+// or duplicate draft someone opened and abandoned is not a commitment. An order that already has a
+// non void closing invoice (closes_order) has nothing left to bill, even while the order itself
+// has not yet reached INVOICED, so a closing invoice for less than the order leaves no phantom
+// remainder.
 const openOrdersPredicate = `o.status NOT IN ('CANCELLED','INVOICED','CLOSED')
-	   AND (o.status <> 'DRAFT' OR o.quote_id IS NOT NULL)`
+	   AND (o.status <> 'DRAFT' OR o.quote_id IS NOT NULL)
+	   AND NOT EXISTS (SELECT 1 FROM invoices c WHERE c.order_id = o.id AND c.status <> 'VOID' AND c.closes_order)`
 
 // openOrderCents is the ONE open order term: what an open order has committed the customer to
 // beyond what has been invoiced on it. An order's total less its non void, non credit memo
