@@ -15,7 +15,7 @@ defineConsoleLegs({
     await expect(page.locator("[data-widget]").first()).toBeVisible();
   },
   unavailable: async (page) => {
-    await expect(page.getByText("The demo roles could not be loaded", { exact: false })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Sign in to open the Manager Home.", { exact: false })).toBeVisible({ timeout: 20_000 });
     await expect(page.locator("hos-app-header")).toHaveCount(0);
   },
 });
