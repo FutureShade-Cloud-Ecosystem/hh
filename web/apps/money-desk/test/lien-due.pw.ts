@@ -527,7 +527,7 @@ test("delta: a release whose answer was lost but whose refresh shows it made dro
   expect(held).not.toContain(keys[0]);
 });
 
-test("delta 2: a lost answer whose due list read then fails keeps its key, so the retry replays rather than releases anew", async ({ page, request }) => {
+test("delta 2: a lost answer whose due list read then fails keeps its key", async ({ page, request }) => {
   await openDue(page, request);
   const keys: string[] = [];
   let failReads = false;
@@ -549,6 +549,9 @@ test("delta 2: a lost answer whose due list read then fails keeps its key, so th
   });
   await pressRelease(page);
   await expect(page.locator("[data-error]").first()).toBeVisible();
+  // Wait for the refresh to land (the failed read empties the list), so the storage read below comes after the desk
+  // has decided whether to keep the key.
+  await expect(due(page, "GLS-2105").getByRole("button", { name: "Release" })).toHaveCount(0);
   const held = await page.evaluate(() =>
     Object.keys(window.sessionStorage)
       .filter((k) => k.includes("lien-due."))
