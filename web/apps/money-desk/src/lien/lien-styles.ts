@@ -112,6 +112,7 @@ export const lienStyles = css`
   /* Due to release: the invoices listed one under another, each with its amount on the right. */
   .li-invoices { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--hh-s-4); }
   .li-invoices li { display: flex; justify-content: space-between; gap: var(--hh-s-16); }
+  .li-cards.li-cards-always { display: grid; }
   .li-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
   @media (max-width: 900px) {

@@ -23,6 +23,7 @@ import {
   documentStatusWord,
   type DueGroup,
   documentTone,
+  dueConfirmWords,
   dueStateWords,
   dueTone,
   heldNowWords,
@@ -58,6 +59,15 @@ export interface ReleaseModel {
   readonly cosigner: string;
 }
 
+/** One invoice's release made on this visit, kept so it can be named and reversed. */
+export interface ReleasedItem {
+  readonly releaseId: string;
+  readonly invoiceNo: string;
+  readonly amountCents: number;
+  readonly label: string;
+  readonly reversed: boolean;
+}
+
 export interface LiensModel {
   readonly phase: "loading" | "ready" | "error";
   readonly tab: LienTab;
@@ -70,6 +80,9 @@ export interface LiensModel {
   readonly triage: readonly LienTriageItem[];
   readonly aging: readonly LienAgingRow[];
   readonly due: DueModel;
+  readonly canReleaseDue: boolean;
+  readonly dueOpen: DueGroup | null;
+  readonly released: readonly ReleasedItem[];
   readonly branches: readonly Branch[];
   readonly selectedJob: string | null;
   readonly newJob: boolean;
@@ -212,6 +225,7 @@ function dueTab(model: LiensModel): TemplateResult {
       <section class="li-panel">
         <div class="li-panel-head"><h2>Due to release</h2></div>
         <p class="li-dim">Each customer job's held invoices, the lien job that governs them, the last day a lien can be preserved and where the holdback stands.</p>
+        ${model.canReleaseDue ? nothing : html`<p class="li-note" data-due-note>${refusalWords("due-release", "", 403)}</p>`}
         ${due.phase === "error"
           ? loadFailed(due.error, "li-reload")
           : html`
@@ -229,13 +243,50 @@ function dueTab(model: LiensModel): TemplateResult {
                   `}
             `}
       </section>
-      <div></div>
+      <div>${model.dueOpen === null ? nothing : duePanel(model, model.dueOpen)}${releasedList(model)}</div>
     </div>
   `;
 }
 
-function dueAction(_model: LiensModel, _g: DueGroup): TemplateResult | typeof nothing {
-  return nothing;
+function dueAction(model: LiensModel, g: DueGroup): TemplateResult | typeof nothing {
+  if (!g.due || !model.canReleaseDue) return nothing;
+  const open = model.dueOpen?.customerJobId === g.customerJobId;
+  return html`<button type="button" class="btn btn-secondary" data-action="li-due-open" data-id=${g.customerJobId} aria-pressed="${open ? "true" : "false"}">Release</button>`;
+}
+
+/** The question first: the customer job, each invoice and its amount; the core releases the whole holdback of the job at once. */
+function duePanel(model: LiensModel, g: DueGroup): TemplateResult {
+  return html`
+    <section class="li-panel" data-due-panel tabindex="-1" role="region" aria-label="Release holdback">
+      <div class="li-panel-head"><h2>Release holdback</h2></div>
+      <p class="li-confirm" data-confirm-words>${dueConfirmWords(g)}</p>
+      <div class="li-actions">
+        <button type="button" class="btn btn-primary" data-action="li-due-confirm" ?disabled=${model.busy}>Confirm release</button>
+        <button type="button" class="btn btn-secondary" data-action="li-due-close">Cancel</button>
+      </div>
+    </section>
+  `;
+}
+
+function releasedRow(model: LiensModel, r: ReleasedItem): TemplateResult {
+  return html`
+    <li class="li-card" data-row="released" data-invoice-no=${r.invoiceNo} data-release-id=${r.releaseId}>
+      <div class="li-card-top"><strong class="li-mono">${r.invoiceNo}</strong>${r.reversed ? pill("plain", "Reversed") : pill("good", "Released")}</div>
+      <div class="li-card-amount">${formatMoney(r.amountCents)} <span class="li-dim">· ${r.label}</span></div>
+      ${r.reversed || !model.canReleaseDue ? nothing : html`<button type="button" class="btn btn-secondary" data-action="li-reverse-open" data-id=${r.releaseId}>Reverse</button>`}
+    </li>
+  `;
+}
+
+function releasedList(model: LiensModel): TemplateResult | typeof nothing {
+  if (model.released.length === 0) return nothing;
+  return html`
+    <section class="li-panel" data-released>
+      <div class="li-panel-head"><h2>Released on this visit</h2></div>
+      <p class="li-dim">Each release the core made for you since this page opened, one row per invoice.</p>
+      <ul class="li-cards li-cards-always">${model.released.map((r) => releasedRow(model, r))}</ul>
+    </section>
+  `;
 }
 
 // ---- jobs -------------------------------------------------------------------------------------------

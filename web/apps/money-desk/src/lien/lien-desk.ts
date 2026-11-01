@@ -16,12 +16,14 @@ import { banner, type BannerView } from "../compliance/compliance-logic.js";
 import type { LienApi } from "./lien-api.js";
 import {
   canRelease,
+  canReleaseDue,
   canWrite,
   cosigners,
   groupDue,
   jobForm,
   mergeData,
   refusalWords,
+  releasedDueWords,
   releasedWords,
   renderedWords,
   syncWords,
@@ -30,7 +32,8 @@ import {
   TEMPLATE_KINDS,
 } from "./lien-logic.js";
 import { formatMoney } from "./lien-money.js";
-import { renderLiens, type DueModel, type LienTab, type LiensModel, type ReleaseModel } from "./lien-views.js";
+import { newKey } from "../ar/held-keys.js";
+import { renderLiens, type DueModel, type LienTab, type LiensModel, type ReleasedItem, type ReleaseModel } from "./lien-views.js";
 
 export interface LienHost {
   readonly repaint: () => void;
@@ -70,6 +73,11 @@ export class LienDesk {
   #viewing: LienDocument | null = null;
   #versions: LienDocument[] | null = null;
   #release: ReleaseModel | null = null;
+  // The Controller's release: the customer job being asked about, what was released on this visit, and the key of a
+  // press whose outcome is not known (kept, so a second press replays rather than releases twice).
+  #dueOpen = "";
+  #released: ReleasedItem[] = [];
+  readonly #dueKeys = new Map<string, string>();
   // The roster is read once, the first time a release opens, and kept.
   #people: IdentityStaffMember[] | null = null;
   #busy = false;
@@ -203,6 +211,20 @@ export class LienDesk {
         return true;
       case "li-release-confirm":
         void this.#confirmRelease();
+        return true;
+      case "li-due-open":
+        this.#dueOpen = id;
+        this.#clearMessages();
+        this.#reveal = "[data-due-panel]";
+        this.#host.repaint();
+        return true;
+      case "li-due-close":
+        this.#dueOpen = "";
+        this.#clearMessages();
+        this.#host.repaint();
+        return true;
+      case "li-due-confirm":
+        void this.#confirmDue();
         return true;
       case "li-render":
         void this.#render();
@@ -366,6 +388,35 @@ export class LienDesk {
     await this.#refresh();
   }
 
+  /** One press, one key. A key whose answer never came is kept for the next press; any answer ends it. */
+  async #confirmDue(): Promise<void> {
+    const group = this.#due.groups.find((g) => g.customerJobId === this.#dueOpen);
+    if (group === undefined || this.#busy || !canReleaseDue(this.#host.roleCode())) return;
+    const key = this.#dueKeys.get(group.customerJobId) ?? newKey();
+    this.#dueKeys.set(group.customerJobId, key);
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const answer = await this.#api.releaseDue(group.customerJobId, key);
+    this.#busy = false;
+    if (!answer.ok) {
+      if ((answer.status ?? 0) >= 400 && (answer.status ?? 0) < 500) this.#dueKeys.delete(group.customerJobId);
+      this.#error = refusalWords("due-release", answer.error, answer.status ?? 0);
+      this.#host.repaint();
+      await this.#refresh();
+      // A job that is no longer due has nothing left to ask about.
+      if (!this.#due.groups.some((g) => g.customerJobId === group.customerJobId && g.due)) this.#dueOpen = "";
+      this.#host.repaint();
+      return;
+    }
+    this.#dueKeys.delete(group.customerJobId);
+    const done = answer.value;
+    this.#notice = releasedDueWords(group.label, formatMoney(done.total_cents), done.items?.length ?? 0, done.replayed);
+    this.#released = [...(done.items ?? []).map((i) => ({ releaseId: i.release_id, invoiceNo: i.invoice_no, amountCents: i.amount_cents, label: group.label, reversed: false })), ...this.#released.filter((r) => !(done.items ?? []).some((i) => i.release_id === r.releaseId))];
+    this.#dueOpen = "";
+    await this.#refresh();
+  }
+
   async #loadDocs(): Promise<void> {
     if (this.#docJob === "") {
       this.#docs = [];
@@ -452,6 +503,9 @@ export class LienDesk {
       triage: this.#triage,
       aging: this.#aging,
       due: this.#due,
+      canReleaseDue: canReleaseDue(this.#host.roleCode()),
+      dueOpen: this.#due.groups.find((g) => g.customerJobId === this.#dueOpen) ?? null,
+      released: this.#released,
       branches: this.#branches,
       selectedJob: this.#selectedJob,
       newJob: this.#newJob,
