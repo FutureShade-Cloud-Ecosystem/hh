@@ -26,11 +26,17 @@ export const CLOSING_AFTER_MATCHING = "31,185.50";
 // the adjusted bank balance agrees with the ledger.
 export const CLOSING_WITH_OUTSTANDING = "31,005.50";
 
-/** The month before today, the way the desk and the stub cut it from the host's own clock. */
+/** The month before today in the house zone: the zone the stub (webServer TZ), the browser (use.timezoneId) and the
+ *  sign off gate all read, so the month never follows the runner's zone near a month's turn. */
 export function priorMonth(): { year: number; month: number; words: string } {
-  const before = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1);
-  const name = before.toLocaleString("en-US", { month: "long" });
-  return { year: before.getFullYear(), month: before.getMonth() + 1, words: `${name} ${before.getFullYear()}` };
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "numeric" }).formatToParts(new Date());
+  const year = Number(parts.find((p) => p.type === "year")!.value);
+  const month = Number(parts.find((p) => p.type === "month")!.value);
+  const index = year * 12 + (month - 1) - 1;
+  const py = Math.floor(index / 12);
+  const pm = (index % 12) + 1;
+  const name = new Date(Date.UTC(py, pm - 1, 1)).toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+  return { year: py, month: pm, words: `${name} ${py}` };
 }
 
 /** A statement date in the prior month, written the way the bank writes it. */

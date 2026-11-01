@@ -3,13 +3,19 @@ package bankrec
 import (
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
-// closedMonthDay answers a day inside the month before now's month, for the legs that plant a bank line in a
+// closedMonthDay answers a day inside the month before now's house month, for the legs that plant a bank line in a
 // month that has reached its end. It steps back from the first of now's month, never from now's own day of month:
 // on the 31st after a 30 day month that day normalizes into the current month (September 31 is October 1).
+//
+// The month is the dealer's house month, never the UTC one: for the evening hours of a month's last day
+// the UTC month has already turned while the house month is unfinished, and stepping back from the UTC
+// first lands in that unfinished month (the sign off gate then refuses it as not at month end yet).
 func closedMonthDay(now time.Time) time.Time {
-	u := now.UTC()
+	u := now.In(houseday.Location())
 	return time.Date(u.Year(), u.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 14)
 }
 
@@ -24,7 +30,10 @@ func TestClosedMonthDay_IsInTheMonthBeforeOnEveryDay(t *testing.T) {
 		{time.Date(2026, time.March, 31, 0, 0, 0, 0, time.UTC), time.February},
 		{time.Date(2026, time.March, 29, 0, 0, 0, 0, time.UTC), time.February},
 		{time.Date(2026, time.January, 15, 0, 0, 0, 0, time.UTC), time.December},
-		{time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC), time.June},
+		{time.Date(2026, time.July, 1, 12, 0, 0, 0, time.UTC), time.June},
+		// Half past UTC midnight on the 1st: the house zone is still on the previous month's last evening.
+		{time.Date(2026, time.November, 1, 0, 30, 0, 0, time.UTC), time.September},
+		{time.Date(2026, time.July, 1, 0, 30, 0, 0, time.UTC), time.May},
 	}
 	for _, c := range cases {
 		got := closedMonthDay(c.now)
