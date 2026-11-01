@@ -107,3 +107,26 @@ func TestIntegration_ARBalanceAtTodaysMidnightIsTheBooksAtMidnight(t *testing.T)
 		t.Fatalf("the tie figure at now moved %d, want 7000 (the invoice paid is settled, the late one is open)", d)
 	}
 }
+
+// The aging is a calendar date surface: its as of is a date, and today's date reads the current
+// state (the statement run, the worklist and the sweep all ask for today's date and mean now). It
+// does not share the tie figure's fault because nothing reads it at the month's end instant: the
+// close preflight asks only ARBalanceCents. This leg pins both readings side by side so a change
+// to either shows here.
+func TestIntegration_AgingAtTodaysDateReadsNowWhileTheTieAtMidnightRebuilds(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+	cust, midnight, base, _ := midnightWorld(t, pool, repo)
+
+	if got := agingTotalForCustomer(t, pool, midnight, cust); got != 7_000 {
+		t.Fatalf("the aging at today's date reads %d, want 7000 (a calendar date: today's date is the current state)", got)
+	}
+	tie, err := repo.ARBalanceCents(ctx, midnight, trentonBranch)
+	if err != nil {
+		t.Fatalf("read the tie figure at midnight: %v", err)
+	}
+	if d := tie - base; d != 10_000 {
+		t.Fatalf("the tie figure at midnight moved %d, want 10000", d)
+	}
+}
