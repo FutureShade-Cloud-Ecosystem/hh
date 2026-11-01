@@ -12,7 +12,9 @@
 // units of the measured weights in `partWeights`; the package's typecheck, node
 // tests and extra Playwright configs are one more unit (part 0, weight
 // `extras`) so no part carries them on top of its share. The evening guard's two date sensitive
-// specs are one more unit, run under TZ=America/Toronto.
+// specs are one more unit, run under TZ=America/Toronto. The Work shell's
+// acceptance suite on the assembled real bundles (WS_DIST) is another: it
+// assembles tauri/hh-work/dist, then runs the suite against it.
 //
 // Every shard validates every package first (the guards the old serial loop
 // had), so no assignment can hide a package from a guard.
@@ -23,6 +25,7 @@ import { fileURLToPath } from "node:url";
 
 export const DEFAULT_WEIGHT = 0.8;
 export const EVENING_GUARD = "evening-guard-web";
+export const WORK_SHELL_ASSEMBLED = "work-shell-assembled";
 export const BROWSER_PACKAGE = "design-system";
 
 // Minutes of runner time per unit, read from the per unit timestamps of the
@@ -53,6 +56,7 @@ export const WEIGHTS = {
   "shell-chrome": 0.1,
   "work-offline": 0.1,
   [EVENING_GUARD]: 3.7,
+  [WORK_SHELL_ASSEMBLED]: 1.0, // local figure: 6 s assemble plus 46 s suite; replace with the runner's
 };
 // Playwright's --shard=k/m deals whole test files out, and a part's time
 // moves several minutes between runs with the files it holds (measured: the
@@ -122,6 +126,7 @@ export function buildUnits(pkgs, weights, splits) {
     }
   }
   units.push({ id: EVENING_GUARD, pkg: EVENING_GUARD, part: 1, parts: 1, weight: weights[EVENING_GUARD] ?? DEFAULT_WEIGHT });
+  units.push({ id: WORK_SHELL_ASSEMBLED, pkg: WORK_SHELL_ASSEMBLED, part: 1, parts: 1, weight: weights[WORK_SHELL_ASSEMBLED] ?? DEFAULT_WEIGHT });
   return units;
 }
 
@@ -169,6 +174,19 @@ function runUnit(unit, pkgByName) {
     const env = { TZ: "America/Toronto" };
     run("npx --no-install playwright test test/run-sheet.pw.ts", join(webRoot, "apps/drive-run"), env);
     run("npx --no-install playwright test test/sale.pw.ts", join(webRoot, "apps/counter-till"), env);
+    return 1;
+  }
+  if (unit.pkg === WORK_SHELL_ASSEMBLED) {
+    // The only gate on the framed band, the framed account menu and the framed
+    // sign out: the same acceptance suite, on the real desk bundles the host
+    // frames. Without --config Playwright would pick up the node unit files.
+    const repoRoot = join(webRoot, "..");
+    run("bash tauri/hh-work/assemble-dist.sh", repoRoot);
+    run(
+      "npx --no-install playwright test --config test/acceptance.config.ts",
+      join(webRoot, "apps/work-shell"),
+      { WS_DIST: join(repoRoot, "tauri/hh-work/dist") },
+    );
     return 1;
   }
   const pkg = pkgByName.get(unit.pkg);
