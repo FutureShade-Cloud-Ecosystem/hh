@@ -126,6 +126,7 @@ func (w *ja4World) cleanup(t *testing.T) {
 		{"payments", `DELETE FROM payments WHERE customer_id = $1::uuid`},
 		{"customer_transactions", `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`},
 		{"finance_charge_runs", `DELETE FROM finance_charge_runs WHERE customer_id = $1::uuid`},
+		{"credit_application_keys", `DELETE FROM credit_application_keys WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`},
 		{"invoice_lines", `DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`},
 		{"invoices", `DELETE FROM invoices WHERE customer_id = $1::uuid`},
 		{"customer_jobs", `DELETE FROM customer_jobs WHERE customer_id = $1::uuid`},
@@ -631,4 +632,35 @@ func TestIntegration_JA4Doors_MemoChargeReceiptBouncePast(t *testing.T) {
 		ja4Want(t, c.label, w.agree(t, c.label, c.at), w, c.a, c.b, c.x)
 		w.tie(t, c.label, c.at)
 	}
+}
+
+// TestIntegration_JA4Doors_CreditApplyAcrossJobs (P2-1, the credit rows): a credit memo issued on job
+// A's invoice is applied through the real apply door to job B's invoice with a staff reason, then the
+// application is reversed through the real reverse door. Job A's lines show neither job B's invoice
+// number nor the reason (agree runs the words check at every step), and the statement still equals the
+// aging per job.
+func TestIntegration_JA4Doors_CreditApplyAcrossJobs(t *testing.T) {
+	w := ja4PlantFresh(t, "ja4credit")
+	w.ageInvoices(t, 90)
+	soon := time.Now().Add(time.Hour)
+	memoID := w.memo(t, w.invA, 4000, "ja4-credit-memo-"+w.cust)
+	ja4Want(t, "after the memo", w.agree(t, "after the memo", soon), w, 26000, 20000, 10000)
+
+	app, err := w.bill.ApplyCredit(context.Background(), billing.ApplyCreditInput{
+		CustomerID: w.cust, CreditKind: billing.CreditKindMemo, CreditID: memoID, InvoiceID: w.invB,
+		AmountCents: 4000, Reason: ja4Reason, IdempotencyKey: "ja4-credit-apply-" + w.cust, OrgID: cmRoundNorthOrg,
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("the credit apply door: %v", err)
+	}
+	w.agree(t, "after the credit applied to job B", soon)
+	w.tie(t, "after the credit applied to job B", soon)
+
+	if _, err := w.bill.ReverseCreditApplication(context.Background(), billing.ReverseCreditApplicationInput{
+		InvoiceID: w.invB, ApplicationID: app.ApplicationID, Reason: ja4Reason, OrgID: cmRoundNorthOrg,
+	}, time.Now()); err != nil {
+		t.Fatalf("the credit reverse door: %v", err)
+	}
+	ja4Want(t, "after the application is reversed", w.agree(t, "after the application is reversed", soon), w, 26000, 20000, 10000)
+	w.tie(t, "after the application is reversed", soon)
 }

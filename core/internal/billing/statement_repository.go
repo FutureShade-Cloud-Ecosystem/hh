@@ -729,8 +729,12 @@ func (r *Repository) RecordPaylinkDelivery(ctx context.Context, row PaylinkDeliv
 // ("Returned payment", "Payment voided", "Payment reversed", "Payment applied") and never a blank, which
 // would fall back to "Payment received, thank you".
 //
-// A credit memo's row on a job carries its reason in brackets after its number and the invoice it
-// reverses (the same job's); the job's line reads the number and the invoice without the reason.
+// The same holds for the rows a credit writes on a job (P2-1): a credit application row names the
+// invoice it was applied to (which may sit on another job) and the clerk's reason, and a credit memo
+// row carries its reason in brackets. A job's line reads the fixed words of the act ("Credit applied",
+// "Credit memo applied", "Credit application reversed", "Credit memo restored") or the memo's number
+// and the invoice it reverses (the same job's) without the reason. Account level lines keep the ledger
+// words, as the plain statement does.
 //
 // Each act reads as one line per job, dated at the act's first ledger row, and the act's ledger sum
 // less its shares is left at account level (the unapplied part).
@@ -791,8 +795,13 @@ const statementByJobTail = `
 			    ON sh.act_type = ac.act_type AND sh.src_ref = ac.src_ref
 		), parts AS (
 			SELECT a.occurred_at, a.created_at, a.txn_type, a.amount_cents, a.invoice_no,
-			       CASE WHEN a.job_id IS NOT NULL AND a.src_type = 'invoice' AND a.txn_type = 'CREDIT_MEMO'
-			            THEN split_part(a.memo, ' (', 1) ELSE a.memo END AS memo,
+			       CASE WHEN a.job_id IS NULL THEN a.memo
+			            WHEN a.src_type = 'invoice' AND a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit memo applied: %' THEN 'Credit memo applied'
+			            WHEN a.src_type = 'invoice' AND a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit applied to %' THEN 'Credit applied'
+			            WHEN a.src_type = 'invoice' AND a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit application reversed: %' THEN 'Credit application reversed'
+			            WHEN a.src_type = 'invoice' AND a.txn_type = 'ADJUSTMENT' AND a.memo LIKE 'credit memo restored: %' THEN 'Credit memo restored'
+			            WHEN a.src_type = 'invoice' AND a.txn_type = 'CREDIT_MEMO' THEN split_part(a.memo, ' (', 1)
+			            ELSE a.memo END AS memo,
 			       a.job_id
 			  FROM activity a
 			 WHERE NOT EXISTS (SELECT 1 FROM paytxn p WHERE p.src_id = a.src_id)
