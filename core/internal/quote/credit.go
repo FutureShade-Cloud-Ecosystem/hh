@@ -115,6 +115,9 @@ type creditFacts struct {
 	TotalCents       int64
 	CreditLimitCents int64
 	OpenBalanceCents int64
+	// JobID is the job the converted order is opened on (JA-3), "" when none: the gate then also
+	// checks the job's own limit.
+	JobID string
 }
 
 // convertCreditFacts reads the quote's money + the customer's account posture INSIDE the convert
@@ -165,7 +168,7 @@ func (r *Repository) checkCredit(ctx context.Context, tx pgx.Tx, f creditFacts, 
 	// The gate runs INSIDE the conversion's transaction, which holds the quote row and one pool
 	// connection. Its hold read joins this transaction (till.WithCallerTx) instead of asking the pool
 	// for a second connection: at a small pool that second ask is a cycle Postgres cannot see.
-	ctx = till.WithCallerTx(ctx, tx)
+	ctx = till.WithSaleJob(till.WithCallerTx(ctx, tx), f.JobID)
 	blk := r.creditGate().Check(ctx, f.CustomerID, f.TotalCents, f.OpenBalanceCents, f.CreditLimitCents, termsAreCredit, f.BranchID, false)
 	if blk == nil {
 		return nil
@@ -183,8 +186,13 @@ func (r *Repository) checkCredit(ctx context.Context, tx pgx.Tx, f creditFacts, 
 		data[k] = v
 	}
 	data["order_total"] = money(f.TotalCents)
-	data["credit_limit"] = money(f.CreditLimitCents)
-	data["open_balance"] = money(f.OpenBalanceCents)
+	// A refusal that names its limit (JA-3: "limit_scope" job or customer) already carries the figures
+	// of THAT limit and of the exposure the gate read, so they are kept; the facts read above are the
+	// customer's ledger alone and would overwrite a job's.
+	if _, scoped := data["limit_scope"]; !scoped {
+		data["credit_limit"] = money(f.CreditLimitCents)
+		data["open_balance"] = money(f.OpenBalanceCents)
+	}
 	annotated.Data = data
 	return ErrCreditBlocked{Blocked: &annotated}
 }
@@ -228,13 +236,19 @@ func CreditRefusalMessage(e ErrCreditBlocked) string {
 	var lead string
 	switch b.Policy {
 	case identity.PolicyCredit:
-		lead = "this order is over the customer's credit limit"
+		// JA-3: a refusal names WHICH limit it broke. The job's own limit is said as the job's, never
+		// as the customer's.
+		who, against, owing := "the customer's", "a", "already owing or on order"
+		if b.Data["limit_scope"] == till.LimitScopeJob {
+			who, against, owing = "the job's own", "the job's own", "already on the job"
+		}
+		lead = "this order is over " + who + " credit limit"
 		if !e.PositionWithheld {
 			if total, ok := b.Data["order_total"]; ok {
 				if limit, ok2 := b.Data["credit_limit"]; ok2 {
-					lead = fmt.Sprintf("this order is %s against a %s credit limit", total, limit)
+					lead = fmt.Sprintf("this order is %s against %s %s credit limit", total, against, limit)
 					if bal, ok3 := b.Data["open_balance"]; ok3 && bal != "$0.00" {
-						lead += fmt.Sprintf(" with %s already owing", bal)
+						lead += fmt.Sprintf(" with %s %s", bal, owing)
 					}
 				}
 			}

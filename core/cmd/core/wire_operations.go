@@ -185,7 +185,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// has landed. The pin wired the SAME gate instance the POS ring uses;
 	// POS is unlanded, so this is the gate's first wired consumer in the
 	// target, on the quote repository the money batch serves.
-	spine.quoteRepo.WithCreditGate(till.NewHoldAwareCreditGate(tillRepo))
+	spine.quoteRepo.WithCreditGate(newCreditGate(pool, tillRepo))
 
 	// A-02 (W5): bank reconciliation over the till repository's payment
 	// and lodgement reads, posting clearing journals through the GL.
