@@ -19,6 +19,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
@@ -99,7 +100,9 @@ func (o fw11SingleOutbox) ProcessBatch(ctx context.Context, _ int, settle func(c
 func TestIntegration_FW1_11_CreditMemoThroughRealWriterSubtractsOnce(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
-	now := time.Now()
+	// The period is the house month, as the documents below are dated on the house day; the
+	// process zone (UTC on CI) is a month ahead from 20:00 Toronto on a month's last day.
+	now := time.Now().In(houseday.Location())
 	year, month := now.Year(), int(now.Month())
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO fiscal_periods (year, month) VALUES ($1, $2) ON CONFLICT (year, month) DO NOTHING`,
@@ -211,7 +214,9 @@ func TestIntegration_FW1_11_CreditMemoThroughRealWriterSubtractsOnce(t *testing.
 func TestIntegration_FW1_11_POSReturnThroughRealWriterLandsOnReturnsAndTies(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
-	now := time.Now()
+	// The period is the house month, as the documents below are dated on the house day; the
+	// process zone (UTC on CI) is a month ahead from 20:00 Toronto on a month's last day.
+	now := time.Now().In(houseday.Location())
 	year, month := now.Year(), int(now.Month())
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO fiscal_periods (year, month) VALUES ($1, $2) ON CONFLICT (year, month) DO NOTHING`,
@@ -382,7 +387,9 @@ func TestIntegration_FW1_11_POSReturnThroughRealWriterLandsOnReturnsAndTies(t *t
 func TestIntegration_FW1_11_MarkedOpeningInvoiceIsExcludedAndListed(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
-	now := time.Now()
+	// The period is the house month, as the documents below are dated on the house day; the
+	// process zone (UTC on CI) is a month ahead from 20:00 Toronto on a month's last day.
+	now := time.Now().In(houseday.Location())
 	year, month := now.Year(), int(now.Month())
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO fiscal_periods (year, month) VALUES ($1, $2) ON CONFLICT (year, month) DO NOTHING`,
@@ -449,7 +456,9 @@ func TestIntegration_FW1_11_MarkedOpeningInvoiceIsExcludedAndListed(t *testing.T
 func TestIntegration_FW1_11_UnpostedInvoiceWithoutTheMarkerStillShowsAsVariance(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
-	now := time.Now()
+	// The period is the house month, as the documents below are dated on the house day; the
+	// process zone (UTC on CI) is a month ahead from 20:00 Toronto on a month's last day.
+	now := time.Now().In(houseday.Location())
 	year, month := now.Year(), int(now.Month())
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO fiscal_periods (year, month) VALUES ($1, $2) ON CONFLICT (year, month) DO NOTHING`,
