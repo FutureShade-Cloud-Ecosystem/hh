@@ -253,10 +253,18 @@ func statementLineDate(zone houseday.Zone, at time.Time) time.Time { return hous
 // fixed words; a payment number is digits from its sequence.
 const stmtDocNo = `#?(?:INV|CM)-\d+`
 
+// stmtOrderNo is an order number: the legacy '#SO-n' or the branch coded '#SO-TRT-n' (migration 0087).
+const stmtOrderNo = `#?SO-(?:[A-Z0-9]+-)?\d+`
+
 var (
 	// safeMemoShapes are memos that carry only the account's own document numbers and fixed words.
 	safeMemoShapes = []*regexp.Regexp{
 		regexp.MustCompile(`^NSF fee$`),
+		regexp.MustCompile(`^NSF fee payment$`),
+		regexp.MustCompile(`^Supplier deposit ` + stmtDocNo + ` (closed|credited back) on the order's cancel$`),
+		// The invoice writer's own system memos for an order (never the clerk's `#INV-n, <memo>` shape).
+		regexp.MustCompile(`^` + stmtDocNo + `, order ` + stmtOrderNo + `$`),
+		regexp.MustCompile(`^` + stmtDocNo + `, progress invoice for order ` + stmtOrderNo + ` \(\d+ shipment group\(s\)\)$`),
 		regexp.MustCompile(`^(voided receipt|reversal|NSF reversal): early payment discount given back$`),
 		regexp.MustCompile(`^early payment discount \(\d+\)$`),
 		regexp.MustCompile(`^overpaid receipt left on account \(\d+\)$`),
