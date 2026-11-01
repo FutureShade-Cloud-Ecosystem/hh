@@ -876,6 +876,15 @@ func TestIntegration_JA4Doors_PlantedSupplierDepositReadsFixed(t *testing.T) {
 	ja4Has(t, d, "Adjustment")
 }
 
+// TestIntegration_JA4Doors_EarlyPaymentDiscountReadsItsWords (P061 fix round 3, P3-2).
+func TestIntegration_JA4Doors_EarlyPaymentDiscountReadsItsWords(t *testing.T) {
+	w := ja4Plant(t)
+	w.ja4PlantRow(t, "ADJUSTMENT", -222, "early payment discount (PAY-777)")
+	d := w.ja4JobADescriptions(t, "discount", time.Now().Add(time.Hour))
+	ja4NoneReads(t, d, "PAY-777")
+	ja4Has(t, d, "Early payment discount")
+}
+
 func (w *ja4World) invoiceNo(t *testing.T, id string) string {
 	t.Helper()
 	var no string
