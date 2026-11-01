@@ -4,6 +4,7 @@ package lien
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -20,9 +21,21 @@ func TestIntegration_RT3Fix2_ALinkedJobsTriageFollowsThePreservationRule(t *test
 	}
 	day := func(n int) string { return time.Now().AddDate(0, 0, -n).Format("2006-01-02") }
 
+	cases := 0
 	plant := func(perfDaysAgo int, preserved bool) string {
+		// Each case sits on a customer job of its own: the badge judges every lien job linked to the job
+		// together (fix 3), so cases sharing a job would read as one.
+		cases++
+		var cj string
+		if err := w.pool.QueryRow(ctx,
+			`INSERT INTO customer_jobs (customer_id, branch_id, job_no, name, status, ship_to_address)
+			 VALUES ($1, $2, $3, 'RT3F2 triage job', 'OPEN', '{}'::jsonb) RETURNING id::text`,
+			w.customerA, w.branchA, fmt.Sprintf("J-TRI%d-%s", cases, w.tag)).Scan(&cj); err != nil {
+			t.Fatalf("plant a customer job: %v", err)
+		}
+		t.Cleanup(func() { rt1Del(t, w.pool, "customer_jobs", "id = $1", cj) })
 		lj := w.lienJob(t, w.customerA, w.branchA)
-		if _, err := w.svc.LinkCustomerJob(mgr, lj, w.jobOnSiteON); err != nil {
+		if _, err := w.svc.LinkCustomerJob(mgr, lj, cj); err != nil {
 			t.Fatalf("link: %v", err)
 		}
 		if _, err := w.pool.Exec(ctx, `UPDATE lien_jobs SET substantial_perf_date = $2::date WHERE id = $1::uuid`, lj, day(perfDaysAgo)); err != nil {
