@@ -144,7 +144,7 @@ test("the General Manager releases a holdback: the co-signer is picked from the 
   await expect(panel).toBeFocused();
   const options = panel.getByLabel("Co-signer").locator("option");
   await expect(options).toHaveText(["Pick a co-signer", "Financial Controller (demo)", "Payables and Receivables (demo)", "Payables and Receivables (former, demo)"]);
-  await expect(panel.locator("[data-confirm-words]")).toHaveText("Release $18,600.00 held on job GLS-2101. This posts a journal to the ledger.");
+  await expect(panel.locator("[data-confirm-words]")).toHaveText(nb("Release $18,600.00 held on job GLS-2101. This posts a journal to the ledger."));
   // No co-signer yet: the press is refused in words and nothing is sent.
   await panel.getByRole("button", { name: "Confirm release" }).click();
   await expect(page.locator("[data-error]")).toHaveText("Pick the co-signer who reviewed this release.");
