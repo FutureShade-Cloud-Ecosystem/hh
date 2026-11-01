@@ -98,7 +98,9 @@ import (
 //
 // W3 FC-1b moved it to 111: billingListFinanceCharges (GET /api/v1/ar/finance-charges) joined the page
 // shapes; it needs a branch_id query the census does not send, so it sits on the uncovered list too.
-const shapeCensusWantPages = 111
+//
+// W3 FC-1c moved it to 112: billingListFinanceJobs (GET /api/v1/ar/finance-jobs) joined the page shapes.
+const shapeCensusWantPages = 112
 
 // shapeCensusAllowlist names (per the brief) the page shape operations
 // whose served answer already breaks the page shape, each with the reason

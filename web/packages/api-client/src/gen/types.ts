@@ -1352,6 +1352,21 @@ export type BillingFinanceChargeRunList = {
   items: BillingFinanceChargeRunMonth[];
   next_cursor: string | null;
 };
+export type BillingFinanceJobEnabledRequest = {
+  enabled: boolean;
+};
+export type BillingFinanceJob = {
+  name: string;
+  enabled: boolean;
+  next_run_at?: string;
+  last_run_at?: string;
+  last_status?: string;
+  last_error?: string;
+};
+export type BillingFinanceJobList = {
+  items: BillingFinanceJob[];
+  next_cursor: string | null;
+};
 export type BillingFinanceChargeWaiverRequest = {
   reason: string;
 };

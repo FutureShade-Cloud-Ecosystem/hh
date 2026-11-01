@@ -1542,6 +1542,24 @@ type BillingFinanceChargeRunList struct {
 	NextCursor *string                        `json:"next_cursor"`
 }
 
+type BillingFinanceJobEnabledRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+type BillingFinanceJob struct {
+	Name       string     `json:"name"`
+	Enabled    bool       `json:"enabled"`
+	NextRunAt  *time.Time `json:"next_run_at,omitempty"`
+	LastRunAt  *time.Time `json:"last_run_at,omitempty"`
+	LastStatus *string    `json:"last_status,omitempty"`
+	LastError  *string    `json:"last_error,omitempty"`
+}
+
+type BillingFinanceJobList struct {
+	Items      []BillingFinanceJob `json:"items"`
+	NextCursor *string             `json:"next_cursor"`
+}
+
 type BillingFinanceChargeWaiverRequest struct {
 	Reason string `json:"reason"`
 }

@@ -34,6 +34,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -74,6 +75,11 @@ type FinanceChargeService struct {
 	w       *InvoiceWriter
 	waivers *FinanceChargeWaiverService
 	repo    *Repository
+
+	// The finance job door (FC-1c): the jobs store, the names it may touch and the recorder.
+	jobs     FinanceJobStore
+	jobNames []string
+	jobAudit audit.Recorder
 }
 
 // NewFinanceChargeService wires the door. The writer carries the audit recorder the press is recorded
@@ -223,6 +229,8 @@ func (h *FinanceChargeRouteHandler) WithUserLinker(link identity.UserIDLinker) *
 func (h *FinanceChargeRouteHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/ar/finance-charges", g.RequireAdmin(h.staff(h.press)))
 	r.Handle("GET /api/v1/ar/finance-charges", g.RequireAdmin(h.staff(h.list)))
+	r.Handle("GET /api/v1/ar/finance-jobs", g.RequireAdmin(h.staff(h.jobsList)))
+	r.Handle("PUT /api/v1/ar/finance-jobs/{name}", g.RequireAdmin(h.staff(h.jobSet)))
 	r.Handle("PUT /api/v1/ar/customers/{customerID}/finance-charge-waiver", g.RequireAdmin(h.staff(h.waive)))
 	r.Handle("POST /api/v1/ar/customers/{customerID}/finance-charge-waiver/clear", g.RequireAdmin(h.staff(h.clear)))
 }
@@ -269,6 +277,37 @@ func (h *FinanceChargeRouteHandler) list(w http.ResponseWriter, r *http.Request,
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil})
 }
 
+func (h *FinanceChargeRouteHandler) jobsList(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	items, err := h.svc.Jobs(r.Context())
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil})
+}
+
+type financeJobBody struct {
+	Enabled *bool `json:"enabled"`
+}
+
+func (h *FinanceChargeRouteHandler) jobSet(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	var in financeJobBody
+	if err := decode(r, &in); err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if in.Enabled == nil {
+		h.writeErr(w, httpx.BadRequestf("billing: enabled is required, true to switch the job on or false to switch it off"))
+		return
+	}
+	view, err := h.svc.SetJobEnabled(r.Context(), r.PathValue("name"), *in.Enabled)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, view)
+}
+
 type financeChargeWaiverBody struct {
 	Reason string `json:"reason"`
 }
@@ -305,11 +344,16 @@ func (h *FinanceChargeRouteHandler) waiver(w http.ResponseWriter, r *http.Reques
 // writeErr maps a refusal to its status and words.
 func (h *FinanceChargeRouteHandler) writeErr(w http.ResponseWriter, err error) {
 	var bad httpx.BadRequestError
+	var missing httpx.NotFoundError
 	var notEnded *FinanceChargeMonthNotEndedError
 	var role *FinanceChargeWaiverRoleError
 	switch {
 	case errors.As(err, &bad):
 		httpx.Error(w, http.StatusBadRequest, bad.Error())
+	case errors.As(err, &missing):
+		httpx.Error(w, http.StatusNotFound, missing.Error())
+	case errors.Is(err, ErrFinanceJobsNotWired):
+		httpx.Error(w, http.StatusServiceUnavailable, ErrFinanceJobsNotWired.Error())
 	case errors.Is(err, errBodyNotJSON):
 		httpx.Error(w, http.StatusBadRequest, errBodyNotJSON.Error())
 	case errors.Is(err, ErrFinanceChargeWaiverReasonRequired):

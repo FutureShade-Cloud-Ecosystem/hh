@@ -512,6 +512,11 @@ func newUUID() string {
 // here is dropped before persistence, a caller cannot smuggle a cleartext field into changes by
 // inventing a new key. These are all coarse-grained, already-masked, or code-shaped fields.
 var allowedExtraKeys = map[string]bool{
+	// The finance job door's record (billing/finance_job_door.go): the job's schedule name (a dotted
+	// word well under the redaction threshold) and the enabled flag before and after (bools).
+	"job":             true,
+	"enabled_from":    true,
+	"enabled_to":      true,
 	"tax_reason_code": true, // e.g. ON_FN_POS_8 (US-C1), a code, not an identifier
 	"ref_type":        true, // signature/evidence ref kind, not the bytes (US-C2)
 	"variance_grain":  true, // masked till-variance magnitude band (US-C3)

@@ -253,3 +253,77 @@ type RunRecord struct {
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	FinishedAt  *time.Time `json:"finished_at,omitempty"`
 }
+
+// ErrNoSuchSchedule is the answer for a schedule name with no job_schedules row.
+var ErrNoSuchSchedule = errors.New("jobs: no schedule row with that name")
+
+// ScheduleChange is the caller's record of a schedule edit, run on the edit's own transaction so the
+// edit and its record commit or roll back together. A returned error aborts the edit.
+type ScheduleChange func(ctx context.Context, tx pgx.Tx, from, to Schedule) error
+
+// SchedulesNamed returns the named schedules, in name order. A name with no row is simply absent.
+func (r *Repository) SchedulesNamed(ctx context.Context, names []string) ([]Schedule, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+scheduleColumns+` FROM job_schedules WHERE name = ANY($1::text[]) ORDER BY name`, names)
+	if err != nil {
+		return nil, fmt.Errorf("jobs: read schedules: %w", err)
+	}
+	defer rows.Close()
+	out := []Schedule{}
+	for rows.Next() {
+		s, err := scanSchedule(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// SetEnabled turns one named schedule on or off and answers the row before and after. Turning it on
+// gives it its next slot from now when it has none or its slot is already past, so a running worker
+// claims it on the tick that finds the slot due, with no restart and no burst for an old stamp; a slot
+// still in the future is kept. Turning it off only clears the flag: ClaimDue never claims a disabled
+// row. record, when given, runs on the same transaction before commit.
+func (r *Repository) SetEnabled(ctx context.Context, name string, enabled bool, now time.Time, record ScheduleChange) (Schedule, Schedule, error) {
+	if r.pool == nil {
+		return Schedule{}, Schedule{}, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Schedule{}, Schedule{}, fmt.Errorf("jobs: begin schedule edit: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	from, err := scanSchedule(tx.QueryRow(ctx,
+		`SELECT `+scheduleColumns+` FROM job_schedules WHERE name = $1 FOR UPDATE`, name))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Schedule{}, Schedule{}, fmt.Errorf("%w: %s", ErrNoSuchSchedule, name)
+	}
+	if err != nil {
+		return Schedule{}, Schedule{}, fmt.Errorf("jobs: read schedule %q: %w", name, err)
+	}
+	next := from.NextRunAt
+	if enabled && (next == nil || !next.After(now)) {
+		n := nextRun(from, now, nil)
+		next = &n
+	}
+	to, err := scanSchedule(tx.QueryRow(ctx,
+		`UPDATE job_schedules SET enabled = $2, next_run_at = $3, updated_at = now() WHERE id = $1
+		 RETURNING `+scheduleColumns, from.ID, enabled, next))
+	if err != nil {
+		return Schedule{}, Schedule{}, fmt.Errorf("jobs: edit schedule %q: %w", name, err)
+	}
+	if record != nil {
+		if err := record(ctx, tx, from, to); err != nil {
+			return Schedule{}, Schedule{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Schedule{}, Schedule{}, fmt.Errorf("jobs: commit schedule edit: %w", err)
+	}
+	return from, to, nil
+}

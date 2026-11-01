@@ -45,10 +45,11 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 	// reportingExportSavedReportCsv), and W3-RT1's five holdback rule doors
 	// (lienListProvinceRules, lienGetJobHoldbackRule, lienSetDealerHoldbackOverride, lienSetJobHoldbackOverride and lienLinkCustomerJob), and FX-2b's three AP revaluation doors
 	// (purchasingRunAPRevaluation, purchasingReverseAPRevaluation and purchasingListAPRevaluations), and FC-1b's four finance charge doors
-	// (billingRunFinanceCharges, billingListFinanceCharges, billingSetFinanceChargeWaiver and billingClearFinanceChargeWaiver). Both sides'
+	// (billingRunFinanceCharges, billingListFinanceCharges, billingSetFinanceChargeWaiver and billingClearFinanceChargeWaiver), and FC-1c's two finance job doors
+	// (billingListFinanceJobs and billingSetFinanceJobEnabled). Both sides'
 	// routes are kept; the count is what merge.mjs reports on the assembled document.
-	if staff != 744 {
-		t.Fatalf("census staff operations: %d, want the document's 744", staff)
+	if staff != 746 {
+		t.Fatalf("census staff operations: %d, want the document's 746", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }
