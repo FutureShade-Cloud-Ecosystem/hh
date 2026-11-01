@@ -24,6 +24,8 @@ import {
   mergeData,
   refusalWords,
   releasedDueWords,
+  reverseForm,
+  reversedWords,
   releasedWords,
   renderedWords,
   syncWords,
@@ -76,6 +78,7 @@ export class LienDesk {
   // The Controller's release: the customer job being asked about, what was released on this visit, and the key of a
   // press whose outcome is not known (kept, so a second press replays rather than releases twice).
   #dueOpen = "";
+  #reversing = "";
   #released: ReleasedItem[] = [];
   readonly #dueKeys = new Map<string, string>();
   // The roster is read once, the first time a release opens, and kept.
@@ -225,6 +228,20 @@ export class LienDesk {
         return true;
       case "li-due-confirm":
         void this.#confirmDue();
+        return true;
+      case "li-reverse-open":
+        this.#reversing = id;
+        this.#clearMessages();
+        this.#reveal = "[data-reverse-panel]";
+        this.#host.repaint();
+        return true;
+      case "li-reverse-close":
+        this.#reversing = "";
+        this.#clearMessages();
+        this.#host.repaint();
+        return true;
+      case "li-reverse-confirm":
+        void this.#confirmReverse();
         return true;
       case "li-render":
         void this.#render();
@@ -417,6 +434,34 @@ export class LienDesk {
     await this.#refresh();
   }
 
+  async #confirmReverse(): Promise<void> {
+    const item = this.#released.find((r) => r.releaseId === this.#reversing);
+    if (item === undefined || this.#busy || !canReleaseDue(this.#host.roleCode())) return;
+    const form = reverseForm(this.#host.field("reverse_reason"));
+    this.#clearMessages();
+    if (!form.ok) {
+      this.#error = form.words;
+      this.#host.repaint();
+      return;
+    }
+    this.#busy = true;
+    this.#host.repaint();
+    const answer = await this.#api.reverseRelease(item.releaseId, form.reason);
+    this.#busy = false;
+    const gone = answer.ok || (answer.status === 409 && answer.error.includes("already been reversed"));
+    if (gone) this.#released = this.#released.map((r) => (r.releaseId === item.releaseId ? { ...r, reversed: true } : r));
+    if (!answer.ok) {
+      this.#error = refusalWords("due-release", answer.error, answer.status ?? 0);
+      if (gone) this.#reversing = "";
+      this.#host.repaint();
+      if (gone) await this.#refresh();
+      return;
+    }
+    this.#notice = reversedWords(item.invoiceNo, formatMoney(answer.value.restored_cents));
+    this.#reversing = "";
+    await this.#refresh();
+  }
+
   async #loadDocs(): Promise<void> {
     if (this.#docJob === "") {
       this.#docs = [];
@@ -506,6 +551,7 @@ export class LienDesk {
       canReleaseDue: canReleaseDue(this.#host.roleCode()),
       dueOpen: this.#due.groups.find((g) => g.customerJobId === this.#dueOpen) ?? null,
       released: this.#released,
+      reversing: this.#released.find((r) => r.releaseId === this.#reversing) ?? null,
       branches: this.#branches,
       selectedJob: this.#selectedJob,
       newJob: this.#newJob,

@@ -83,6 +83,7 @@ export interface LiensModel {
   readonly canReleaseDue: boolean;
   readonly dueOpen: DueGroup | null;
   readonly released: readonly ReleasedItem[];
+  readonly reversing: ReleasedItem | null;
   readonly branches: readonly Branch[];
   readonly selectedJob: string | null;
   readonly newJob: boolean;
@@ -243,7 +244,7 @@ function dueTab(model: LiensModel): TemplateResult {
                   `}
             `}
       </section>
-      <div>${model.dueOpen === null ? nothing : duePanel(model, model.dueOpen)}${releasedList(model)}</div>
+      <div>${model.dueOpen === null ? nothing : duePanel(model, model.dueOpen)}${model.reversing === null ? nothing : reversePanel(model, model.reversing)}${releasedList(model)}</div>
     </div>
   `;
 }
@@ -263,6 +264,25 @@ function duePanel(model: LiensModel, g: DueGroup): TemplateResult {
       <div class="li-actions">
         <button type="button" class="btn btn-primary" data-action="li-due-confirm" ?disabled=${model.busy}>Confirm release</button>
         <button type="button" class="btn btn-secondary" data-action="li-due-close">Cancel</button>
+      </div>
+    </section>
+  `;
+}
+
+/** The reversal asks first, with the invoice and the amount, and will not go without a reason. */
+function reversePanel(model: LiensModel, r: ReleasedItem): TemplateResult {
+  return html`
+    <section class="li-panel" data-reverse-panel tabindex="-1" role="region" aria-label="Reverse release">
+      <div class="li-panel-head"><h2>Reverse release</h2></div>
+      <dl class="li-facts">
+        <dt>Invoice</dt><dd>${r.invoiceNo}</dd>
+        <dt>Released</dt><dd>${formatMoney(r.amountCents)} on ${r.label}</dd>
+      </dl>
+      <p class="li-confirm" data-confirm-words>Reverse the release of ${r.invoiceNo}. ${formatMoney(r.amountCents)} goes back to being held on the invoice and a reversing journal is posted to the ledger.</p>
+      <label class="li-field">Reason<textarea data-field="reverse_reason" aria-label="Reason" rows="3"></textarea></label>
+      <div class="li-actions">
+        <button type="button" class="btn btn-primary" data-action="li-reverse-confirm" ?disabled=${model.busy}>Reverse release</button>
+        <button type="button" class="btn btn-secondary" data-action="li-reverse-close">Cancel</button>
       </div>
     </section>
   `;
