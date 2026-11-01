@@ -396,6 +396,7 @@ export interface DueGroup {
   readonly rows: readonly BillingHoldbackDueRow[];
   readonly label: string;
   readonly lienJobNo: string;
+  readonly customerName: string;
   readonly due: boolean;
   readonly kind: string;
   readonly reason: string;
@@ -426,6 +427,7 @@ export function groupDue(rows: readonly BillingHoldbackDueRow[]): DueGroup[] {
       rows: mine,
       label: lienJobNo !== "" ? `lien job ${lienJobNo}` : `the customer job with ${mine.map((r) => r.invoice_no).join(", ")}`,
       lienJobNo,
+      customerName: first.customer_name ?? "",
       due: first.due,
       kind: first.blocked_kind ?? "",
       reason: first.blocked_reason ?? "",
@@ -469,7 +471,8 @@ export function dueTone(g: DueGroup): Tone {
 export function dueConfirmWords(g: DueGroup, total: string | null, about: string): string {
   const invoices = g.rows.map((r) => `${r.invoice_no} (${formatMoney(r.holdback_cents)})`).join(", ");
   const count = `${g.rows.length} ${g.rows.length === 1 ? "invoice" : "invoices"}`;
-  const who = about === "" ? g.label : `${about}, ${g.label}`;
+  const place = about === "" ? g.label : `${about}, ${g.label}`;
+  const who = g.customerName === "" ? place : `${g.customerName} (${place})`;
   const what = total === null ? `Release the holdback held on ${count} for ${who}` : `Release ${total} held on ${count} for ${who}`;
   return `${what}: ${invoices}. The whole holdback of the job is released at once and a journal is posted to the ledger.`;
 }
@@ -556,6 +559,21 @@ export function datesForm(
   }
   if (Object.keys(body).length === 0) return { ok: false, words: "Change at least one date." };
   return { ok: true, body };
+}
+
+/** The last day to preserve the core gave for a lien job, from the due list ("" when the list does not name the job). */
+export function lastDayFor(groups: readonly DueGroup[], jobNo: string): string {
+  return groups.find((g) => g.lienJobNo === jobNo && g.lastDay !== "")?.lastDay ?? "";
+}
+
+/**
+ * A lien recorded with a date after the job's last day to preserve says so, in neutral words: the two dates and
+ * that the recorded one is after the last day. It does not say the lien is invalid or late in law; which date starts
+ * the period is not settled. "" when there is nothing to say (a day on or before the last day, or no last day known).
+ */
+export function lateLienWords(preservedOn: string, lastDay: string): string {
+  if (preservedOn === "" || lastDay === "" || preservedOn <= lastDay) return "";
+  return `The recorded date, ${dueWords(preservedOn)}, is after the last day to preserve, ${dueWords(lastDay)}.`;
 }
 
 export function recordedPreservedWords(jobNo: string): string {

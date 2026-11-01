@@ -105,6 +105,7 @@ type HoldbackDueRow struct {
 	InvoiceID         string `json:"invoice_id"`
 	InvoiceNo         string `json:"invoice_no"`
 	CustomerID        string `json:"customer_id"`
+	CustomerName      string `json:"customer_name"`
 	CustomerJobID     string `json:"customer_job_id"`
 	LienJobID         string `json:"lien_job_id,omitempty"`
 	LienJobNo         string `json:"lien_job_no,omitempty"`
@@ -139,9 +140,10 @@ func (r *Repository) HoldbackDueToRelease(ctx context.Context, q HoldbackDueQuer
 	}
 	today := z.Today(func() time.Time { return q.Now })
 	rows, err := r.pool.Query(ctx, `
-SELECT i.id::text, i.invoice_no::text, i.customer_id::text, i.job_id::text, i.branch_id::text,
+SELECT i.id::text, i.invoice_no::text, i.customer_id::text, COALESCE(c.name, ''), i.job_id::text, i.branch_id::text,
        invoice_holdback_as_of(i.id, $2::timestamptz)
   FROM invoices i
+  LEFT JOIN customers c ON c.id = i.customer_id
  WHERE i.doc_type = 'INVOICE' AND i.job_id IS NOT NULL AND i.status IN ('FINALIZED', 'PARTIALLY_PAID')
    AND i.holdback_cents > 0 AND ($1 = '' OR i.branch_id = $1::uuid)
  ORDER BY i.branch_id, i.job_id, i.issue_date, i.id`, q.BranchID, q.Now)
@@ -152,7 +154,7 @@ SELECT i.id::text, i.invoice_no::text, i.customer_id::text, i.job_id::text, i.br
 	var out []HoldbackDueRow
 	for rows.Next() {
 		var row HoldbackDueRow
-		if err := rows.Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.CustomerJobID, &row.BranchID, &row.HoldbackCents); err != nil {
+		if err := rows.Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.CustomerName, &row.CustomerJobID, &row.BranchID, &row.HoldbackCents); err != nil {
 			return nil, fmt.Errorf("billing: scan a holdback due row: %w", err)
 		}
 		if row.HoldbackCents <= 0 || (q.CanAccessBranch != nil && !q.CanAccessBranch(row.BranchID)) {

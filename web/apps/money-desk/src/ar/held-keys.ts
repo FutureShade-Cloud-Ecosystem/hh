@@ -55,6 +55,11 @@ export class HeldKeys {
     return this.#read().get(accountId);
   }
 
+  /** The ids that hold a key now. */
+  ids(): string[] {
+    return [...this.#read().keys()];
+  }
+
   set(accountId: string, key: string): void {
     const all = this.#read();
     all.set(accountId, key);

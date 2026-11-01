@@ -26,6 +26,8 @@ import {
   dueConfirmWords,
   dueBranchIds,
   dueTotalOf,
+  lateLienWords,
+  lastDayFor,
   jobStatusToneFor,
   jobStatusWordFor,
   lienActive,
@@ -454,11 +456,13 @@ function jobForm(model: LiensModel): TemplateResult {
 }
 
 /** What the core holds about a preserved lien on the job, in a sentence. */
-function lienStateWords(job: LienJob): string {
+function lienStateWords(job: LienJob, lastDay: string): string {
   if (job.lien_preserved_on === undefined || job.lien_preserved_on === "") return "No lien is recorded on this job.";
   const note = job.lien_preserved_note === undefined || job.lien_preserved_note === "" ? "" : ` ${job.lien_preserved_note}.`;
-  if (lienActive(job)) return `A lien was preserved on ${dueWords(job.lien_preserved_on)}.${note} It has not been discharged, so the holdback stays held.`;
-  return `A lien was preserved on ${dueWords(job.lien_preserved_on)} and discharged on ${dueWords(job.lien_discharged_on ?? "")}.${note}`;
+  const late = lateLienWords(job.lien_preserved_on, lastDay);
+  const lateTail = late === "" ? "" : ` ${late}`;
+  if (lienActive(job)) return `A lien was preserved on ${dueWords(job.lien_preserved_on)}.${note}${lateTail} It has not been discharged, so the holdback stays held.`;
+  return `A lien was preserved on ${dueWords(job.lien_preserved_on)} and discharged on ${dueWords(job.lien_discharged_on ?? "")}.${note}${lateTail}`;
 }
 
 /** The doors: record or discharge a preserved lien, and correct the three dates the preservation period counts from. Each is recorded by the core. */
@@ -467,7 +471,7 @@ function doors(model: LiensModel, job: LienJob): TemplateResult {
   return html`
     <div class="li-doors" data-doors>
       <h3>Preservation</h3>
-      <p class="li-fact" data-lien-state>${nonBreaking(lienStateWords(job))}</p>
+      <p class="li-fact" data-lien-state>${nonBreaking(lienStateWords(job, lastDayFor(model.due.groups, job.job_no)))}</p>
       ${active
         ? html`
             <div class="li-form">

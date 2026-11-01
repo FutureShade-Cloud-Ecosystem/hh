@@ -643,6 +643,7 @@ type BillingHoldbackDueRow struct {
 	InvoiceId         string  `json:"invoice_id"`
 	InvoiceNo         string  `json:"invoice_no"`
 	CustomerId        string  `json:"customer_id"`
+	CustomerName      string  `json:"customer_name"`
 	CustomerJobId     string  `json:"customer_job_id"`
 	LienJobId         *string `json:"lien_job_id,omitempty"`
 	LienJobNo         *string `json:"lien_job_no,omitempty"`
