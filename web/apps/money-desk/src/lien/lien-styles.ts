@@ -111,7 +111,8 @@ export const lienStyles = css`
   .li-pre { margin: 0; padding: var(--hh-s-12) var(--hh-s-16); background: var(--hh-field); color: var(--hh-text); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); font-family: var(--hh-font-mono, ui-monospace, monospace); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; }
   .li-panel:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
   /* The statement a money press asks about: one tinted box, one line border, as the credit changes asks (CC-2). */
-  .li-statement, .li-confirm { margin: var(--hh-s-12) 0; padding: var(--hh-s-12) var(--hh-s-16); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); background: color-mix(in srgb, var(--hh-accent) 14%, var(--hh-card)); color: var(--hh-text); font-weight: 600; overflow-wrap: anywhere; }
+  .li-statement, .li-confirm { margin: var(--hh-s-12) 0; padding: var(--hh-s-12) var(--hh-s-16); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); background: color-mix(in srgb, var(--hh-accent) 14%, var(--hh-card)); color: var(--hh-text); font-weight: 400; overflow-wrap: anywhere; }
+  .li-statement strong, .li-confirm strong { font-weight: 700; }
   .li-summary { margin: 0 0 var(--hh-s-12); font-weight: 600; }
 
   /* Due to release: the invoices listed one under another, each with its amount on the right. */
@@ -124,7 +125,11 @@ export const lienStyles = css`
   .li-doors { border-top: 1px solid var(--hh-line); margin-top: var(--hh-s-16); padding-top: var(--hh-s-16); }
   .li-doors h3 { margin: var(--hh-s-12) 0 var(--hh-s-4); }
   .li-doors .li-form { align-items: end; }
-  .li-cards-always .li-invoices { max-width: 28rem; }
+  /* The released card is laid out like the due list: the job and its state on top, every invoice on a full width line with its amount at the right edge, the total under them at the right. */
+  .li-cards-always .li-card { gap: var(--hh-s-12); padding: var(--hh-s-16) var(--hh-s-20); }
+  .li-cards-always .li-invoices li { padding: var(--hh-s-8) 0; border-top: 1px solid var(--hh-line); }
+  .li-cards-always .li-card-amount { text-align: end; padding-top: var(--hh-s-8); border-top: 1px solid var(--hh-line); font-size: 18px; }
+  .li-field textarea[aria-invalid="true"] { border-color: var(--hh-state-stop); border-width: 2px; }
   .li-panel .li-note { margin-bottom: var(--hh-s-12); }
   .li-card-actions { display: flex; justify-content: flex-end; }
   .li-card-actions .btn { width: auto; }

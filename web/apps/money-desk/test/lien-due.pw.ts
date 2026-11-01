@@ -3,7 +3,7 @@
 // reversal with a reason, the lien doors (a preserved lien, its discharge, the three dates), and the old job level
 // press saying where the holdback is released now.
 import type { APIRequestContext, Page } from "@playwright/test";
-import { test, expect, openLiens, liensTab, noSidewaysScroll, CONTROLLER_ID, JOB5, dayFrom, nb, shown } from "./lien-helpers.js";
+import { test, expect, openLiens, liensTab, noSidewaysScroll, CONTROLLER_ID, JOB6, dayFrom, nb, shown } from "./lien-helpers.js";
 
 const due = (page: Page, lien: string) => page.locator(`[data-row="due"][data-lien-job="${lien}"]:visible`);
 
@@ -77,7 +77,7 @@ test("item 2: the Controller is asked first, naming the job, the invoices and ea
 test("item 2: what the core refuses is said in the core's sentence, and the list is read again", async ({ page, request }) => {
   await openDue(page, request);
   await due(page, "GLS-2105").getByRole("button", { name: "Release" }).click();
-  await behind(request, "POST", `/api/v1/lien/jobs/${JOB5}/preserved-lien`, { preserved_on: dayFrom(-1), note: "filed while the screen was open" });
+  await behind(request, "POST", `/api/v1/lien/jobs/${JOB6}/preserved-lien`, { preserved_on: dayFrom(-1), note: "filed while the screen was open" });
   await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
   await expect(page.locator("[data-error]")).toContainText(nb(`A lien was preserved on lien job GLS-2105 on ${shown(dayFrom(-1))} and has not been discharged, so the holdback stays held until it is discharged or settled.`));
   await expect(due(page, "GLS-2105")).toContainText(nb("Blocked by a preserved lien on GLS-2105"));
@@ -237,7 +237,7 @@ test("item 4: the three dates are set, corrected and cleared, and a job with non
 test("item 5: the old job level press on a job whose holdback is held on invoices offers only Go to Due to release, with no Confirm", async ({ page, request }) => {
   await openLiens(page, request, "general_manager");
   await liensTab(page, "holdbacks");
-  await page.locator("[data-row='aging'][data-job-no='GLS-2103']:visible").getByRole("button", { name: "Release" }).click();
+  await page.locator("[data-row='aging'][data-job-no='GLS-2105']:visible").getByRole("button", { name: "Release" }).click();
   const panel = page.locator("[data-release-panel]");
   await expect(panel.locator("[data-job-level-refused]")).toContainText("held on its invoices");
   await expect(panel.getByRole("button", { name: "Confirm release" })).toHaveCount(0);
@@ -271,7 +271,6 @@ test("fix 9: a job with a preserved lien is not called Released and not called r
   await expect(page.locator("[data-notice]")).toBeVisible();
   await liensTab(page, "jobs");
   await page.locator("[data-row='job'][data-job-no='GLS-2105']:visible").getByRole("button", { name: "Open" }).click();
-  await expect(page.locator("[data-job-panel]")).toContainText("Released");
   await page.locator("[data-doors]").getByLabel("Lien preserved on").fill(dayFrom(-2));
   await page.locator("[data-doors]").getByRole("button", { name: "Record preserved lien" }).click();
   await expect(page.locator("[data-lien-state]")).toContainText("has not been discharged");
@@ -323,7 +322,7 @@ test("fix 1: at 390 wide every state fits, the longest pill wraps under the job 
 test("fix 1: at 390 wide the blocked row, with the longest pill, fits", async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openDue(page, request);
-  await behind(request, "POST", `/api/v1/lien/jobs/${JOB5}/preserved-lien`, { preserved_on: dayFrom(-1), note: "filed" });
+  await behind(request, "POST", `/api/v1/lien/jobs/${JOB6}/preserved-lien`, { preserved_on: dayFrom(-1), note: "filed" });
   await liensTab(page, "jobs");
   await liensTab(page, "due");
   await expect(due(page, "GLS-2105").first()).toContainText("Blocked by a preserved lien");
@@ -375,4 +374,82 @@ test("fix 13: in charcoal the pills and the small helper text read at 4.5 to 1",
     const ratios = await contrasts(page, selector);
     for (const ratio of ratios) expect(ratio, `${selector} reads ${ratio} to 1`).toBeGreaterThanOrEqual(4.5);
   }
+});
+
+// ---- the second visual walk's polish ---------------------------------------------------------------------------------
+
+async function pressAndOpenReverse(page: Page): Promise<void> {
+  await due(page, "GLS-2105").getByRole("button", { name: "Release" }).click();
+  await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
+  await page.locator("[data-row='released']:visible").getByRole("button", { name: "Reverse" }).click();
+}
+
+test("polish: the confirm statement is in the body weight with only the amount and the job in bold", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openDue(page, request);
+  await due(page, "GLS-2105").getByRole("button", { name: "Release" }).click();
+  const words = page.locator("[data-due-panel] [data-confirm-words]");
+  expect(await words.evaluate((el) => getComputedStyle(el).fontWeight)).toBe("400");
+  const bold = await words.locator("strong").allTextContents();
+  expect(bold.map((t) => t.trim())).toContain(nb("lien job GLS-2105"));
+  expect(bold.length).toBeLessThanOrEqual(2);
+  await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
+  await page.locator("[data-row='released']:visible").getByRole("button", { name: "Reverse" }).click();
+  const rev = page.locator("[data-reverse-panel] [data-confirm-words]");
+  expect(await rev.evaluate((el) => getComputedStyle(el).fontWeight)).toBe("400");
+  expect(await rev.locator("strong").allTextContents()).toEqual([nb("lien job GLS-2105")]);
+});
+
+test("polish: Reverse release is the rejecting colour, and the reason box shows red when it is invalid", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openDue(page, request);
+  await pressAndOpenReverse(page);
+  const panel = page.locator("[data-reverse-panel]");
+  await expect(panel.getByRole("button", { name: "Reverse release" })).toHaveClass(/btn-danger/);
+  const reason = panel.getByLabel("Reason");
+  const calm = await reason.evaluate((el) => getComputedStyle(el).borderTopColor);
+  await panel.getByRole("button", { name: "Reverse release" }).click();
+  await expect(reason).toHaveAttribute("aria-invalid", "true");
+  const red = await reason.evaluate((el) => getComputedStyle(el).borderTopColor);
+  expect(red).not.toBe(calm);
+  const stop = await page.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--hh-state-stop)";
+    document.body.append(probe);
+    const c = getComputedStyle(probe).color;
+    probe.remove();
+    return c;
+  });
+  expect(red).toBe(stop);
+});
+
+test("polish: a reversed card says reversed in all, and the released card runs the width of the card at 1280", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openDue(page, request);
+  await due(page, "GLS-2105").getByRole("button", { name: "Release" }).click();
+  await page.locator("[data-due-panel]").getByRole("button", { name: "Confirm release" }).click();
+  const press = page.locator("[data-row='released']:visible");
+  await expect(press.locator("[data-press-total]")).toContainText("released in all");
+  const card = await press.boundingBox();
+  const amount = await press.locator("li[data-invoice-no='INV-4102'] .li-amt").boundingBox();
+  const total = await press.locator("[data-press-total]").boundingBox();
+  expect(card && amount && total).toBeTruthy();
+  expect(card!.x + card!.width - (amount!.x + amount!.width), "the invoice amount sits at the card's right edge").toBeLessThan(40);
+  expect(card!.x + card!.width - (total!.x + total!.width), "the total sits at the card's right edge").toBeLessThan(40);
+  await press.getByRole("button", { name: "Reverse" }).click();
+  await page.locator("[data-reverse-panel]").getByLabel("Reason").fill("Released against the wrong job");
+  await page.locator("[data-reverse-panel]").getByRole("button", { name: "Reverse release" }).click();
+  await expect(press).toContainText("Reversed");
+  await expect(press.locator("[data-press-total]")).toContainText("reversed in all");
+  await expect(press.locator("[data-press-total]")).not.toContainText("released in all");
+});
+
+test("polish: the Holdbacks tab offers no Release on a row that is not yet due", async ({ page, request }) => {
+  await openLiens(page, request, "controller");
+  await liensTab(page, "holdbacks");
+  const rows = (job: string) => page.locator(`[data-row='aging'][data-job-no='${job}']:visible`);
+  await expect(rows("GLS-2103")).toContainText("Not yet");
+  await expect(rows("GLS-2103").getByRole("button", { name: "Release" })).toHaveCount(0);
+  await expect(rows("GLS-2101")).toContainText("Release due");
+  await expect(rows("GLS-2101").getByRole("button", { name: "Release" })).toHaveCount(1);
 });

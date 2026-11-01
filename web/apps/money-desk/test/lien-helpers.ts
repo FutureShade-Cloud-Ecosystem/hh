@@ -11,6 +11,7 @@ export const PAYREC_ID = "de110000-0000-4000-9000-000000000007";
 export const JOB1 = "10b00000-0000-4000-8000-000000000001";
 export const JOB4 = "10b00000-0000-4000-8000-000000000004";
 export const JOB5 = "10b00000-0000-4000-8000-000000000005";
+export const JOB6 = "10b00000-0000-4000-8000-000000000006";
 export const COCKPIT = "00000000-0000-4000-9000-0000000000d6";
 
 /** A day this many days from the host's own today, written the way the core writes a date. */

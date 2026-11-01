@@ -289,12 +289,40 @@ function jobAbout(model: LiensModel, g: DueGroup): string {
   return [desc, branch === "" ? "" : `at ${branch}`].filter((p) => p !== "").join(" ");
 }
 
+/** A sentence with only the named parts in bold (the amount and the job), the rest in the body weight. */
+function emphasise(sentence: string, parts: readonly string[]): TemplateResult {
+  const text = nonBreaking(sentence);
+  const marks = parts.map((p) => nonBreaking(p)).filter((p) => p !== "");
+  const out: Array<string | TemplateResult> = [];
+  let at = 0;
+  while (at < text.length) {
+    let best = -1;
+    let bestLen = 0;
+    for (const m of marks) {
+      const i = text.indexOf(m, at);
+      if (i >= 0 && (best < 0 || i < best)) {
+        best = i;
+        bestLen = m.length;
+      }
+    }
+    if (best < 0) break;
+    if (best > at) out.push(text.slice(at, best));
+    out.push(html`<strong>${text.slice(best, best + bestLen)}</strong>`);
+    at = best + bestLen;
+  }
+  if (at < text.length) out.push(text.slice(at));
+  return html`${out}`;
+}
+
 /** The question first: the total, the invoice count and the customer job, each invoice and its amount; the whole holdback goes at once. */
 function duePanel(model: LiensModel, g: DueGroup): TemplateResult {
   return html`
     <section class="li-panel" data-due-panel tabindex="-1" role="region" aria-label="Release holdback">
       <div class="li-panel-head"><h2>Release holdback</h2></div>
-      <p class="li-statement" data-confirm-words>${nonBreaking(dueConfirmWords(g, dueTotalOf(model.due.groups, model.due.totals, g), jobAbout(model, g)))}</p>
+      <p class="li-statement" data-confirm-words>${(() => {
+        const total = dueTotalOf(model.due.groups, model.due.totals, g);
+        return emphasise(dueConfirmWords(g, total, jobAbout(model, g)), [total ?? "", g.label]);
+      })()}</p>
       ${besideField(model, "due")}
       <div class="li-actions">
         <button type="button" class="btn btn-primary" data-action="li-due-confirm" ?disabled=${model.busy}>Confirm release</button>
@@ -318,11 +346,11 @@ function reversePanel(model: LiensModel, r: ReleasedPress): TemplateResult {
   return html`
     <section class="li-panel" data-reverse-panel tabindex="-1" role="region" aria-label="Reverse release">
       <div class="li-panel-head"><h2>Reverse release</h2></div>
-      <p class="li-statement" data-confirm-words>${nonBreaking(reverseConfirmWords(r.label, itemWords(open)))}</p>
+      <p class="li-statement" data-confirm-words>${emphasise(reverseConfirmWords(r.label, itemWords(open)), [r.label])}</p>
       <label class="li-field">Reason<textarea data-field="reverse_reason" aria-label="Reason" aria-invalid="${bad ? "true" : "false"}" aria-describedby=${bad ? "li-error-reverse" : nothing} rows="3"></textarea></label>
       ${besideField(model, "reverse")}
       <div class="li-actions">
-        <button type="button" class="btn btn-primary" data-action="li-reverse-confirm" ?disabled=${model.busy}>Reverse release</button>
+        <button type="button" class="btn btn-danger" data-action="li-reverse-confirm" ?disabled=${model.busy}>Reverse release</button>
         <button type="button" class="btn btn-secondary" data-action="li-reverse-close">Cancel</button>
       </div>
     </section>
@@ -342,7 +370,7 @@ function releasedRow(model: LiensModel, r: ReleasedPress): TemplateResult {
     <li class="li-card" data-row="released" data-press-id=${r.id} data-lien-job=${r.lienJobNo}>
       <div class="li-card-top"><strong class="li-mono">${r.lienJobNo === "" ? "No lien job" : r.lienJobNo}</strong>${pill(state.tone, state.word)}</div>
       <ul class="li-invoices">${r.items.map((i) => html`<li data-invoice-no=${i.invoiceNo} data-release-id=${i.releaseId}><span class="li-mono">${i.invoiceNo}</span> <span class="li-amt">${formatMoney(i.amountCents)}${i.reversed ? html` <span class="li-dim">reversed</span>` : nothing}</span></li>`)}</ul>
-      <div class="li-card-amount" data-press-total>${formatMoney(r.totalCents)} <span class="li-dim">released in all</span></div>
+      <div class="li-card-amount" data-press-total>${formatMoney(r.totalCents)} <span class="li-dim">${state.word === "Reversed" ? "reversed in all" : "released in all"}</span></div>
       ${state.word === "Partly reversed" ? html`<span class="li-sub" data-partly>${PARTLY_REVERSED_LINE}</span>` : nothing}
       ${!open || !model.canReleaseDue ? nothing : html`<div class="li-card-actions"><button type="button" class="btn btn-secondary" data-action="li-reverse-open" data-id=${r.id}>Reverse</button></div>`}
     </li>
@@ -530,7 +558,7 @@ function agingRow(model: LiensModel, r: LienAgingRow): TemplateResult {
       <td class="num li-nowrap">${ageWords(r.oldest_days)}<span class="li-sub">${bucketWord(r.bucket)}</span></td>
       <td>
         <div>${pill(r.release_eligible ? "watch" : "plain", status)}</div>
-        ${r.holdback_direction === "RECEIVABLE" ? html`<button type="button" class="li-link" data-action="li-release-open" data-id=${r.job_id} aria-pressed="${open ? "true" : "false"}">Release</button>` : nothing}
+        ${r.holdback_direction === "RECEIVABLE" && r.release_eligible ? html`<button type="button" class="li-link" data-action="li-release-open" data-id=${r.job_id} aria-pressed="${open ? "true" : "false"}">Release</button>` : nothing}
       </td>
     </tr>
   `;
@@ -544,7 +572,7 @@ function agingCard(model: LiensModel, r: LienAgingRow): TemplateResult {
       <div class="li-card-top"><strong class="li-mono">${r.job_no}</strong>${pill(r.release_eligible ? "watch" : "plain", status)}</div>
       <div class="li-card-amount">${formatMoney(r.outstanding_cents)} <span class="li-dim">· ${ageWords(r.oldest_days)} · ${bucketWord(r.bucket)}</span></div>
       <span class="li-sub">${branchName(model.branches, r.branch_id)} · ${directionWord(r.holdback_direction)}</span>
-      ${r.holdback_direction === "RECEIVABLE" ? html`<button type="button" class="li-link" data-action="li-release-open" data-id=${r.job_id} aria-pressed="${open ? "true" : "false"}">Release</button>` : nothing}
+      ${r.holdback_direction === "RECEIVABLE" && r.release_eligible ? html`<button type="button" class="li-link" data-action="li-release-open" data-id=${r.job_id} aria-pressed="${open ? "true" : "false"}">Release</button>` : nothing}
     </li>
   `;
 }
@@ -594,7 +622,7 @@ function releasePanel(model: LiensModel, release: ReleaseModel): TemplateResult 
                 <p class="li-hint">A Financial Controller or Payables and Receivables reviews the release with you. Who they are is checked when you confirm.</p>
                 ${row === undefined
                   ? html`<p class="li-hint" data-nothing-held>Nothing is held on this job now, so there is nothing to release.</p>`
-                  : html`<p class="li-statement" data-confirm-words>${nonBreaking(releaseConfirmWords(jobNo, amount))}</p>`}
+                  : html`<p class="li-statement" data-confirm-words>${emphasise(releaseConfirmWords(jobNo, amount), [amount, `job ${jobNo}`])}</p>`}
                 <div class="li-actions">
                   <button type="button" class="btn btn-primary" data-action="li-release-confirm" ?disabled=${model.busy || row === undefined}>Confirm release</button>
                   <button type="button" class="btn btn-secondary" data-action="li-release-close">Cancel</button>

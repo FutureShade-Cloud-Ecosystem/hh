@@ -13,7 +13,7 @@ test("the controller opens Liens on the Monday triage: the core's banner and fou
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Liens");
   await expect(page.locator("[data-banner]")).toContainText("DRAFT, statute-derived, pending client validation");
   const rows = page.locator("[data-row='triage']:visible");
-  await expect(rows).toHaveCount(4);
+  await expect(rows).toHaveCount(5);
   await expect(rows.nth(0)).toContainText("GLS-2102");
   await expect(rows.nth(0)).toContainText("Overdue");
   await expect(rows.nth(0)).toContainText("100 days");
@@ -26,7 +26,7 @@ test("the controller opens Liens on the Monday triage: the core's banner and fou
   await expect(row(page, "GLS-2103")).toContainText("Aging");
   await expect(row(page, "GLS-2103")).toContainText("12 days");
   // A word always sits beside the colour: every badge carries its word and the area names its own count.
-  await expect(page.locator("[data-triage-count]")).toHaveText("4 jobs hold retention");
+  await expect(page.locator("[data-triage-count]")).toHaveText("5 jobs hold retention");
 });
 
 test("a triage row opens its job on the jobs tab, with the facts the core holds and what is held now", async ({ page, request }) => {
@@ -47,9 +47,9 @@ test("the jobs tab lists every job newest first and a press on a row opens it", 
   await openLiens(page, request);
   await liensTab(page, "jobs");
   const rows = page.locator("[data-row='job']:visible");
-  await expect(rows).toHaveCount(5);
+  await expect(rows).toHaveCount(6);
   await expect(rows.nth(0)).toContainText("GLS-2103");
-  await expect(rows.nth(4)).toContainText("GLS-2100");
+  await expect(rows.nth(5)).toContainText("GLS-2100");
   await expect(row(page, "GLS-2100", "job")).toContainText("Released");
   await expect(page.locator("[data-job-panel]")).toHaveCount(0);
   await row(page, "GLS-2104", "job").getByRole("button", { name: "Open" }).click();
@@ -110,7 +110,7 @@ test("the holdbacks tab ages the retention; a payable holdback is released by ha
   await openLiens(page, request);
   await liensTab(page, "holdbacks");
   const rows = page.locator("[data-row='aging']:visible");
-  await expect(rows).toHaveCount(4);
+  await expect(rows).toHaveCount(5);
   await expect(rows.nth(0)).toContainText("GLS-2102");
   await expect(rows.nth(0)).toContainText("Over 90 days");
   await expect(row(page, "GLS-2101", "aging")).toContainText("61 to 90 days");
@@ -155,7 +155,7 @@ test("the General Manager releases a holdback: the co-signer is picked from the 
   await expect(page.locator("[data-release-panel]")).toHaveCount(0);
   await expect(row(page, "GLS-2101", "aging")).toHaveCount(0);
   await liensTab(page, "triage");
-  await expect(page.locator("[data-triage-count]")).toHaveText("3 jobs hold retention");
+  await expect(page.locator("[data-triage-count]")).toHaveText("4 jobs hold retention");
 });
 
 test("a co-signer the core will not take is refused in the core's words and nothing is released", async ({ page, request }) => {
@@ -235,7 +235,7 @@ test("a load that fails says so in words and Try again reads the area again", as
   await expect(page.locator("[data-load-error]")).toContainText("Internal error.");
   await page.unroute("**/api/v1/lien/triage*");
   await page.getByRole("button", { name: "Try again" }).click();
-  await expect(page.locator("[data-row='triage']:visible")).toHaveCount(4);
+  await expect(page.locator("[data-row='triage']:visible")).toHaveCount(5);
 });
 
 test("an empty worklist, an empty aging and an empty job list say they are empty", async ({ page, request }) => {
@@ -257,7 +257,7 @@ test("Payables and Receivables reads the jobs and the calendar and is offered no
   await openLiens(page, request, "payrec");
   await expect(page.getByRole("button", { name: "Receivables", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Approvals and ledger" })).toHaveCount(0);
-  await expect(page.locator("[data-row='triage']:visible")).toHaveCount(4);
+  await expect(page.locator("[data-row='triage']:visible")).toHaveCount(5);
   await liensTab(page, "jobs");
   await expect(page.getByRole("button", { name: "New job" })).toHaveCount(0);
   await expect(page.locator("[data-read-only]")).toContainText("Payables and Receivables reads the liens here. Creating a job, syncing holdbacks and rendering a document are for the Financial Controller or the General Manager.");
@@ -309,7 +309,7 @@ test.describe("on a phone", () => {
 
   test("every tab fits the screen with cards in place of tables", async ({ page, request }) => {
     await openLiens(page, request, "general_manager");
-    await expect(page.locator("[data-row='triage']:visible")).toHaveCount(4);
+    await expect(page.locator("[data-row='triage']:visible")).toHaveCount(5);
     await expect(page.locator("table:visible")).toHaveCount(0);
     await noSidewaysScroll(page);
     for (const id of ["jobs", "holdbacks", "documents"] as const) {
@@ -317,7 +317,7 @@ test.describe("on a phone", () => {
       await noSidewaysScroll(page);
     }
     await liensTab(page, "holdbacks");
-    await expect(page.locator("[data-row='aging']:visible")).toHaveCount(4);
+    await expect(page.locator("[data-row='aging']:visible")).toHaveCount(5);
     await row(page, "GLS-2101", "aging").getByRole("button", { name: "Release" }).click();
     await expect(page.locator("[data-release-panel]")).toBeInViewport();
     await noSidewaysScroll(page);
