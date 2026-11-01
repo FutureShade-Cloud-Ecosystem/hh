@@ -238,6 +238,21 @@ func (s *Service) LinkCustomerJob(ctx context.Context, lienJobID, customerJobID 
 		}
 		customerJobID = site.JobID
 	}
+	// An unlink, or a move to another customer job (the same thing for the job it leaves), while the ledger
+	// holds invoice level retention would let the old job level route (which reads only the link) and RT-3's
+	// release (which reads the job that holds the invoice) each release the same holdback, so both are
+	// refused in the same words. Linking the job it already has is no change.
+	if job.CustomerJobID != "" && customerJobID != job.CustomerJobID {
+		entries, err := s.store.HoldbackEntriesForJob(ctx, lienJobID)
+		if err != nil {
+			return Job{}, err
+		}
+		for _, e := range entries {
+			if e.InvoiceID != "" {
+				return Job{}, unprocessable("lien: job %s holds invoice level retention in its ledger, so it cannot be unlinked from its customer job; correct the invoices' holdback first", job.JobNo)
+			}
+		}
+	}
 	before := job.CustomerJobID
 	if err := s.rules().InTx(ctx, func(ctx context.Context) error {
 		if err := s.rules().LinkCustomerJob(ctx, lienJobID, customerJobID); err != nil {

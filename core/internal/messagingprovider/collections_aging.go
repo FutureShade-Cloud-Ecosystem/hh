@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // collections_aging.go, the read-only aging projection that feeds the AR sweep.
@@ -43,7 +45,8 @@ var _ ARAgingSource = (*PgARAging)(nil)
 //   - NET balance > 0 (balance_cents less the open holdback: the holdback is money the customer may hold,
 //     never overdue, RT-2). A finalised invoice with a zero balance is paid in substance whatever its
 //     status column says, and the balance is the number the customer would argue about.
-//   - due_date strictly more than minDays before asOf.
+//   - due_date strictly more than minDays before asOf, where the part of the net a holdback release made
+//     payable is due its release day plus the invoice's own terms (see the query).
 //
 // The ordering is (days past due DESC, balance DESC): the sweep takes the worst first, so a cooldown
 // that lets one notice per customer through spends it on the invoice that most needs it.
@@ -54,16 +57,29 @@ func (a *PgARAging) OverdueInvoices(ctx context.Context, asOf time.Time, minDays
 	if limit <= 0 {
 		limit = 500
 	}
+	// The released part of a holdback ages from its release day (RT-3 fix 2), as the aging does: it is due the
+	// release house day plus the invoice's own terms, never before the invoice's own due date, and the rest
+	// of the net keeps the invoice's due date. A payment comes off the older part first. One row per
+	// invoice: the balance of the parts that are at least minDays past due, aged by the oldest of them.
 	rows, err := a.pool.Query(ctx, `
-		SELECT i.id::text, i.invoice_no::text, i.customer_id::text, (i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))), i.due_date,
-		       ($1::date - i.due_date)::int AS days_past_due, c.name
-		FROM invoices i
-		JOIN customers c ON c.id = i.customer_id
-		WHERE i.status IN ('FINALIZED','PARTIALLY_PAID')
-		  AND (i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))) > 0
-		  AND ($1::date - i.due_date)::int >= $2
-		ORDER BY days_past_due DESC, (i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))) DESC
-		LIMIT $3`, asOf.UTC(), minDays, limit)
+		SELECT q.id::text, q.invoice_no::text, q.customer_id::text, SUM(x.bal)::bigint, MIN(x.due)::date,
+		       MAX($1::date - x.due)::int AS days_past_due, q.name
+		FROM (
+		  SELECT i.id, i.invoice_no, i.customer_id, c.name, i.due_date,
+		         (i.balance_cents - LEAST(GREATEST(i.holdback_cents, 0), GREATEST(i.balance_cents, 0))) AS net,
+		         invoice_released_cents_as_of(i.id, $4::timestamptz) AS rel_cents,
+		         GREATEST(invoice_released_on(i.id, $4::timestamptz) + GREATEST(i.due_date - i.issue_date, 0), i.due_date) AS rel_due
+		    FROM invoices i
+		    JOIN customers c ON c.id = i.customer_id
+		   WHERE i.status IN ('FINALIZED','PARTIALLY_PAID')
+		) q
+		CROSS JOIN LATERAL (VALUES
+		      (q.net - LEAST(q.rel_cents, GREATEST(q.net, 0)), q.due_date),
+		      (LEAST(q.rel_cents, GREATEST(q.net, 0)), q.rel_due)) AS x(bal, due)
+		WHERE x.bal > 0 AND ($1::date - x.due)::int >= $2
+		GROUP BY q.id, q.invoice_no, q.customer_id, q.name
+		ORDER BY days_past_due DESC, SUM(x.bal) DESC
+		LIMIT $3`, houseday.DefaultZone().Today(func() time.Time { return asOf }), minDays, limit, asOf)
 	if err != nil {
 		return nil, fmt.Errorf("messagingprovider: aging query: %w", err)
 	}

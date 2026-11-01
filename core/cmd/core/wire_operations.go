@@ -637,7 +637,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// memo's park is voided on the withdrawal's own transaction, the same adapter the rail's decide
 	// path bridges through.
 	if err := syncEngine.RegisterScope("approvals", identity.NewApprovalsSyncStore(pool, link).
-		WithJEDecider(newJEDeciderAdapter(pool, spine.glSvc, gl.NewRepository(pool).WithZone(newDealerZone(pool))))); err != nil {
+		WithJEDecider(syncScopeJEDecider(pool, spine.glSvc))); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	syncStaffRoles, syncPortalRoles := syncFenceSeams(pool)
@@ -2430,4 +2430,12 @@ func (p paymentRecipientReader) PaymentRecipient(ctx context.Context, userID str
 		return messaging.PaymentRecipient{}, err
 	}
 	return messaging.PaymentRecipient{PlatformUserID: r.PlatformUserID, OrgIDs: r.OrgIDs, Global: r.Global, BranchIDs: r.BranchIDs}, nil
+}
+
+// syncScopeJEDecider is the decider the approvals sync scope is registered with (wireOperations). It is a
+// named function so the wiring leg drives the very call the registration makes, and a source pin (rt3
+// wiring pin test) holds the registration to it: the scope can void a park and never finalize one today,
+// but a door that could would lower an invoice's holdback column, so it carries the seam like the rail's.
+func syncScopeJEDecider(pool *pgxpool.Pool, glSvc *gl.Service) jeDeciderAdapter {
+	return newJEDeciderAdapter(pool, glSvc, gl.NewRepository(pool).WithZone(newDealerZone(pool)))
 }

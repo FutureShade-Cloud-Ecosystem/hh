@@ -99,8 +99,8 @@ func TestRT2Fix3_ABareWriterRefusesToLowerTheColumn(t *testing.T) {
 	}
 	err = billing.NewInvoiceWriter(l.pool).FinalizeParkedCreditMemoTx(ctx, tx, memoID)
 	_ = tx.Rollback(ctx)
-	if err == nil {
-		t.Fatal("a writer with no holdback seam finalized a credit that lowers an invoice's holdback")
+	if !errors.Is(err, billing.ErrNoHoldbackSeam) {
+		t.Fatalf("a writer with no holdback seam must refuse with ErrNoHoldbackSeam, got %v", err)
 	}
 	eq(t, "the column", l.holdbackOf(doc.InvoiceID), int64(10_000))
 	eq(t, "the ledger", l.ledgerNet(), int64(10_000))
@@ -115,7 +115,9 @@ func TestRT2Fix3_TheSyncScopesDeciderCarriesTheSeamToo(t *testing.T) {
 	doc := l.invoice(100_000, 0)
 	parked := l.parkThroughTheRail(doc.InvoiceID, 50_000, "rt2f3-sync")
 
-	decider := newJEDeciderAdapter(l.pool, l.money.glSvc, gl.NewRepository(l.pool).WithZone(newDealerZone(l.pool)))
+	// The very call wireOperations registers the approvals scope with (wire_operations.go), held there by
+	// TestRT3_TheSyncScopeIsRegisteredWithTheWiredDecider.
+	decider := syncScopeJEDecider(l.pool, l.money.glSvc)
 	tx, err := l.pool.Begin(context.Background())
 	if err != nil {
 		t.Fatal(err)

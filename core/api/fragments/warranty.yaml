@@ -1291,8 +1291,11 @@ paths:
         and the co-signer named in the body is resolved server-side and must
         currently hold a finance authority, never trusting the role asserted
         in the request. A PAYABLE-direction holdback is recordable but its
-        release is refused. The co-signer body is optional to decode; an empty
-        approval fails the dual gate.
+        release is refused. A lien job linked to a customer job is refused with
+        422 in words: its holdback is released by the Controller's holdback
+        release (POST /api/v1/ar/holdback/releases), because this route would
+        credit the holdback receivable a second time. The co-signer body is
+        optional to decode; an empty approval fails the dual gate.
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
@@ -1456,6 +1459,131 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422":
           description: The percent is outside 0 to 100 percent, or the field is missing
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/lien/jobs/{id}/preserved-lien:
+    post:
+      operationId: lienRecordPreservedLien
+      tags: [staff-lien]
+      x-addition: "Wave 3 RT-3 fix: record a preserved lien, which blocks the holdback release; no ERP source route"
+      summary: Record that a lien was preserved on a lien job
+      description: >-
+        Sets the date and a note. While a lien is preserved and not discharged the job's holdback is not
+        released. Recorded in the audit trail with the actor. A manager inside the lien job's branch reach.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LienPreservedLienInput"
+      responses:
+        "200":
+          description: The lien job with its preserved lien
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienJob"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: The date is missing or not a date
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/lien/jobs/{id}/preserved-lien/discharge:
+    post:
+      operationId: lienDischargeLien
+      tags: [staff-lien]
+      x-addition: "Wave 3 RT-3 fix: discharge a preserved lien, which lifts the block on the holdback release; no ERP source route"
+      summary: Record that a preserved lien was discharged
+      description: >-
+        Sets the discharge date and a note; the block on the holdback release lifts. A lien never preserved, or
+        a discharge dated before the preservation, is refused with 422. Recorded in the audit trail.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LienDischargeInput"
+      responses:
+        "200":
+          description: The lien job with its discharge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienJob"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: Nothing was preserved, or the date is missing, not a date, or before the preservation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/lien/jobs/{id}/preservation-dates:
+    put:
+      operationId: lienSetPreservationDates
+      tags: [staff-lien]
+      x-addition: "Wave 3 RT-3 fix round 2: set or correct the dates a lien job's preservation period counts from; no ERP source route"
+      summary: Set or correct a lien job's preservation dates
+      description: >-
+        Sets, corrects or clears the publication date of the certificate of substantial performance, the date of
+        substantial performance and the last supply. A field left out is unchanged; null clears it. The holdback
+        release counts its preservation period from the latest of the three. A manager inside the job's branch
+        reach; the change and its audit record are one transaction.
+      x-role: requireManager
+      x-access:
+        surfaces: [money-desk]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LienPreservationDatesInput"
+      responses:
+        "200":
+          description: The lien job with its dates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LienJob"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: No date was named, or a date is not a date
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2569,6 +2697,10 @@ components:
         holdback_pct_bps: { type: integer, format: int32 }
         substantial_perf_date: { type: string, format: date }
         last_supply_date: { type: string, format: date }
+        csp_published_on: { type: string, format: date }
+        lien_preserved_on: { type: string, format: date }
+        lien_preserved_note: { type: string }
+        lien_discharged_on: { type: string, format: date }
         status:
           type: string
           enum: [OPEN, SUBSTANTIALLY_PERFORMED, RELEASED, CLOSED]
@@ -2636,10 +2768,29 @@ components:
         holdback_pct_bps: { type: integer, format: int32 }
         substantial_perf_date: { type: string, format: date }
         last_supply_date: { type: string, format: date }
+        csp_published_on: { type: string, format: date, description: "Publication of the certificate of substantial performance, when known (optional)" }
         holdback_direction:
           type: string
           enum: [RECEIVABLE, PAYABLE]
         hst_on_holdback: { type: boolean }
+    LienPreservedLienInput:
+      type: object
+      required: [preserved_on]
+      properties:
+        preserved_on: { type: string, format: date }
+        note: { type: string }
+    LienDischargeInput:
+      type: object
+      required: [discharged_on]
+      properties:
+        discharged_on: { type: string, format: date }
+        note: { type: string }
+    LienPreservationDatesInput:
+      type: object
+      properties:
+        csp_published_on: { type: [string, "null"], format: date }
+        substantial_perf_date: { type: [string, "null"], format: date }
+        last_supply_date: { type: [string, "null"], format: date }
     LienJobPage:
       type: object
       required: [items]

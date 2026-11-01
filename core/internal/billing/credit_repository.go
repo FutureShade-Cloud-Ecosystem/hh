@@ -152,6 +152,12 @@ func (r *Repository) SetCreditChangeThresholds(ctx context.Context, branchID str
 // that was good at the as-of date reads as paid there and as owed from the bounce's own instant on, and
 // the payment's per-invoice split survives the bounce.
 //
+// THE RELEASED PART AGES FROM ITS RELEASE DAY (RT-3 fix). The part of an invoice a holdback release
+// brought into the net is read from the ledger's RELEASE row (invoice_released_cents_as_of and
+// invoice_released_on, lien's functions): it falls due on the row's house day plus the invoice's own
+// terms, never before the invoice's own due date, and the rest of the invoice keeps its due date. A
+// payment is taken off the older part first, so the released part is capped at what is still owed.
+//
 // What this costs (S6's P3, measured with EXPLAIN on a migrated database): the three rebuild arms
 // are index-backed lookups per document (idx_cust_txn_source on the ledger rows, the
 // payment_allocations index on invoice_id, idx_payment_reapplications_invoice), so the cost driver
@@ -164,11 +170,15 @@ func (r *Repository) SetCreditChangeThresholds(ctx context.Context, branchID str
 // shared space, so they are a lead's call, not this query's.
 const agingSelect = `
 	WITH open_ar AS (
+		SELECT q.customer_id, q.branch_id, x.bal, x.due_date
+		  FROM (
 		SELECT r.customer_id, r.branch_id,
-		       r.raw - LEAST(r.holdback_cents, GREATEST(r.raw, 0)) AS bal,
-		       r.due_date
+		       r.raw - LEAST(r.holdback_cents, GREATEST(r.raw, 0)) AS net,
+		       r.rel_cents, r.rel_due, r.due_date
 		  FROM (
 		SELECT i.customer_id, i.branch_id,
+		       invoice_released_cents_as_of(i.id, $6::timestamptz) AS rel_cents,
+		       GREATEST(invoice_released_on(i.id, $6::timestamptz) + GREATEST(i.due_date - i.issue_date, 0), i.due_date) AS rel_due,
 		       CASE WHEN $7::bool THEN GREATEST(i.holdback_cents, 0)
 		            ELSE invoice_holdback_as_of(i.id, $6::timestamptz) END AS holdback_cents,
 		       CASE WHEN $7::bool THEN i.balance_cents
@@ -187,6 +197,10 @@ const agingSelect = `
 		 WHERE i.status IN ('FINALIZED','PARTIALLY_PAID','PAID')
 		   AND ($7::bool OR COALESCE(i.finalized_at, i.created_at) <= $6::timestamptz)
 		  ) r
+		  ) q
+		  CROSS JOIN LATERAL (VALUES
+		        (q.net - LEAST(q.rel_cents, GREATEST(q.net, 0)), q.due_date),
+		        (LEAST(q.rel_cents, GREATEST(q.net, 0)), q.rel_due)) AS x(bal, due_date)
 		UNION ALL
 		SELECT ct.customer_id, ct.branch_id,
 		       SUM(ct.amount_cents) AS bal,

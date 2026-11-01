@@ -55,7 +55,11 @@ func registerStatusIn(zone houseday.Zone, v RegisterRow, asOf time.Time, dueSoon
 	case "PAID":
 		return StatusPaid, 0
 	}
-	days := DaysPastDueIn(zone, v.DueDate, asOf)
+	due := v.DueDate
+	if !v.agedFrom.IsZero() {
+		due = v.agedFrom
+	}
+	days := DaysPastDueIn(zone, due, asOf)
 	if v.Disputed {
 		if days > 0 {
 			return StatusDisputed, days
