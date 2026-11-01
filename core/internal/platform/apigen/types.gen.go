@@ -953,6 +953,65 @@ type BillingAgingPage struct {
 	Limit      *int32            `json:"limit,omitempty"`
 }
 
+type BillingAgingByJobRow struct {
+	CustomerId      string `json:"customer_id"`
+	CustomerName    string `json:"customer_name"`
+	AccountNo       string `json:"account_no"`
+	JobId           string `json:"job_id"`
+	JobNo           string `json:"job_no"`
+	JobName         string `json:"job_name"`
+	AccountLevel    bool   `json:"account_level"`
+	CurrentCents    int64  `json:"current_cents"`
+	Days30Cents     int64  `json:"days_30_cents"`
+	Days60Cents     int64  `json:"days_60_cents"`
+	Days60To90Cents int64  `json:"days_60_to_90_cents"`
+	Days90PlusCents int64  `json:"days_90_plus_cents"`
+	TotalCents      int64  `json:"total_cents"`
+}
+
+type BillingAgingByJobPage struct {
+	Items []BillingAgingByJobRow `json:"items"`
+	AsOf  string                 `json:"as_of"`
+}
+
+type BillingJobStatementLine struct {
+	Date            time.Time `json:"date"`
+	DocNo           string    `json:"doc_no"`
+	Description     string    `json:"description"`
+	ChargeCents     int64     `json:"charge_cents"`
+	CreditCents     int64     `json:"credit_cents"`
+	BalanceRunCents int64     `json:"balance_run_cents"`
+	JobId           string    `json:"job_id"`
+}
+
+type BillingJobStatementSection struct {
+	JobId         string                    `json:"job_id"`
+	JobNo         string                    `json:"job_no"`
+	JobName       string                    `json:"job_name"`
+	AccountLevel  bool                      `json:"account_level"`
+	Lines         []BillingJobStatementLine `json:"lines"`
+	SubtotalCents int64                     `json:"subtotal_cents"`
+}
+
+type BillingStatementContact struct {
+	Name   string  `json:"name"`
+	Email  string  `json:"email"`
+	Phone  string  `json:"phone"`
+	Source string  `json:"source"`
+	Note   *string `json:"note,omitempty"`
+}
+
+type BillingJobStatement struct {
+	CustomerId          string                       `json:"customer_id"`
+	CustomerName        string                       `json:"customer_name"`
+	AccountNo           string                       `json:"account_no"`
+	AsOfDate            time.Time                    `json:"as_of_date"`
+	JobId               *string                      `json:"job_id,omitempty"`
+	Sections            []BillingJobStatementSection `json:"sections"`
+	ClosingBalanceCents int64                        `json:"closing_balance_cents"`
+	Contact             BillingStatementContact      `json:"contact"`
+}
+
 type BillingCreditHold struct {
 	Id             string     `json:"id"`
 	CustomerId     string     `json:"customer_id"`

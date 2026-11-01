@@ -199,14 +199,14 @@ type statementNoticeAccountant interface {
 
 // StatementLine is one activity row on a statement: an invoice or a payment.
 type StatementLine struct {
-	Date        time.Time
-	DocNo       string
-	Description string
-	ChargeCents int64
-	CreditCents int64
-	BalanceRun  int64
+	Date        time.Time `json:"date"`
+	DocNo       string    `json:"doc_no"`
+	Description string    `json:"description"`
+	ChargeCents int64     `json:"charge_cents"`
+	CreditCents int64     `json:"credit_cents"`
+	BalanceRun  int64     `json:"balance_run_cents"`
 	// JobID is the job the line belongs to (JA-4), "" for account level. Only the by job read sets it.
-	JobID string
+	JobID string `json:"job_id"`
 }
 
 // StatementHeader is the branch's letterhead.

@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingARWorklistResponse, BillingAccountPaymentPolicy, BillingAccountPaymentPolicyInput, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingPage, BillingApplyCreditInput, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreateHoldRequest, BillingCreditApplication, BillingCreditApplicationReversed, BillingCreditChangeDecideInput, BillingCreditChangeInput, BillingCreditChangePage, BillingCreditChangeRequest, BillingCreditHold, BillingCreditHoldPage, BillingCreditMemoInput, BillingCreditMemoQuote, BillingCreditMemoQuoteInput, BillingCreditMemoResult, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingFinanceChargeRunList, BillingFinanceChargeRunResult, BillingFinanceChargeWaiver, BillingFinanceChargeWaiverList, BillingFinanceChargeWaiverRequest, BillingFinanceJob, BillingFinanceJobEnabledRequest, BillingFinanceJobList, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingHoldbackDueToRelease, BillingHoldbackRelease, BillingHoldbackReleaseInput, BillingHoldbackReversal, BillingHoldbackReversalInput, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromisePage, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderEnrolInput, BillingReminderEnrolResult, BillingReminderExemptInput, BillingReminderInput, BillingReminderResult, BillingReminderRulePage, BillingReminderSend, BillingReminderSendPage, BillingReverseCreditApplicationInput, BillingRunFinanceChargesRequest, BillingSendPaylinkRequest, BillingSendPaylinkResult, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementPreview, BillingStatementRunRequest, BillingStatementRunResult, BillingWriteOff, BillingWriteOffInput, BillingWriteOffReversalInput, BillingWriteOffReversed, PaymentCardAttemptSummary } from "./types.js";
+import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingARWorklistResponse, BillingAccountPaymentPolicy, BillingAccountPaymentPolicyInput, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingByJobPage, BillingAgingPage, BillingApplyCreditInput, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreateHoldRequest, BillingCreditApplication, BillingCreditApplicationReversed, BillingCreditChangeDecideInput, BillingCreditChangeInput, BillingCreditChangePage, BillingCreditChangeRequest, BillingCreditHold, BillingCreditHoldPage, BillingCreditMemoInput, BillingCreditMemoQuote, BillingCreditMemoQuoteInput, BillingCreditMemoResult, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingFinanceChargeRunList, BillingFinanceChargeRunResult, BillingFinanceChargeWaiver, BillingFinanceChargeWaiverList, BillingFinanceChargeWaiverRequest, BillingFinanceJob, BillingFinanceJobEnabledRequest, BillingFinanceJobList, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingHoldbackDueToRelease, BillingHoldbackRelease, BillingHoldbackReleaseInput, BillingHoldbackReversal, BillingHoldbackReversalInput, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingJobStatement, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromisePage, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderEnrolInput, BillingReminderEnrolResult, BillingReminderExemptInput, BillingReminderInput, BillingReminderResult, BillingReminderRulePage, BillingReminderSend, BillingReminderSendPage, BillingReverseCreditApplicationInput, BillingRunFinanceChargesRequest, BillingSendPaylinkRequest, BillingSendPaylinkResult, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementPreview, BillingStatementRunRequest, BillingStatementRunResult, BillingWriteOff, BillingWriteOffInput, BillingWriteOffReversalInput, BillingWriteOffReversed, PaymentCardAttemptSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -19,6 +19,21 @@ export async function billingGetAging(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "billingGetAging",
+  });
+}
+
+export async function billingGetAgingByJob(
+  client: ApiClient,
+  opts?: { branch_id?: string; as_of?: string; job_id?: string },
+  call?: ApiCallOptions
+): Promise<Result<BillingAgingByJobPage>> {
+  return client.request<BillingAgingByJobPage>({
+    method: "GET",
+    path: "/api/v1/ar/aging-by-job",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingGetAgingByJob",
   });
 }
 
@@ -293,6 +308,24 @@ export async function billingClearFinanceChargeWaiver(
   });
 }
 
+export async function billingGetJobStatement(
+  client: ApiClient,
+  customerID: string | number,
+  jobID: string | number,
+  opts?: { as_of?: string; format?: "html" },
+  call?: ApiCallOptions
+): Promise<Result<BillingJobStatement>> {
+  return client.request<BillingJobStatement>({
+    method: "GET",
+    path: "/api/v1/ar/customers/{customerID}/jobs/{jobID}/statement",
+    pathParams: { customerID, jobID },
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingGetJobStatement",
+  });
+}
+
 export async function billingGetAccountPaymentPolicy(
   client: ApiClient,
   customerID: string | number,
@@ -339,6 +372,23 @@ export async function billingGetCustomerStatement(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "billingGetCustomerStatement",
+  });
+}
+
+export async function billingGetCustomerStatementByJob(
+  client: ApiClient,
+  customerID: string | number,
+  opts?: { as_of?: string; format?: "html" },
+  call?: ApiCallOptions
+): Promise<Result<BillingJobStatement>> {
+  return client.request<BillingJobStatement>({
+    method: "GET",
+    path: "/api/v1/ar/customers/{customerID}/statement-by-job",
+    pathParams: { customerID },
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingGetCustomerStatementByJob",
   });
 }
 
