@@ -261,3 +261,24 @@ test('a pinned pin in its disabled state carries a non-brand ring and filled pin
   const head = declsFor(headerRules, ".icon-btn[aria-pressed='true'] svg path:last-child");
   assert.equal(head['fill'], 'currentColor', 'the pinned icon fills its head in currentColor');
 });
+
+// ── UX-145: nobody signed in, so the band claims no sync and no account ──────────────────────────
+
+test('signedIn false: no sync chip renders and the menu button carries no Account', () => {
+  const markup = visible(renderKit(ShellHeader, { ...BASE, user: '', signedIn: false, variant: 'band' }));
+  assert.doesNotMatch(markup, /class="chip"/);
+  assert.doesNotMatch(markup, /Synced/);
+  const button = actionButton(markup, 'account');
+  assert.notEqual(button, null, 'the menu stays reachable for Theme and Feedback');
+  assert.doesNotMatch(button, /Account/);
+  assert.doesNotMatch(button, /class="avatar"/);
+  assert.match(button, /class="menu-glyph"/);
+  assert.match(button, /aria-label="Menu"/);
+  assert.match(button, /aria-haspopup="menu"/);
+});
+
+test('signedIn defaults to true: the chip and the account button are unchanged for every other user of the band', () => {
+  const markup = visible(renderKit(ShellHeader, { ...BASE, variant: 'band' }));
+  assert.match(markup, /class="chip"/);
+  assert.match(actionButton(markup, 'account'), /Yard Team account/);
+});

@@ -53,9 +53,12 @@ test("signed in, the account menu carries Switch role and Sign out under their a
   expect(await signOut.getAttribute("data-action")).toBe("sign-out");
 });
 
-test("the DEMO chip and Synced chip ride the band: one DEMO marker, no amber strip", async ({ page }) => {
+test("the DEMO chip and Synced chip ride the band: one DEMO marker, no amber strip; signed out there is no Synced", async ({ page }) => {
   await page.goto("/");
   const band = page.locator("hh-shell-header");
+  await expect(band.getByText("DEMO", { exact: true })).toHaveCount(1);
+  await expect(band).not.toContainText("Synced");
+  await signIn(page);
   await expect(band.getByText("DEMO", { exact: true })).toHaveCount(1);
   await expect(band).toContainText("Synced");
   await expect(page.getByText("Everything on this box is invented demo data")).toHaveCount(0);
