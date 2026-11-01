@@ -112,6 +112,11 @@ export const homeStyles = css`
 
   /* -- the way in ------------------------------------------------------------------------ */
 
+  .signin-link {
+    white-space: nowrap;
+    color: var(--hh-accent-text);
+    font-weight: 600;
+  }
   .stage {
     max-width: 680px;
     margin: 0 auto;

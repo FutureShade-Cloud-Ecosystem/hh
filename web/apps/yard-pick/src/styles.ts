@@ -44,6 +44,7 @@ export const yardStyles = css`
   h3 { font-size: 16px; font-weight: 700; margin-bottom: var(--hh-s-8); }
   p { margin: 0 0 var(--hh-s-8); }
   .dim { color: var(--hh-text-dim); }
+  .dim a { color: var(--hh-accent-text); font-weight: 600; }
   .small { font-size: 14px; }
   .queue-sub { margin: 0 0 var(--hh-s-12); }
   .section-label {

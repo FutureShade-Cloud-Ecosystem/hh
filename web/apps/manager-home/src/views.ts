@@ -10,6 +10,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
+import { offlineLine, signInLine } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { widgetLink } from "./landing-links.js";
 import { roleWords } from "./role-words.js";
 import { gaugeSegments } from "./widget-shapes.js";
@@ -693,7 +694,7 @@ function money(cents: number): string {
 // -- the entry (the demo way in) -------------------------------------------------------------------------------
 
 export interface EntryView {
-  readonly flows: { kind: "loading" } | { kind: "unavailable"; status: number | null } | { kind: "ready"; flows: DemoFlow[] };
+  readonly flows: { kind: "loading" } | { kind: "unavailable"; status: number | null } | { kind: "signin" } | { kind: "offline"; reason: "offline" | "unavailable" | "rate_limited" } | { kind: "ready"; flows: DemoFlow[] };
   /** True while a mint is in flight: the cards go disabled and grey. */
   readonly busy: boolean;
   /** A refusal in words, shown beside the cards. */
@@ -715,6 +716,12 @@ const FLOW_BLURBS: Readonly<Record<string, string>> = {
 export function renderEntry(view: EntryView): TemplateResult {
   if (view.flows.kind === "loading") {
     return html`<div class="stage"><p class="notice-line" role="status">Loading the demo roles.</p></div>`;
+  }
+  if (view.flows.kind === "signin") {
+    return html`<div class="stage">${signInLine("Manager Home", "notice-line")}</div>`;
+  }
+  if (view.flows.kind === "offline") {
+    return html`<div class="stage">${offlineLine("Manager Home", view.flows.reason, "notice-line")}</div>`;
   }
   if (view.flows.kind === "unavailable") {
     const words =

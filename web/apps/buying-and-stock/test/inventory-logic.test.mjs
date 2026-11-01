@@ -3,6 +3,7 @@
 // computes money; the server decides every figure and every refusal.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   configWord,
   defaultShipETA,
@@ -116,6 +117,37 @@ test("a walled move is named for who may do it, and the branch fence's own sente
   assert.equal(refusalWords("reserve", "caller cannot access this branch", 403), "Caller cannot access this branch.");
   assert.equal(refusalWords("reserve", "The server fell over", 500), "The server hit a problem. Nothing was changed. Try again.");
   assert.equal(refusalWords("reserve", "", undefined), "The server could not be reached. Nothing was changed. Try again.");
+});
+
+test("on a dealer's own box the permission hints drop the demo roles clause and keep the rest", () => {
+  const box = { dealer: { name: "Acme Stone" } };
+  const hint = (action) => refusalWords(action, "Forbidden", 403, box);
+  assert.equal(
+    hint("write"),
+    "Writing here is for the seats the role matrix holds at work or manage: the Procurement Manager and the Yard Manager. A read-only role can look but not touch.",
+  );
+  assert.equal(
+    hint("reserve"),
+    "Holding stock, moving it between branches and setting the allocation policy are manage seats' moves on this surface: the Procurement Manager's.",
+  );
+  assert.equal(
+    hint("manage"),
+    "Moving stock between branches, holding it, and setting points and policy are manage seats' moves on this surface: the Procurement Manager's.",
+  );
+  assert.equal(hint("receive"), "Receiving an order into stock is a work move: the Yard Manager's and the Procurement Manager's.");
+  assert.equal(
+    hint("count-approve"),
+    "Approving a count and posting its variance are manager seats' moves: the Procurement Manager's. The maker never approves their own count.",
+  );
+  assert.equal(hint("transit-days"), "Setting a route's transit time is the tech admin's; no other role on this box holds it.");
+  for (const action of ["write", "reserve", "manage", "receive", "count-approve", "transit-days"]) {
+    assert.doesNotMatch(hint(action), /demo/i, action);
+  }
+});
+
+test("band-identity is imported once in the app root", () => {
+  const root = readFileSync(new URL("../src/app-root.ts", import.meta.url), "utf8");
+  assert.equal(root.match(/from "\.\/band-identity\.js"/g)?.length, 1);
 });
 
 test("a blank reorder point or order quantity is refused in words, never saved as a zero", () => {

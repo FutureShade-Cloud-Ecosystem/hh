@@ -12,6 +12,7 @@
 // out, so a new state added to the schema shows up strange (a bug report)
 // rather than confident and wrong (a lie nobody catches).
 
+import { servedConsoleConfig } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { houseDay, stampDay } from "../po/po-logic.js";
 import { formatQty } from "../po/po-money.js";
 
@@ -262,19 +263,24 @@ export function seatFor(roleCode: string): "manage" | "work" | "read" {
  * Receivables reads; the po_writers list walls the ordering; the transit-days
  * write is the tech admin's tier alone.
  */
-const WHO_MAY: Record<string, string> = {
-  write:
-    "Writing here is for the seats the role matrix holds at work or manage: the Procurement Manager and the Yard Manager among the demo roles. A read-only role can look but not touch.",
-  reserve:
-    "Holding stock, moving it between branches and setting the allocation policy are manage seats' moves on this surface: the Procurement Manager's among the demo roles.",
-  manage:
-    "Moving stock between branches, holding it, and setting points and policy are manage seats' moves on this surface: the Procurement Manager's among the demo roles.",
-  receive:
-    "Receiving an order into stock is a work move: the Yard Manager's and the Procurement Manager's among the demo roles.",
-  "count-approve":
-    "Approving a count and posting its variance are manager seats' moves: the Procurement Manager's among the demo roles. The maker never approves their own count.",
-  "transit-days": "Setting a route's transit time is the tech admin's; no demo role on this box holds it.",
-};
+function whoMay(served: unknown): Record<string, string> {
+  // A dealer's own box has no demo roles, so the hints drop that clause and keep the rest of the sentence.
+  const DEMO = served === null ? " among the demo roles" : "";
+  const noRole = served === null ? "no demo role" : "no other role";
+  return {
+    write:
+      `Writing here is for the seats the role matrix holds at work or manage: the Procurement Manager and the Yard Manager${DEMO}. A read-only role can look but not touch.`,
+    reserve:
+      `Holding stock, moving it between branches and setting the allocation policy are manage seats' moves on this surface: the Procurement Manager's${DEMO}.`,
+    manage:
+      `Moving stock between branches, holding it, and setting points and policy are manage seats' moves on this surface: the Procurement Manager's${DEMO}.`,
+    receive:
+      `Receiving an order into stock is a work move: the Yard Manager's and the Procurement Manager's${DEMO}.`,
+    "count-approve":
+      `Approving a count and posting its variance are manager seats' moves: the Procurement Manager's${DEMO}. The maker never approves their own count.`,
+    "transit-days": `Setting a route's transit time is the tech admin's; ${noRole} on this box holds it.`,
+  };
+}
 
 const SERVER_PREFIX = /^[a-z][a-z0-9]*: /;
 
@@ -290,11 +296,11 @@ function sentence(text: string): string {
  * names who may do the move; a 403 that carries the server's own sentence (the
  * branch fence's words) reads as it is, capitalised and ended.
  */
-export function refusalWords(action: string, error: string, status: number | undefined): string {
+export function refusalWords(action: string, error: string, status: number | undefined, served: unknown = servedConsoleConfig()): string {
   if (status === 403) {
     const words = sentence(error);
     if (words !== "" && words !== "Forbidden.") return words;
-    return WHO_MAY[action] ?? "Your role may not do that. Ask the General Manager.";
+    return whoMay(served)[action] ?? "Your role may not do that. Ask the General Manager.";
   }
   if (status === 401) return "Your sign in has ended. Sign in again.";
   if (status === undefined) return "The server could not be reached. Nothing was changed. Try again.";
