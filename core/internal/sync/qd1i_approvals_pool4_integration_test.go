@@ -116,8 +116,12 @@ func qd1iRun(t *testing.T, f *theGapFixture, side *pgxpool.Pool, hold pgx.Tx, qu
 	// most half the pool. Only the holders reach the store's transaction and
 	// the barrier; the other pushes wait for a holder to finish.
 	f.engine.WithKeyLedger(sync.NewPgKeyLedger(f.pool))
+	var since time.Time
+	if err := f.pool.QueryRow(context.Background(), `SELECT clock_timestamp()`).Scan(&since); err != nil {
+		t.Fatalf("read the database clock: %v", err)
+	}
 	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM sync_op_hashes WHERE scope = 'approvals'`)
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM sync_op_hashes WHERE scope = 'approvals' AND created_at >= $1`, since)
 	})
 	holders := max(1, n/2)
 

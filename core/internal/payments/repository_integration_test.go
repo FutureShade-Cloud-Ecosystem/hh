@@ -7,6 +7,7 @@ package payments
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit/legsweep"
 	"os"
 	"testing"
 
@@ -34,6 +35,7 @@ func intPool(t *testing.T) *pgxpool.Pool {
 		fail("integration DB not reachable: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	legsweep.Register(t, pool)
 	return pool
 }
 
