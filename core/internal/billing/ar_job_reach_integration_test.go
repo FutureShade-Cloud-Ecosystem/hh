@@ -4,9 +4,9 @@
 // job reads stay inside the caller's reach.
 //
 //   - a job statement is refused, in words, to a caller who cannot reach every branch the job's
-//     documents sit at, JSON and HTML alike, and gives the whole statement to one who can;
-
-// by job, though one of its invoices sits in reach: the money stays on the lines the caller sees.
+//     documents sit at, JSON and HTML alike, and gives the whole statement to one who can.
+//
+// The by job names (item 2) are in ar_job_reach_names_integration_test.go.
 package billing
 
 import (

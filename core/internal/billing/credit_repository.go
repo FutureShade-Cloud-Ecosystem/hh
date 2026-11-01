@@ -584,7 +584,9 @@ const agingByJobSelect = agingOpenAR + `
 		 GROUP BY o.customer_id
 	)
 	SELECT c.id::text, c.name, c.account_no::text,
-	       COALESCE(i.job_id::text, ''), COALESCE(j.job_no::text, ''), COALESCE(j.name, ''),
+	       COALESCE(i.job_id::text, ''),
+	       CASE WHEN $4::uuid[] IS NULL OR j.branch_id = ANY($4::uuid[]) THEN COALESCE(j.job_no::text, '') ELSE '' END,
+	       CASE WHEN $4::uuid[] IS NULL OR j.branch_id = ANY($4::uuid[]) THEN COALESCE(j.name, '') ELSE '' END,
 	       i.job_id IS NULL,
 	       COALESCE(SUM(i.bal) FILTER (WHERE $1::date <= i.due_date), 0),
 	       COALESCE(SUM(i.bal) FILTER (WHERE $1::date >  i.due_date AND $1::date <= i.due_date + 30), 0),
@@ -602,7 +604,7 @@ const agingByJobSelect = agingOpenAR + `
 	   AND ($4::uuid[] IS NULL OR i.branch_id = ANY($4::uuid[]))
 	   AND ($8 = '' OR i.job_id = NULLIF($8, '')::uuid)
 	   AND ($8 <> '' OR n.net <> 0)
-	 GROUP BY c.id, c.name, c.account_no, i.job_id, j.job_no, j.name
+	 GROUP BY c.id, c.name, c.account_no, i.job_id, j.job_no, j.name, j.branch_id
 	HAVING COALESCE(SUM(i.bal), 0) <> 0
 	 ORDER BY c.name, c.id, i.job_id NULLS FIRST`
 

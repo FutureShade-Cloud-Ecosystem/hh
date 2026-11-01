@@ -214,6 +214,11 @@ func (s *StatementService) StatementByJob(ctx context.Context, customerID string
 		if !seen {
 			base := parties.Jobs[ln.JobID]
 			base.JobID, base.AccountLevel = ln.JobID, ln.JobID == ""
+			// A job homed outside the caller's reach is not named (the customer module hides it too);
+			// the lines in reach and their money stay.
+			if ln.JobID != "" && !reach.Allows(parties.JobBranchID[ln.JobID]) {
+				base.JobNo, base.JobName = "", ""
+			}
 			sec = &base
 			byJob[ln.JobID] = sec
 			order = append(order, ln.JobID)
@@ -261,6 +266,9 @@ func RenderJobStatementHTML(h StatementHeader, st JobStatement) string {
 		title := "Account level"
 		if !sec.AccountLevel {
 			title = "Job " + sec.JobNo + ", " + sec.JobName
+			if sec.JobNo == "" && sec.JobName == "" {
+				title = "A job at another branch"
+			}
 		}
 		b.WriteString(`<h3 style="margin:24px 0 4px;font-size:15px">` + esc(title) + `</h3><table style="width:100%;border-collapse:collapse"><tbody>`)
 		for _, ln := range sec.Lines {
