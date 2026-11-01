@@ -877,6 +877,13 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithUserLinker(link).
 		RegisterRoutes(r, g)
 
+	// THE FINANCE CHARGE DOORS (W3 FC-1b). The Controller presses a house month's finance charge run
+	// for a branch, reads a branch's runs, and sets or clears a customer's waiver (the Financial
+	// Controller's act alone). The run and the waiver are recorded through the real audit service.
+	newFinanceChargeHandler(pool, spine.auditSvc).
+		WithUserLinker(link).
+		RegisterRoutes(r, g)
+
 	// The invoices and payments sync scopes (HH-3.5 follow-up, both
 	// server_wins) register here, beside the collaborators their doors
 	// run through: the invoices Store settles documents through the

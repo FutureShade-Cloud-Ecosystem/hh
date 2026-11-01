@@ -41,8 +41,9 @@ test("two fresh generations are byte-identical and match the committed tree", ()
     // revaluation routes (purchasingRunAPRevaluation, purchasingReverseAPRevaluation and
     // purchasingListAPRevaluations), plus RT-3's billingListHoldbackDueToRelease and
     // billingReleaseHoldback: 839, plus the RT-3 fix round's billingReverseHoldbackRelease, lienRecordPreservedLien,
-    // lienDischargeLien and lienSetPreservationDates: 843.
-    if (!out1.includes("843 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
+    // lienDischargeLien and lienSetPreservationDates: 843, plus FC-1b's four finance charge doors
+    // (billingRunFinanceCharges, billingListFinanceCharges, billingSetFinanceChargeWaiver and billingClearFinanceChargeWaiver): 847.
+    if (!out1.includes("847 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
     const a = snapshot(one);
     const b = snapshot(two);
     const c = snapshot(committed);

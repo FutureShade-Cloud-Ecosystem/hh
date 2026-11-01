@@ -1565,6 +1565,59 @@ type BillingCreditChangePage struct {
 	Limit      *int32                       `json:"limit,omitempty"`
 }
 
+type BillingRunFinanceChargesRequest struct {
+	BranchId string `json:"branch_id"`
+	Month    string `json:"month"`
+}
+
+type BillingFinanceCharge struct {
+	CustomerId   string `json:"customer_id"`
+	PastDueCents int64  `json:"past_due_cents"`
+	ChargeCents  int64  `json:"charge_cents"`
+	InvoiceId    string `json:"invoice_id"`
+	InvoiceNo    string `json:"invoice_no"`
+}
+
+type BillingFinanceChargeRunResult struct {
+	BranchId       string                 `json:"branch_id"`
+	Month          string                 `json:"month"`
+	MonthEnd       string                 `json:"month_end"`
+	Charged        int32                  `json:"charged"`
+	AlreadyCharged int32                  `json:"already_charged"`
+	ChargedCents   int64                  `json:"charged_cents"`
+	PastDueCents   int64                  `json:"past_due_cents"`
+	Charges        []BillingFinanceCharge `json:"charges"`
+}
+
+type BillingFinanceChargeRunMonth struct {
+	BranchId     string                 `json:"branch_id"`
+	Month        string                 `json:"month"`
+	MonthEnd     string                 `json:"month_end"`
+	Charged      int32                  `json:"charged"`
+	ChargedCents int64                  `json:"charged_cents"`
+	PastDueCents int64                  `json:"past_due_cents"`
+	Charges      []BillingFinanceCharge `json:"charges"`
+}
+
+type BillingFinanceChargeRunList struct {
+	Items      []BillingFinanceChargeRunMonth `json:"items"`
+	NextCursor *string                        `json:"next_cursor"`
+}
+
+type BillingFinanceChargeWaiverRequest struct {
+	Reason string `json:"reason"`
+}
+
+type BillingFinanceChargeWaiver struct {
+	CustomerId string     `json:"customer_id"`
+	Reason     string     `json:"reason"`
+	Active     bool       `json:"active"`
+	WaivedBy   *string    `json:"waived_by,omitempty"`
+	WaivedAt   time.Time  `json:"waived_at"`
+	ClearedBy  *string    `json:"cleared_by,omitempty"`
+	ClearedAt  *time.Time `json:"cleared_at,omitempty"`
+}
+
 type AssistArgSpec struct {
 	Name     string `json:"name"`
 	Label    string `json:"label"`

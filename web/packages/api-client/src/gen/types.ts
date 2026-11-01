@@ -1372,6 +1372,52 @@ export type BillingCreditChangePage = {
   next_cursor?: string | null;
   limit?: number;
 };
+export type BillingRunFinanceChargesRequest = {
+  branch_id: string;
+  month: string;
+};
+export type BillingFinanceCharge = {
+  customer_id: string;
+  past_due_cents: number;
+  charge_cents: number;
+  invoice_id: string;
+  invoice_no: string;
+};
+export type BillingFinanceChargeRunResult = {
+  branch_id: string;
+  month: string;
+  month_end: string;
+  charged: number;
+  already_charged: number;
+  charged_cents: number;
+  past_due_cents: number;
+  charges: BillingFinanceCharge[];
+};
+export type BillingFinanceChargeRunMonth = {
+  branch_id: string;
+  month: string;
+  month_end: string;
+  charged: number;
+  charged_cents: number;
+  past_due_cents: number;
+  charges: BillingFinanceCharge[];
+};
+export type BillingFinanceChargeRunList = {
+  items: BillingFinanceChargeRunMonth[];
+  next_cursor: string | null;
+};
+export type BillingFinanceChargeWaiverRequest = {
+  reason: string;
+};
+export type BillingFinanceChargeWaiver = {
+  customer_id: string;
+  reason: string;
+  active: boolean;
+  waived_by?: string;
+  waived_at: string;
+  cleared_by?: string;
+  cleared_at?: string;
+};
 export type AssistArgSpec = {
   name: string;
   label: string;
