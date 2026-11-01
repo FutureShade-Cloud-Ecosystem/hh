@@ -1,9 +1,10 @@
 //go:build integration
 
 // syncscope_ux133_create_ids_integration_test.go: UX-133 round 2. The messages create takes the canonical id form for
-// both of its id fields. A member on a free key who pushed a thread_root_id (or a channel_id) Postgres refuses used to
-// fail the whole push with 22P02, again on every retry, so one bad op stuck the outbox. The body's shape is now
-// refused for that op alone, and the refusal reads the same for every caller and every key state.
+// both of its id fields. A member on a free key who pushed a thread_root_id Postgres refuses used to fail the whole
+// push with 22P02, again on every retry, so one bad op stuck the outbox; a bad channel_id met the room fence's "row not
+// found" instead. The body's shape is now refused for that op alone, and the refusal reads the same for every caller
+// and every key state.
 package messaging
 
 import (
