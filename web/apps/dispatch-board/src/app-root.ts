@@ -317,7 +317,10 @@ export class DispatchBoardApp extends HHElement {
   // The app header's demo banner belongs to a demo page only (UX-127): a dealer's own box, served a
   // console config, renders the header without the demo attribute. Two whole templates rather than a
   // bound boolean, because the template position gate allows no boolean binding but ?disabled.
-  #header(signedIn: boolean): TemplateResult {
+  // The signed-out header's word follows the door's state (UX-131): "Offline" for a lost signal, "Server unavailable"
+  // for a server not answering, "Server busy" for a throttle, "Sign in" otherwise. A blank word would fall back to
+  // the demo picker's "Pick a role".
+  #header(signedIn: boolean, offlineDoor: "offline" | "unavailable" | "rate_limited" | null = null): TemplateResult {
     const tools = this.renderThemeControl();
     const demo = servedConsoleConfig() === null;
     if (signedIn) {
@@ -325,9 +328,11 @@ export class DispatchBoardApp extends HHElement {
         ? html`<hos-app-header signed-in demo compact product-name="Dispatch">${tools}</hos-app-header>`
         : html`<hos-app-header signed-in compact product-name="Dispatch">${tools}</hos-app-header>`;
     }
-    return demo
-      ? html`<hos-app-header demo compact product-name="Dispatch">${tools}</hos-app-header>`
-      : html`<hos-app-header compact word="Sign in" product-name="Dispatch">${tools}</hos-app-header>`;
+    if (demo) return html`<hos-app-header demo compact product-name="Dispatch">${tools}</hos-app-header>`;
+    if (offlineDoor === "offline") return html`<hos-app-header compact word="Offline" product-name="Dispatch">${tools}</hos-app-header>`;
+    if (offlineDoor === "unavailable") return html`<hos-app-header compact word="Server unavailable" product-name="Dispatch">${tools}</hos-app-header>`;
+    if (offlineDoor === "rate_limited") return html`<hos-app-header compact word="Server busy" product-name="Dispatch">${tools}</hos-app-header>`;
+    return html`<hos-app-header compact word="Sign in" product-name="Dispatch">${tools}</hos-app-header>`;
   }
 
   private renderSignedIn(): TemplateResult {
@@ -345,7 +350,7 @@ export class DispatchBoardApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      ${this.#header(false)}
+      ${this.#header(false, this.#entryView.flows.kind === "offline" ? this.#entryView.flows.reason : null)}
       <main class="desk">
         ${this.#narrow ? this.#mobileTools() : html``}
         <h1>Dispatch and Load Building</h1>
