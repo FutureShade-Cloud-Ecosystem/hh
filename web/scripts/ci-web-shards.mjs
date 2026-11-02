@@ -25,6 +25,9 @@ import { fileURLToPath } from "node:url";
 
 export const DEFAULT_WEIGHT = 0.8;
 export const EVENING_GUARD = "evening-guard-web";
+// The two days the evening guard pins drive-run's evening legs to, far from any clock change.
+export const EVENING_DAYLIGHT_DAY = "2027-07-14"; // mid summer: the dealer's zone is on daylight time
+export const EVENING_STANDARD_DAY = "2027-01-13"; // mid winter: the dealer's zone is on standard time
 export const WORK_SHELL_ASSEMBLED = "work-shell-assembled";
 export const BROWSER_PACKAGE = "design-system";
 // The two acceptance files whose tests are the assembled unit's point: they
@@ -58,7 +61,7 @@ export const WEIGHTS = {
   "pro-kit": 0.1,
   "shell-chrome": 0.1,
   "work-offline": 0.1,
-  [EVENING_GUARD]: 3.7,
+  [EVENING_GUARD]: 4.5, // 3.7 plus 0.8 for the two pinned drive-run reruns, measured locally
   [WORK_SHELL_ASSEMBLED]: 1.0, // read from the per unit timestamps of its first sharded run, as above
 };
 // Playwright's --shard=k/m deals whole test files out, and a part's time
@@ -208,6 +211,15 @@ function runUnit(unit, pkgByName) {
     const env = { TZ: "America/Toronto" };
     run("npx --no-install playwright test test/run-sheet.pw.ts", join(webRoot, "apps/drive-run"), env);
     run("npx --no-install playwright test test/sale.pw.ts", join(webRoot, "apps/counter-till"), env);
+    // The dealer's evening clock reads an hour apart on a daylight day and a standard day, so
+    // the two drive-run specs rerun on one of each, pinned through DRIVE_EVENING_DATE.
+    for (const day of [EVENING_DAYLIGHT_DAY, EVENING_STANDARD_DAY]) {
+      run(
+        "npx --no-install playwright test test/ux-17bc.pw.ts test/run-sheet.pw.ts",
+        join(webRoot, "apps/drive-run"),
+        { ...env, DRIVE_EVENING_DATE: day },
+      );
+    }
     return 1;
   }
   if (unit.pkg === WORK_SHELL_ASSEMBLED) {

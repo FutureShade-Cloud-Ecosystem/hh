@@ -1,7 +1,7 @@
 // HH Drive, sub item 2: today's run sheet as the landing, a stop's detail, and
 // the moves loaded and en route. Everything runs against the stub, which
 // answers in the core's shapes and refuses in the core's words.
-import { test, expect, driverHandoff, houseDay, resetStub, useScenario } from "./helpers.js";
+import { test, expect, driverHandoff, houseDay, pinnedUtcAt, resetStub, useScenario } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -33,11 +33,7 @@ test("the landing is today's run: the run, its crew line and its stops in stop o
 // Each leg pins the page's clock AND the stub's clock to its own instant, so it
 // is red on wrong code at any wall hour (the stub builds its world on the dealer's
 // day at its pinned instant, so a UTC day asked for in the evening finds nothing).
-function utcAt(hours: number, minutes: number): number {
-  const at = new Date();
-  at.setUTCHours(hours, minutes, 0, 0);
-  return at.getTime();
-}
+const utcAt = pinnedUtcAt;
 
 for (const [label, instant, differs] of [
   ["half past midnight UTC, the previous evening in the dealer's zone", utcAt(0, 30), true],
