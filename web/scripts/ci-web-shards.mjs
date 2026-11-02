@@ -27,6 +27,9 @@ export const DEFAULT_WEIGHT = 0.8;
 export const EVENING_GUARD = "evening-guard-web";
 export const WORK_SHELL_ASSEMBLED = "work-shell-assembled";
 export const BROWSER_PACKAGE = "design-system";
+// The two acceptance files whose tests are the assembled unit's point: they
+// exercise the real desk bundles and only run when WS_DIST names a dist.
+export const ASSEMBLED_LEGS = ["framed-band.pw.ts", "real-bundles.pw.ts"];
 
 // Minutes of runner time per unit, read from the per unit timestamps of the
 // first sharded run on a pull request (the unit's own typecheck plus test,
@@ -152,6 +155,37 @@ export function splitTestScript(script) {
   });
 }
 
+// Passed tests per real-bundle leg in a Playwright JSON report. The report is
+// one suite per file, each suite and spec naming its file, each spec carrying
+// one test per project whose `results` hold a run status each; a test counts
+// only when a result actually passed, so a skipped test never does.
+export function assembledLegPasses(report) {
+  const passed = {};
+  for (const leg of ASSEMBLED_LEGS) passed[leg] = 0;
+  const stack = [...(report?.suites ?? [])];
+  while (stack.length > 0) {
+    const suite = stack.pop();
+    for (const child of suite?.suites ?? []) stack.push(child);
+    for (const spec of suite?.specs ?? []) {
+      const leg = ASSEMBLED_LEGS.find((name) => (spec?.file ?? suite?.file ?? "").endsWith(name));
+      if (leg) {
+        passed[leg] += (spec?.tests ?? []).filter((test) =>
+          (test?.results ?? []).some((result) => result?.status === "passed")
+        ).length;
+      }
+    }
+  }
+  return passed;
+}
+
+// False when a leg stopped running. Playwright exits 0 when every test skips,
+// so an emptied WS_DIST or a stray test.skip would otherwise turn the assembled
+// unit into a green no-op; the unit fails loud on this instead.
+export function assembledLegsRan(report) {
+  const passed = assembledLegPasses(report);
+  return ASSEMBLED_LEGS.every((leg) => passed[leg] > 0);
+}
+
 function run(command, cwd, extraEnv = {}) {
   console.log(`\n$ ${command}   (in ${basename(cwd)})`);
   const bins = [join(cwd, "node_modules/.bin"), join(webRoot, "node_modules/.bin")];
@@ -180,13 +214,33 @@ function runUnit(unit, pkgByName) {
     // The only gate on the framed band, the framed account menu and the framed
     // sign out: the same acceptance suite, on the real desk bundles the host
     // frames. Without --config Playwright would pick up the node unit files.
+    // Playwright exits 0 when every test skips, so the run also writes its
+    // JSON report and the unit fails loud unless both real-bundle legs passed
+    // a test: an emptied WS_DIST or a stray test.skip fails here, not green.
     const repoRoot = join(webRoot, "..");
+    const reportPath = join(webRoot, "apps/work-shell", "test-results", "assembled-legs.json");
     run("bash tauri/hh-work/assemble-dist.sh", repoRoot);
     run(
-      "npx --no-install playwright test --config test/acceptance.config.ts",
+      "npx --no-install playwright test --config test/acceptance.config.ts --reporter=list,json",
       join(webRoot, "apps/work-shell"),
-      { WS_DIST: join(repoRoot, "tauri/hh-work/dist") },
+      {
+        WS_DIST: join(repoRoot, "tauri/hh-work/dist"),
+        PLAYWRIGHT_JSON_OUTPUT_FILE: reportPath,
+      },
     );
+    if (!existsSync(reportPath)) {
+      console.error("the assembled real-bundle legs did not run: Playwright wrote no JSON report");
+      process.exit(1);
+    }
+    const report = JSON.parse(readFileSync(reportPath, "utf8"));
+    if (!assembledLegsRan(report)) {
+      const passed = assembledLegPasses(report);
+      const zero = ASSEMBLED_LEGS.filter((leg) => passed[leg] === 0)
+        .map((leg) => `${leg} 0 passed`)
+        .join(", ");
+      console.error(`the assembled real-bundle legs did not run: ${zero}`);
+      process.exit(1);
+    }
     return 1;
   }
   const pkg = pkgByName.get(unit.pkg);

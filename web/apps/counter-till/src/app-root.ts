@@ -1393,6 +1393,8 @@ export class CounterTillApp extends HHElement {
       band.groups = [];
       band.currentKey = "";
       band.syncState = "idle";
+      // UX-145: no sync chip and no account claim while nobody is signed in (the sign in and offline doors).
+      band.signedIn = this.#surface !== "entry";
       band.variant = "band";
       band.accountMenu = html`
         ${this.#till !== null

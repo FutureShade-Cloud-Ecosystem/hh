@@ -46,3 +46,17 @@ test("a console box whose console answers 503 reads the offline line: no sign in
   await expect(page.locator("p.notice")).toContainText("Quote Desk will try again on its own.");
   await expect(page.locator("body")).not.toContainText(/demo roles|sign in/i);
 });
+
+test("UX-145: the console sign in door and the offline door claim no sync and no account", async ({ page }) => {
+  for (const status of [401, 503]) {
+    await serveConsole(page, status);
+    await page.goto("/");
+    await page.locator("p.notice").waitFor();
+    const band = page.getByTestId("framed-band");
+    await expect(band).toBeVisible();
+    await expect(band).not.toContainText("Synced");
+    await expect(band).not.toContainText("Account");
+    await expect(band.getByRole("button", { name: "Menu" })).toBeVisible();
+    await page.unrouteAll();
+  }
+});

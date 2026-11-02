@@ -435,6 +435,13 @@ const styles = css`
     font-weight: 600;
     flex: none;
   }
+  .menu-glyph {
+    width: 30px;
+    height: 30px;
+    padding: 6px;
+    box-sizing: border-box;
+    flex: none;
+  }
   .account-word {
     max-width: 160px;
     overflow: hidden;
@@ -544,6 +551,7 @@ export class ShellHeader extends HHElement {
     demo: { type: Boolean, attribute: 'demo' },
     assist: { type: Boolean, attribute: 'assist' },
     user: { attribute: 'user' },
+    signedIn: { attribute: false },
     breadcrumb: { attribute: 'breadcrumb' },
     groups: { attribute: false },
     currentKey: { attribute: 'current-key' },
@@ -567,6 +575,8 @@ export class ShellHeader extends HHElement {
   declare demo: boolean;
   /** The signed in person's role label; drives the initials. */
   declare user: string;
+  /** False while nobody is signed in: no sync chip, no avatar, and the account button reads Menu. A JS property the apps set; true by default so every other user of the band is unchanged. */
+  declare signedIn: boolean;
   /** The band's breadcrumb words, the model's answer for where the person is. */
   declare breadcrumb: string;
   /** The switcher groups: the model's answer for the person's roles. */
@@ -613,6 +623,7 @@ export class ShellHeader extends HHElement {
     this.demo = false;
     this.assist = false;
     this.user = '';
+    this.signedIn = true;
     this.breadcrumb = '';
     this.groups = [];
     this.currentKey = '';
@@ -863,11 +874,13 @@ export class ShellHeader extends HHElement {
         </button>
         <div class="cluster">
           ${this.demo && isBand ? html`<span class="demo" role="note">DEMO</span>` : nothing}
-          <span class="chip" data-state=${this.syncState} data-kind=${chip.kind} data-alarm=${chip.alarm ? 'true' : 'false'}>
+          ${this.signedIn
+            ? html`<span class="chip" data-state=${this.syncState} data-kind=${chip.kind} data-alarm=${chip.alarm ? 'true' : 'false'}>
             <span class="dot" aria-hidden="true"></span>
             <span class="word">${chip.label}</span>
             ${chip.note !== '' ? html`<span class="note">${chip.note}</span>` : nothing}
-          </span>
+          </span>`
+            : nothing}
           ${this.assist
             ? html`<button class="icon-btn" type="button" data-action="assist" aria-label="Ask TanyAI" title="Ask TanyAI">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -902,10 +915,12 @@ export class ShellHeader extends HHElement {
             data-action="account"
             aria-haspopup=${isBand ? 'menu' : nothing}
             aria-expanded=${isBand ? (this.accountOpen ? 'true' : 'false') : nothing}
-            aria-label=${this.user === '' ? 'Account' : `${this.user} account`}
+            aria-label=${!this.signedIn ? 'Menu' : this.user === '' ? 'Account' : `${this.user} account`}
           >
-            <span class="avatar" aria-hidden="true" data-initials=${initials}>${initials}</span>
-            <span class="account-word">${this.user === '' ? 'Account' : this.user}</span>
+            ${this.signedIn
+              ? html`<span class="avatar" aria-hidden="true" data-initials=${initials}>${initials}</span>`
+              : html`<svg class="menu-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>`}
+            <span class="account-word">${!this.signedIn ? 'Menu' : this.user === '' ? 'Account' : this.user}</span>
           </button>
         </div>
       </header>
