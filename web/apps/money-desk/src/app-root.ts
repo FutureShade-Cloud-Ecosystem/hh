@@ -833,7 +833,7 @@ export class MoneyDeskApp extends HHElement {
         <main class="desk">
           <h1>Money Desk</h1>
           <p class="dim">Receivables for the whole company: the aging, payments, promises and the bounced queue.${demoNote(servedConsoleConfig())}</p>
-          ${renderEntry(this.#entryView, { app: "Money Desk" })}
+          ${renderEntry(this.#entryView, { app: "Money Desk", title: false })}
         </main>
       `}
     `;

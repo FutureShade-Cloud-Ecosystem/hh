@@ -826,6 +826,6 @@ export function renderEntry(view: EntryView): TemplateResult {
     <h1>Yard Pick</h1>
     <p class="dim">The pick queue, what was pulled, skids, short picks and staging. On your phone, in the yard.${demoNote(servedConsoleConfig())}</p>
     ${view.message !== null ? html`<p class="alert alert-error" role="alert">${view.message}</p>` : nothing}
-    ${body}
+    <div class="stage">${body}</div>
   `;
 }

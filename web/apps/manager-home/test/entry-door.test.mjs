@@ -13,26 +13,30 @@ function words(value) {
 }
 const markup = (v) => words(v).replace(/\s+/g, " ");
 const text = (v) => markup(v).replace(/<[^>]*>/g, "").trim();
+// UX-143: the line doors carry the app's name as their title above the line. The line's own
+// words are read under that title, so the exact-word pins below stay on the line alone.
+const line = (v) => text(v).replace(/^Manager Home/, "").trim();
 const view = (flows) => ({ flows, busy: false, message: null });
 
 test("the sign in state names Manager Home, links to the front door and never says demo", () => {
   const door = renderEntry(view({ kind: "signin" }));
-  assert.match(text(door), /^Sign in to open Manager Home\./);
+  assert.match(markup(door), /<h1 class="headline">Manager Home<\/h1>/);
+  assert.match(line(door), /^Sign in to open Manager Home\./);
   assert.match(markup(door), /href="\/"/);
   assert.doesNotMatch(text(door), /demo/i);
 });
 
 test("the demo page messages are exactly as they were", () => {
-  assert.equal(text(renderEntry(view({ kind: "loading" }))), "Loading the demo roles.");
+  assert.equal(line(renderEntry(view({ kind: "loading" }))), "Loading the demo roles.");
   assert.equal(
-    text(renderEntry(view({ kind: "unavailable", status: null }))),
+    line(renderEntry(view({ kind: "unavailable", status: null }))),
     "The demo roles could not be loaded: the call did not go through. Reload to try again.",
   );
   assert.equal(
-    text(renderEntry(view({ kind: "unavailable", status: 404 }))),
+    line(renderEntry(view({ kind: "unavailable", status: 404 }))),
     "This deployment does not serve the demo sign-in, so there are no role cards to tap.",
   );
-  assert.equal(text(renderEntry(view({ kind: "ready", flows: [] }))), "The demo sign-in answered with no roles: there is nothing to tap.");
+  assert.equal(line(renderEntry(view({ kind: "ready", flows: [] }))), "The demo sign-in answered with no roles: there is nothing to tap.");
 });
 
 test("Round 2: the offline state says it cannot reach the server, with no demo roles and no sign in", () => {

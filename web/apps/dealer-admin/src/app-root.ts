@@ -2328,17 +2328,19 @@ export class DealerAdminApp extends HHElement {
 
   private renderEntry(): TemplateResult {
     const view = this.#entryView;
+    // The line doors carry the app's name as their title, the way the shared
+    // door does (UX-143); the stage sits on the page's own left gutter.
     if (view.flows.kind === "loading") {
-      return html`<div class="stage"><p class="notice-line" role="status">Loading the demo roles.</p></div>`;
+      return html`<div class="stage"><h1 class="headline">Dealer Admin</h1><p class="notice-line" role="status">Loading the demo roles.</p></div>`;
     }
     if (view.flows.kind === "signin") {
-      return html`<div class="stage">${signInLine("Dealer Admin", "notice-line")}</div>`;
+      return html`<div class="stage"><h1 class="headline">Dealer Admin</h1>${signInLine("Dealer Admin", "notice-line")}</div>`;
     }
     if (view.flows.kind === "offline") {
-      return html`<div class="stage">${offlineLine("Dealer Admin", view.flows.reason, "notice-line")}</div>`;
+      return html`<div class="stage"><h1 class="headline">Dealer Admin</h1>${offlineLine("Dealer Admin", view.flows.reason, "notice-line")}</div>`;
     }
     if (view.flows.kind === "unavailable") {
-      return html`<div class="stage"><p class="notice-line" role="status">The demo roles could not be loaded. Reload to try again.</p></div>`;
+      return html`<div class="stage"><h1 class="headline">Dealer Admin</h1><p class="notice-line" role="status">The demo roles could not be loaded. Reload to try again.</p></div>`;
     }
     if (view.flows.flows.length === 0) {
       return html`<div class="stage"><p class="notice-line" role="status">The demo sign-in answered with no roles: there is nothing to tap.</p></div>`;

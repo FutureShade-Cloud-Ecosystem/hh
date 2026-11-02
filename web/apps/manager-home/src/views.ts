@@ -721,14 +721,16 @@ const FLOW_BLURBS: Readonly<Record<string, string>> = {
 
 /** The way in: this app's own door, one card per demo role, the home each role opens. */
 export function renderEntry(view: EntryView): TemplateResult {
+  // The line doors carry the app's name as their title, the way the shared
+  // door does (UX-143); the stage sits on the page's own left gutter.
   if (view.flows.kind === "loading") {
-    return html`<div class="stage"><p class="notice-line" role="status">Loading the demo roles.</p></div>`;
+    return html`<div class="stage"><h1 class="headline">Manager Home</h1><p class="notice-line" role="status">Loading the demo roles.</p></div>`;
   }
   if (view.flows.kind === "signin") {
-    return html`<div class="stage">${signInLine("Manager Home", "notice-line")}</div>`;
+    return html`<div class="stage"><h1 class="headline">Manager Home</h1>${signInLine("Manager Home", "notice-line")}</div>`;
   }
   if (view.flows.kind === "offline") {
-    return html`<div class="stage">${offlineLine("Manager Home", view.flows.reason, "notice-line")}</div>`;
+    return html`<div class="stage"><h1 class="headline">Manager Home</h1>${offlineLine("Manager Home", view.flows.reason, "notice-line")}</div>`;
   }
   if (view.flows.kind === "unavailable") {
     const words =
@@ -737,7 +739,7 @@ export function renderEntry(view: EntryView): TemplateResult {
         : view.flows.status === null
           ? "The demo roles could not be loaded: the call did not go through. Reload to try again."
           : "The demo roles could not be loaded. Reload to try again.";
-    return html`<div class="stage"><p class="notice-line" role="status">${words}</p></div>`;
+    return html`<div class="stage"><h1 class="headline">Manager Home</h1><p class="notice-line" role="status">${words}</p></div>`;
   }
   if (view.flows.flows.length === 0) {
     return html`<div class="stage"><p class="notice-line" role="status">The demo sign-in answered with no roles: there is nothing to tap.</p></div>`;
