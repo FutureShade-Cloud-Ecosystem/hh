@@ -10,6 +10,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"strings"
@@ -65,7 +66,16 @@ type JobStatementParties struct {
 type statementByJobStore interface {
 	StatementLinesByJob(ctx context.Context, customerID string, asOf time.Time, reach BranchReach) ([]StatementLine, error)
 	JobStatementParties(ctx context.Context, customerID string) (JobStatementParties, error)
+	// JobDocumentBranches is every branch the job's documents sit at, whatever the caller's reach.
+	JobDocumentBranches(ctx context.Context, customerID, jobID string) ([]string, error)
 }
+
+// ErrJobBranchesOutOfReach refuses a job statement to a caller who cannot reach every branch the job's
+// documents sit at: a figure cut to the caller's branches would read as the job's whole account.
+var ErrJobBranchesOutOfReach = errors.New("billing: this job has documents at a branch the caller cannot see")
+
+// JobBranchesOutOfReachWords is what the caller is told, and it names why.
+const JobBranchesOutOfReachWords = "this job has documents at a branch you cannot see; ask someone who can reach every branch on it"
 
 // JobStatementParties reads the customer's name, its jobs and the contacts a statement goes to.
 func (r *Repository) JobStatementParties(ctx context.Context, customerID string) (JobStatementParties, error) {
@@ -150,6 +160,17 @@ func (s *StatementService) StatementByJob(ctx context.Context, customerID string
 		if !known || (!reach.Global && !reach.Allows(branch)) {
 			return JobStatement{}, ErrNotFound
 		}
+		if !reach.Global {
+			docBranches, derr := st.JobDocumentBranches(ctx, customerID, jobID)
+			if derr != nil {
+				return JobStatement{}, derr
+			}
+			for _, b := range docBranches {
+				if !reach.Allows(b) {
+					return JobStatement{}, ErrJobBranchesOutOfReach
+				}
+			}
+		}
 	}
 	lines, err := st.StatementLinesByJob(ctx, customerID, asOf, reach)
 	if err != nil {
@@ -166,9 +187,18 @@ func (s *StatementService) StatementByJob(ctx context.Context, customerID string
 		if !seen {
 			base := parties.Jobs[ln.JobID]
 			base.JobID, base.AccountLevel = ln.JobID, ln.JobID == ""
+			// A job homed outside the caller's reach is not named (the customer module hides it too);
+			// the lines in reach and their money stay.
+			// Nor is it identified: its id is left out of the section and its lines too.
+			if ln.JobID != "" && !reach.Allows(parties.JobBranchID[ln.JobID]) {
+				base.JobNo, base.JobName, base.JobID = "", "", ""
+			}
 			sec = &base
 			byJob[ln.JobID] = sec
 			order = append(order, ln.JobID)
+		}
+		if sec.JobID == "" && ln.JobID != "" {
+			ln.JobID = ""
 		}
 		sec.Lines = append(sec.Lines, ln)
 		sec.SubtotalCents = ln.BalanceRun
@@ -213,6 +243,9 @@ func RenderJobStatementHTML(h StatementHeader, st JobStatement) string {
 		title := "Account level"
 		if !sec.AccountLevel {
 			title = "Job " + sec.JobNo + ", " + sec.JobName
+			if sec.JobNo == "" && sec.JobName == "" {
+				title = "A job at another branch"
+			}
 		}
 		b.WriteString(`<h3 style="margin:24px 0 4px;font-size:15px">` + esc(title) + `</h3><table style="width:100%;border-collapse:collapse"><tbody>`)
 		for _, ln := range sec.Lines {

@@ -17,6 +17,8 @@ import {
   assign,
   splitTestScript,
   validatePackages,
+  assembledLegPasses,
+  assembledLegsRan,
 } from "./ci-web-shards.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -142,4 +144,114 @@ test("guards: ts sources without typecheck, test dir without test script, no sui
   } finally {
     for (const r of [withTs, withDir, none]) rmSync(r, { recursive: true });
   }
+});
+
+// Hand-made Playwright JSON reports, the shape the json reporter writes: one
+// suite per file, each suite and spec naming its file, each test carrying its
+// outcome in `status` and one result per run with "passed" or "skipped".
+const BOTH_LEGS_PASSED = {
+  suites: [
+    {
+      title: "framed-band.pw.ts",
+      file: "framed-band.pw.ts",
+      column: 0,
+      line: 0,
+      specs: [],
+      suites: [
+        {
+          title: "the framed band",
+          file: "framed-band.pw.ts",
+          column: 0,
+          line: 6,
+          specs: [
+            {
+              title: "lands each role on its own app in the frame",
+              file: "framed-band.pw.ts",
+              tests: [{ status: "expected", results: [{ status: "passed" }] }],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      title: "real-bundles.pw.ts",
+      file: "real-bundles.pw.ts",
+      column: 0,
+      line: 0,
+      specs: [
+        {
+          title: "opens every app for the till role",
+          file: "real-bundles.pw.ts",
+          tests: [
+            { status: "expected", results: [{ status: "passed" }] },
+            { status: "expected", results: [{ status: "passed" }] },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+const ALL_SKIPPED = {
+  suites: [
+    {
+      title: "framed-band.pw.ts",
+      file: "framed-band.pw.ts",
+      column: 0,
+      line: 0,
+      specs: [
+        {
+          title: "lands each role on its own app in the frame",
+          file: "framed-band.pw.ts",
+          tests: [{ status: "skipped", results: [] }],
+        },
+      ],
+    },
+    {
+      title: "real-bundles.pw.ts",
+      file: "real-bundles.pw.ts",
+      column: 0,
+      line: 0,
+      specs: [
+        {
+          title: "opens every app for the till role",
+          file: "real-bundles.pw.ts",
+          tests: [{ status: "skipped", results: [{ status: "skipped" }] }],
+        },
+      ],
+    },
+  ],
+};
+
+const FRAMED_BAND_MISSING = {
+  suites: [
+    {
+      title: "real-bundles.pw.ts",
+      file: "real-bundles.pw.ts",
+      column: 0,
+      line: 0,
+      specs: [
+        {
+          title: "opens every app for the till role",
+          file: "real-bundles.pw.ts",
+          tests: [{ status: "expected", results: [{ status: "passed" }] }],
+        },
+      ],
+    },
+  ],
+};
+
+test("assembledLegsRan: true when both real-bundle legs passed a test", () => {
+  assert.equal(assembledLegsRan(BOTH_LEGS_PASSED), true);
+  assert.deepEqual(assembledLegPasses(BOTH_LEGS_PASSED), { "framed-band.pw.ts": 1, "real-bundles.pw.ts": 2 });
+});
+
+test("assembledLegsRan: false when every test skipped, the green no-op", () => {
+  assert.equal(assembledLegsRan(ALL_SKIPPED), false);
+  assert.deepEqual(assembledLegPasses(ALL_SKIPPED), { "framed-band.pw.ts": 0, "real-bundles.pw.ts": 0 });
+});
+
+test("assembledLegsRan: false when a leg is missing from the report", () => {
+  assert.equal(assembledLegsRan(FRAMED_BAND_MISSING), false);
+  assert.deepEqual(assembledLegPasses(FRAMED_BAND_MISSING), { "framed-band.pw.ts": 0, "real-bundles.pw.ts": 1 });
 });
