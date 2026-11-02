@@ -28,6 +28,9 @@ type Repository struct {
 	// root.
 	holdOrders    PickHoldOrders
 	holdCustomers PickHoldCustomers
+	// orderNos is the statement's seam to the order module's own order number (statement_repository.go,
+	// 0.64 N1), bound at the composition root; nil = an order shaped memo reads fixed words.
+	orderNos OrderNumbers
 	// zone is the dealer's business day zone source; nil = the Ontario dealer's. Every date parameter
 	// the aging, register and statement reads bind is the dealer's own calendar day.
 	zone houseday.Source

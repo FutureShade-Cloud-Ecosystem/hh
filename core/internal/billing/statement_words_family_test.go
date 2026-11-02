@@ -19,7 +19,7 @@ func TestStatementDescription_AccountCreditApplicationWordsByFamily(t *testing.T
 			{"credit applied to #INV-9", "Credit applied"},
 			{"credit application reversed: " + swToken, "Credit application reversed"},
 		} {
-			if got := statementDescription(fam.txn, fam.src, c.memo, "", ""); got != c.want {
+			if got := statementDescription(fam.txn, fam.src, c.memo, "", "", ""); got != c.want {
 				t.Errorf("%s/%s %q reads %q, want %q", fam.txn, fam.src, c.memo, got, c.want)
 			}
 		}

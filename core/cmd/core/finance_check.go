@@ -36,6 +36,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/landedcost"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/lien"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
@@ -168,7 +169,7 @@ func financeCheckSeams(ctx context.Context, pool *pgxpool.Pool, querier tieQueri
 		glSvc = gl.NewService(gl.NewRepository(pool).WithZone(newDealerZone(pool)))
 	}
 	if billingRepo == nil {
-		billingRepo = billing.NewRepository(pool).WithZone(newDealerZone(pool))
+		billingRepo = billing.NewRepository(pool).WithZone(newDealerZone(pool)).WithOrderNumbers(order.NewRepository(pool))
 	}
 	if taxSvc == nil {
 		taxSvc = newTaxEngine(pool).

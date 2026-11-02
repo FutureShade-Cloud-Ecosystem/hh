@@ -81,7 +81,8 @@ func (a tasksPickHoldAdapter) OrderHeldFromPicking(ctx context.Context, orderID 
 // holdBillingRepo is a billing repository bound to the order and customer
 // repositories the pay before release hold reads the order's total and the
 // customer's terms through (billing declares the two seams and never imports
-// either module).
+// either module), and to the order module's number read the plain statement's
+// own order check makes (0.64 N1).
 func holdBillingRepo(pool *pgxpool.Pool) *billing.Repository {
-	return billing.NewRepository(pool).WithZone(newDealerZone(pool)).WithPickHoldSources(order.NewRepository(pool), customer.NewRepository(pool)).WithHoldback(newHoldbackSeam(pool))
+	return billing.NewRepository(pool).WithZone(newDealerZone(pool)).WithPickHoldSources(order.NewRepository(pool), customer.NewRepository(pool)).WithHoldback(newHoldbackSeam(pool)).WithOrderNumbers(order.NewRepository(pool))
 }
