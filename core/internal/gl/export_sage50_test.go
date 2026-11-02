@@ -10,9 +10,11 @@ package gl
 import (
 	"context"
 	"encoding/csv"
+	"math"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
@@ -235,5 +237,147 @@ func TestExport_Sage50RefusesAnAccountWithNoMappingInWords(t *testing.T) {
 	}
 	if f.batchInserts != 0 {
 		t.Fatalf("a refused export must write nothing, but %d batches were recorded", f.batchInserts)
+	}
+}
+
+// TestExport_Sage50TheTwentyAndSeventyFiveCharacterLimitsCutOnRunes is item 4's limits leg:
+// Sage 50 caps the source at twenty characters and a comment at 75, and the cut is on runes, so
+// the books' accented and multibyte words are cut whole, never in the middle of a letter. An
+// entry number can never reach twenty characters (an int64 is at most nineteen digits), so the
+// source's limit is held at the helper, the one place it lives.
+func TestExport_Sage50TheTwentyAndSeventyFiveCharacterLimitsCutOnRunes(t *testing.T) {
+	wide := strings.Repeat("é", 80) // 80 runes, 160 bytes
+	cjk := strings.Repeat("日", 80)  // 80 runes, 240 bytes
+	svc, _ := sageFixture([]ExportRow{
+		{EntryNo: 41, PostedAt: "2096-05-10", AccountCode: "1000", AccountName: "Cash Bank", DebitCents: 250000, Memo: wide},
+		{EntryNo: 41, PostedAt: "2096-05-10", AccountCode: "4000", AccountName: "Sales", CreditCents: 250000, Memo: cjk},
+	})
+	res, err := svc.Export(context.Background(), ExportQuery{Year: 2096, Month: 5, Target: TargetSage50})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	txs := sageFile(t, res.Content)
+	if txs[0].Comment != wide[:75*2] || utf8.RuneCountInString(txs[0].Comment) != 75 {
+		t.Fatalf("the transaction comment must be the first 75 runes of the memo, got %d runes", utf8.RuneCountInString(txs[0].Comment))
+	}
+	if txs[0].Lines[1][2] != cjk[:75*3] || utf8.RuneCountInString(txs[0].Lines[1][2]) != 75 {
+		t.Fatalf("the detail comment must be the first 75 runes of the memo, got %d runes", utf8.RuneCountInString(txs[0].Lines[1][2]))
+	}
+	if got := sageCut("é"+strings.Repeat("x", 30), 20); utf8.RuneCountInString(got) != 20 {
+		t.Fatalf("the source cut must hold twenty runes, got %d (%q)", utf8.RuneCountInString(got), got)
+	}
+}
+
+// TestExport_Sage50AFormulaLeaderInAMemoIsNeutralised is item 4's csvsafe leg: a memo led by a
+// formula character rides the file with the single quote guard in front, inside the field's own
+// double quotes, so a bookkeeper opening the file in a spreadsheet does not run it.
+func TestExport_Sage50AFormulaLeaderInAMemoIsNeutralised(t *testing.T) {
+	svc, _ := sageFixture([]ExportRow{
+		{EntryNo: 41, PostedAt: "2096-05-10", AccountCode: "1000", AccountName: "Cash Bank", DebitCents: 250000, Memo: `=HYPERLINK("http://x","refund")`},
+		{EntryNo: 41, PostedAt: "2096-05-10", AccountCode: "4000", AccountName: "Sales", CreditCents: 250000, Memo: "- reversal"},
+	})
+	res, err := svc.Export(context.Background(), ExportQuery{Year: 2096, Month: 5, Target: TargetSage50})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	txs := sageFile(t, res.Content)
+	if txs[0].Comment != `'=HYPERLINK('http://x','refund')` {
+		t.Fatalf("the transaction comment must carry the guard and the single quoted words, got %q", txs[0].Comment)
+	}
+	if txs[0].Lines[1][2] != "'- reversal" {
+		t.Fatalf("the credit memo must carry the guard, got %q", txs[0].Lines[1][2])
+	}
+}
+
+// TestExport_Sage50AQuoteACommaACarriageReturnAndALineFeedStayInsideTheQuotes is item 4's text
+// leg: a memo carrying all four record breakers at once comes out one field, one record, the
+// double quote become a single quote and the carriage return and line feed one space each, the
+// comma kept by the field's own surrounding double quotes.
+func TestExport_Sage50AQuoteACommaACarriageReturnAndALineFeedStayInsideTheQuotes(t *testing.T) {
+	svc, _ := sageFixture([]ExportRow{
+		{EntryNo: 41, PostedAt: "2096-05-10", AccountCode: "1000", AccountName: "Cash Bank", DebitCents: 250000, Memo: "say \"hi\", ok\r\nnow"},
+		{EntryNo: 41, PostedAt: "2096-05-10", AccountCode: "4000", AccountName: "Sales", CreditCents: 250000, Memo: "the other side"},
+	})
+	res, err := svc.Export(context.Background(), ExportQuery{Year: 2096, Month: 5, Target: TargetSage50})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	txs := sageFile(t, res.Content)
+	if len(txs) != 1 || len(txs[0].Lines) != 2 {
+		t.Fatalf("the record breakers must not split the file: %d transactions, %d detail lines\n%s", len(txs), len(txs[0].Lines), res.Content)
+	}
+	if got := txs[0].Lines[0][2]; got != "say 'hi', ok  now" {
+		t.Fatalf("the memo must read one field with the quote single and the breaks spaces, got %q", got)
+	}
+}
+
+// TestExport_Sage50AnAccountOutsideTheShapeRefuses is item 4's shape leg: a mapped Sage account
+// that is not four to eight digits refuses the export in words naming the HH account and the
+// code, whatever way the code misses the shape.
+func TestExport_Sage50AnAccountOutsideTheShapeRefuses(t *testing.T) {
+	for _, bad := range []struct{ pkg, why string }{
+		{"AB", "letters"},
+		{"123", "three digits"},
+		{"123456789", "nine digits"},
+		{"12A4", "a letter inside"},
+	} {
+		f := newFakeStore()
+		f.exportRows = []ExportRow{
+			{EntryNo: 41, PostedAt: "2096-05-10", AccountCode: "1000", AccountName: "Cash Bank", DebitCents: 250000, Memo: "the cash leg"},
+			{EntryNo: 41, PostedAt: "2096-05-10", AccountCode: "4000", AccountName: "Sales", CreditCents: 250000, Memo: "the other side"},
+		}
+		f.mappings = []AccountMapping{
+			{Target: TargetSage50, AccountCode: "1000", AccountName: "Cash Bank", PackageAccount: bad.pkg},
+			{Target: TargetSage50, AccountCode: "4000", PackageAccount: "4000"},
+		}
+		svc := newTestServiceAs(f, identity.StaffContext{UserID: "u-ctrl", RoleCode: controllerRole, Tier: 1})
+
+		_, err := svc.Export(context.Background(), ExportQuery{Year: 2096, Month: 5, Target: TargetSage50})
+		if err == nil {
+			t.Fatalf("the %s code %q exported anyway", bad.why, bad.pkg)
+		}
+		for _, word := range []string{"1000 Cash Bank", bad.pkg, "four to eight digits"} {
+			if !strings.Contains(err.Error(), word) {
+				t.Fatalf("the %s refusal must carry %q, got %q", bad.why, word, err.Error())
+			}
+		}
+		if f.batchInserts != 0 {
+			t.Fatalf("a refused export must write nothing, but %d batches were recorded", f.batchInserts)
+		}
+	}
+}
+
+// TestExport_Sage50TheSmallestAndALargeInt64AmountsRenderExactly is item 4's money leg: the
+// amount rides a uint64 magnitude, so the smallest and a large int64 render exactly instead of
+// overflowing back to themselves on the negation, and a planted absurdity cannot turn into a
+// wrong cent.
+func TestExport_Sage50TheSmallestAndALargeInt64AmountsRenderExactly(t *testing.T) {
+	if got := sageAmount(math.MinInt64); got != "-92233720368547758.08" {
+		t.Fatalf("sageAmount(MinInt64) = %q, want -92233720368547758.08", got)
+	}
+	if got := sageAmount(math.MaxInt64); got != "92233720368547758.07" {
+		t.Fatalf("sageAmount(MaxInt64) = %q, want 92233720368547758.07", got)
+	}
+	if sageAmount(0) != "0.00" || sageAmount(-5) != "-0.05" || sageAmount(12599) != "125.99" {
+		t.Fatalf("sageAmount must keep its ordinary words, got %q %q %q", sageAmount(0), sageAmount(-5), sageAmount(12599))
+	}
+	svc, _ := sageFixture([]ExportRow{
+		{EntryNo: 50, PostedAt: "2096-05-10", AccountCode: "1000", AccountName: "Cash Bank", DebitCents: math.MaxInt64, Memo: "the big debit"},
+		{EntryNo: 50, PostedAt: "2096-05-10", AccountCode: "4000", AccountName: "Sales", CreditCents: math.MaxInt64, Memo: "the big credit"},
+	})
+	res, err := svc.Export(context.Background(), ExportQuery{Year: 2096, Month: 5, Target: TargetSage50})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	txs := sageFile(t, res.Content)
+	if txs[0].Lines[0][1] != "92233720368547758.07" || txs[0].Lines[1][1] != "-92233720368547758.07" {
+		t.Fatalf("the extremes must render exactly, got %q and %q", txs[0].Lines[0][1], txs[0].Lines[1][1])
+	}
+	var sum int64
+	for _, line := range txs[0].Lines {
+		sum += sageAmountCents(t, line[1])
+	}
+	if sum != 0 {
+		t.Fatalf("the transaction must still balance in the file, nets %d cents", sum)
 	}
 }
