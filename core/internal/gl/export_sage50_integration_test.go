@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -259,5 +260,57 @@ func TestIntegration_Export_Sage50QuarterAndWholeYearPicks(t *testing.T) {
 		if month != 0 {
 			t.Fatalf("the %s pick's batch records month %d, want the wider-than-a-month word 0", name, month)
 		}
+	}
+}
+
+// TestIntegration_Export_Sage50CommentIsTheJournalsMemoAndLinesKeepTheirOwn is the proof that the
+// Sage body reads the JOURNAL's memo through the real query (the AX-3 delta read's P3-a): one
+// journal posted through the real door with its own memo and lines whose memos differ. The
+// transaction's comment is the journal's memo; each detail line carries its own line memo.
+func TestIntegration_Export_Sage50CommentIsTheJournalsMemoAndLinesKeepTheirOwn(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	ensurePeriods(t, pool, 2053)
+	svc := exportSvc(t, pool, time.Date(2053, 5, 10, 12, 0, 0, 0, time.UTC))
+	drops := &sageLegDrops{}
+	t.Cleanup(func() { drops.cleanup(t, pool) })
+	for _, m := range [][2]string{{"1000", "1010"}, {"4000", "4010"}} {
+		if _, err := svc.SetAccountMapping(ctx, TargetSage50, m[0], m[1]); err != nil {
+			t.Fatalf("map %s: %v", m[0], err)
+		}
+	}
+
+	poster := svcAt(pool, identity.StaffContext{UserID: aUser(t, pool), RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal},
+		time.Date(2053, 5, 10, 12, 0, 0, 0, time.UTC))
+	id, err := poster.PostExternal(ctx, ExternalJournal{
+		Source: SourceAdjustment, IdempotencyKey: "ax3-fix2-memo", Memo: "THE JOURNAL MEMO",
+		Lines: []ExternalLine{
+			{AccountCode: "1000", DebitCents: 4100, Memo: "line one"},
+			{AccountCode: "4000", CreditCents: 4100, Memo: "line two"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("post the journal: %v", err)
+	}
+	drops.journal(id)
+
+	res, err := svc.Export(ctx, ExportQuery{Year: 2053, Month: 5, Target: TargetSage50})
+	if err != nil {
+		t.Fatalf("the month must export: %v", err)
+	}
+	drops.batch(res.BatchID)
+	txs := sageFile(t, res.Content)
+	if len(txs) != 1 || len(txs[0].Lines) != 2 {
+		t.Fatalf("the one journal exports as one transaction of two lines, got %+v:\n%s", txs, res.Content)
+	}
+	if txs[0].Comment != "THE JOURNAL MEMO" {
+		t.Fatalf("the transaction comment is %q, want the JOURNAL's memo, not a line's:\n%s", txs[0].Comment, res.Content)
+	}
+	got := map[string]string{}
+	for _, line := range txs[0].Lines {
+		got[line[0]] = line[2]
+	}
+	if got["1010"] != "line one" || got["4010"] != "line two" {
+		t.Fatalf("each detail line must carry its own memo (1010 line one, 4010 line two), got %v:\n%s", got, res.Content)
 	}
 }
