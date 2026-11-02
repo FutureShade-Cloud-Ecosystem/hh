@@ -79,6 +79,17 @@ export class QuoteDeskApp extends HHElement {
       .notice {
         margin: var(--hh-s-8) var(--hh-s-20);
       }
+      /* The door stage (UX-143): this desk's main carries no side gutter of its own (each panel
+         does), so the stage takes the desk's own 20px gutter, and its line sits flush under the
+         title instead of taking the notice's own side margins. */
+      .stage {
+        padding-left: var(--hh-s-20);
+        padding-right: var(--hh-s-20);
+      }
+      .stage .notice {
+        margin-left: 0;
+        margin-right: 0;
+      }
       /* The desk tab strip lives below the band, not in it. Quotes is
          always here; Pricing is manager only. The strip follows the same token
          rules as the band and keeps the light theme look. */
