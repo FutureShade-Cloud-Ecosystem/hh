@@ -3,7 +3,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { accountItem, driverHandoff, eveningInstant, expect, houseDay, test } from "./helpers.js";
+import { accountItem, driverHandoff, eveningInstant, expect, houseClockWords, houseDay, test } from "./helpers.js";
 
 const SHOT_DIR = process.env.UX17BC_SHOT_DIR ?? "";
 const SHOT_PHASE = process.env.UX17BC_SHOT_PHASE ?? "after";
@@ -288,7 +288,9 @@ test("UX-17b: my run lists the stops in route order with a state chip each, the 
     await expect(go).toHaveText("Go to stop 2");
     await expect(page.getByRole("button", { name: "End of run" })).toBeVisible();
 
-    await expect(page.locator("[data-staleness]")).toContainText("as of 8:30 PM");
+    // The pull instant is the pinned evening, so its clock is read in the dealer's zone: 8:30 PM in daylight
+    // time, 7:30 PM in standard time. A literal hour here broke on the autumn change.
+    await expect(page.locator("[data-staleness]")).toContainText(`as of ${houseClockWords(eveningInstant())}`);
 
     await card.locator("[data-stop]").first().click();
     await expect(page.locator(".signed")).toHaveText("Signed by Site lead (demo) at 12:04 PM · 1 photo on the proof");
