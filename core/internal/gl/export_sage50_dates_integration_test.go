@@ -77,6 +77,9 @@ func TestIntegration_Export_Sage50ARolledForwardTransactionIsDatedInsideItsPerio
 	}
 	txs := sageFile(t, res.Content)
 	sageAssertInPeriod(t, txs, 2051, 7)
+	if len(txs) == 0 {
+		t.Fatalf("July's file carries no transaction, so there is nothing to read the clamp off:\n%s", res.Content)
+	}
 	if txs[0].Date != "07-01-51" || !strings.Contains(txs[0].Comment, "dated 28 June 2051, posted to July 2051") {
 		t.Fatalf("the rolled forward transaction must be dated 07-01-51 and say June 28 2051, got %s with %q", txs[0].Date, txs[0].Comment)
 	}
@@ -109,6 +112,9 @@ func TestIntegration_Export_Sage50ALateApprovedDraftIsDatedInsideItsPeriod(t *te
 	}
 	txs := sageFile(t, res.Content)
 	sageAssertInPeriod(t, txs, 2024, 5)
+	if len(txs) == 0 {
+		t.Fatalf("May's file carries no transaction, so there is nothing to read the approval date off:\n%s", res.Content)
+	}
 	if txs[0].Date != "05-31-24" || !strings.Contains(txs[0].Comment, "approved ") || !strings.Contains(txs[0].Comment, ", posted to May 2024") {
 		t.Fatalf("the late approved transaction must be dated 05-31-24 and say the approval day, got %s with %q", txs[0].Date, txs[0].Comment)
 	}
@@ -125,6 +131,9 @@ func TestIntegration_Export_Sage50AnOrdinaryTransactionIsUnchanged(t *testing.T)
 	}
 	txs := sageFile(t, res.Content)
 	sageAssertInPeriod(t, txs, 2052, 5)
+	if len(txs) == 0 {
+		t.Fatalf("the file carries no transaction, so there is nothing to read the ordinary day off:\n%s", res.Content)
+	}
 	if txs[0].Date != "05-14-52" || txs[0].Comment != "sage leg" {
 		t.Fatalf("an ordinary transaction must go out untouched, got dated %s comment %q", txs[0].Date, txs[0].Comment)
 	}
