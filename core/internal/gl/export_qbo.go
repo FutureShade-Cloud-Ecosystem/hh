@@ -67,7 +67,7 @@ func renderQBOJournals(rows []ExportRow, packageAccount map[string]string) (stri
 			return "", badReq("gl: the %s export refuses the period: %s %s has movement and no mapping for the target; set the mapping before exporting",
 				target, r.AccountCode, r.AccountName)
 		}
-		date, memo := journalEntryDate(r)
+		date, memo := journalEntryDate(r, r.Memo)
 		fmt.Fprintf(&b, "%d,%s,%s,%s,%s,%s,,,,\n",
 			r.EntryNo, date, csvEscape(pkg), dollars(r.DebitCents), dollars(r.CreditCents), csvEscape(memo))
 		entryDebit += r.DebitCents

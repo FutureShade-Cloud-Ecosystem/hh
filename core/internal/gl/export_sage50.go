@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/csvsafe"
 )
@@ -65,11 +66,11 @@ func renderSage50Journals(rows []ExportRow, packageAccount map[string]string) (s
 			// typically a document number, and the GL journal's own number is exactly that. The
 			// comment is the entry's first line's memo, because v_gl_detail carries the journal's
 			// memo on every line unless the line carries one of its own.
-			dateWords, memo := journalEntryDate(r)
+			dateWords, journalMemo, note := journalEntryDateParts(r, r.Memo)
 			fmt.Fprintf(&b, "%s,%s,%s\r\n",
 				sageMMDDYY(dateWords),
 				sageQuoted(sageCut(sageText(strconv.Itoa(r.EntryNo)), 20)),
-				sageQuoted(sageCut(sageText(memo), 75)))
+				sageQuoted(sageTransactionComment(journalMemo, note)))
 		}
 		pkg := packageAccount[r.AccountCode]
 		if pkg == "" {
@@ -120,6 +121,28 @@ func sageText(s string) string {
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	return s
+}
+
+// sageTransactionComment fits the transaction comment and its clamp note inside Sage 50's 75
+// runes by keeping the WHOLE note and cutting the memo to the room the note leaves (the AX-3
+// read's P3-1): the note is the only place the bookkeeper sees why the file's date differs from
+// the document's, so it never loses its tail to the limit. The note is bounded (a day, a month
+// name and a year, twice: at most fifty one runes), so the room never runs out; an absurdity
+// longer than that rides alone rather than handing the cut a negative bound. A memo with no note
+// keeps the plain 75 rune cut.
+func sageTransactionComment(memo, note string) string {
+	if note == "" {
+		return sageCut(sageText(memo), 75)
+	}
+	noteField := sageText(note)
+	if memo == "" {
+		return noteField
+	}
+	room := 75 - utf8.RuneCountInString(noteField) - 3 // the separating space and the wrapping parentheses
+	if room < 0 {
+		return noteField
+	}
+	return sageCut(sageText(memo), room) + " (" + noteField + ")"
 }
 
 // sageQuoted wraps one text field in the straight double quotes Sage 50's format asks for. Every
