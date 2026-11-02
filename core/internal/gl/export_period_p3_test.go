@@ -1,11 +1,11 @@
 package gl
 
 // export_period_p3_test.go, W3 AX-2 item 2: S7's P3s on 719 (item 0.18), the unit halves. An
-// unknown account code in a mapping set is refused in words, not a 500 (P3-1); the GP-parity
-// banner carries the quarter a pick narrowed to (P3-2's file header half); and the mapped draft
-// body's printed totals are asserted, an unequal pair refusing the file (P3-4). The database
-// halves live in export_qbo_legs_integration_test.go and the whole-year leg's own fix (P3-3) is in
-// export_whole_year_integration_test.go.
+// unknown account code in a mapping set is refused in words, not a 500 (P3-1), and the GP-parity
+// banner carries the quarter a pick narrowed to (P3-2's file header half). The mapped draft body
+// and the P3-4 pin of it went with AX-3, which retired the placeholder for Sage 50's own body.
+// The database halves live in export_qbo_legs_integration_test.go and the whole-year leg's own fix
+// (P3-3) is in export_whole_year_integration_test.go.
 
 import (
 	"context"

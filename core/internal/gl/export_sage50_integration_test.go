@@ -93,6 +93,51 @@ func sageAssertTiesToGL(t *testing.T, pool *pgxpool.Pool, content string, year, 
 	}
 }
 
+// sageLegDrops collects the rows one Sage leg creates, so its cleanup deletes exactly its own, in
+// dependency order, and fails the test loudly naming the table when a delete fails (W3-COMMON's
+// cleanup rule, the AX-3 read's P3-3): never `_, _ = pool.Exec(...)`. The legs' years are past
+// years a later package's as of now read would otherwise carry, and the export batches the legs
+// record are rows nothing else deletes.
+type sageLegDrops struct {
+	journalIDs []string
+	batchIDs   []string
+}
+
+func (d *sageLegDrops) journal(id string) {
+	if id != "" {
+		d.journalIDs = append(d.journalIDs, id)
+	}
+}
+
+func (d *sageLegDrops) batch(id string) {
+	if id != "" {
+		d.batchIDs = append(d.batchIDs, id)
+	}
+}
+
+// cleanup deletes the leg's export batches, then its journals' lines and the journals (lines
+// before headers), then its mappings. Every delete fails the test naming its table.
+func (d *sageLegDrops) cleanup(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	for _, id := range d.batchIDs {
+		if _, err := pool.Exec(ctx, `DELETE FROM gl_export_batches WHERE id = $1::uuid`, id); err != nil {
+			t.Fatalf("cleanup gl_export_batches (%s): %v", id, err)
+		}
+	}
+	for _, id := range d.journalIDs {
+		if _, err := pool.Exec(ctx, `DELETE FROM gl_journal_lines WHERE journal_id = $1::uuid`, id); err != nil {
+			t.Fatalf("cleanup gl_journal_lines (%s): %v", id, err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM gl_journals WHERE id = $1::uuid`, id); err != nil {
+			t.Fatalf("cleanup gl_journals (%s): %v", id, err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM gl_account_mapping WHERE target = $1`, TargetSage50); err != nil {
+		t.Fatalf("cleanup gl_account_mapping: %v", err)
+	}
+}
+
 // TestIntegration_Export_Sage50FileTiesToTheGLPerAccount is the tie to the books: May's file
 // equals the GL for May per account, June's journal stays out of it, and the same tie holds at a
 // past date (May 2022) through the same real write door.
@@ -102,9 +147,8 @@ func TestIntegration_Export_Sage50FileTiesToTheGLPerAccount(t *testing.T) {
 	ensurePeriods(t, pool, 2054)
 	ensurePeriods(t, pool, 2022)
 	svc := exportSvc(t, pool, time.Date(2054, 5, 10, 12, 0, 0, 0, time.UTC))
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM gl_account_mapping WHERE target = $1`, TargetSage50)
-	})
+	drops := &sageLegDrops{}
+	t.Cleanup(func() { drops.cleanup(t, pool) })
 
 	packageFor := map[string]string{"1000": "1010", "4000": "4010", "1300": "1310"}
 	for hh, pkg := range packageFor {
@@ -112,14 +156,15 @@ func TestIntegration_Export_Sage50FileTiesToTheGLPerAccount(t *testing.T) {
 			t.Fatalf("map %s: %v", hh, err)
 		}
 	}
-	seedExportJournal(t, pool, 2054, 5, "ax3-tie-a", "1000", "4000", 30000)
-	seedExportJournal(t, pool, 2054, 5, "ax3-tie-b", "1000", "1300", 5000)
-	seedExportJournal(t, pool, 2054, 6, "ax3-tie-june", "1000", "4000", 7000)
+	drops.journal(seedExportJournal(t, pool, 2054, 5, "ax3-tie-a", "1000", "4000", 30000))
+	drops.journal(seedExportJournal(t, pool, 2054, 5, "ax3-tie-b", "1000", "1300", 5000))
+	drops.journal(seedExportJournal(t, pool, 2054, 6, "ax3-tie-june", "1000", "4000", 7000))
 
 	res, err := svc.Export(ctx, ExportQuery{Year: 2054, Month: 5, Target: TargetSage50})
 	if err != nil {
 		t.Fatalf("the fully mapped month must export: %v", err)
 	}
+	drops.batch(res.BatchID)
 	sageAssertTiesToGL(t, pool, res.Content, 2054, 5, packageFor)
 	// June's journal is outside the pick: the cash account's file total must not carry it.
 	file := sageFileDebitsCredits(t, sageFile(t, res.Content))
@@ -137,11 +182,12 @@ func TestIntegration_Export_Sage50FileTiesToTheGLPerAccount(t *testing.T) {
 	}
 
 	// The same tie at a past date, through the same real write door.
-	seedExportJournal(t, pool, 2022, 5, "ax3-tie-past", "1000", "4000", 12000)
+	drops.journal(seedExportJournal(t, pool, 2022, 5, "ax3-tie-past", "1000", "4000", 12000))
 	past, err := svc.Export(ctx, ExportQuery{Year: 2022, Month: 5, Target: TargetSage50})
 	if err != nil {
 		t.Fatalf("the past month must export: %v", err)
 	}
+	drops.batch(past.BatchID)
 	sageAssertTiesToGL(t, pool, past.Content, 2022, 5, map[string]string{"1000": "1010", "4000": "4010"})
 }
 
@@ -153,23 +199,23 @@ func TestIntegration_Export_Sage50QuarterAndWholeYearPicks(t *testing.T) {
 	pool := intPool(t)
 	ensurePeriods(t, pool, 2055)
 	svc := exportSvc(t, pool, time.Date(2055, 4, 10, 12, 0, 0, 0, time.UTC))
-	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM gl_account_mapping WHERE target = $1`, TargetSage50)
-	})
+	drops := &sageLegDrops{}
+	t.Cleanup(func() { drops.cleanup(t, pool) })
 
 	for _, m := range [][2]string{{"1000", "1010"}, {"4000", "4010"}} {
 		if _, err := svc.SetAccountMapping(ctx, TargetSage50, m[0], m[1]); err != nil {
 			t.Fatalf("map %s: %v", m[0], err)
 		}
 	}
-	seedExportJournal(t, pool, 2055, 4, "ax3-q2-apr", "1000", "4000", 11100)
-	seedExportJournal(t, pool, 2055, 6, "ax3-q2-jun", "1000", "4000", 22200)
-	seedExportJournal(t, pool, 2055, 8, "ax3-q2-aug", "1000", "4000", 33300) // outside Q2
+	drops.journal(seedExportJournal(t, pool, 2055, 4, "ax3-q2-apr", "1000", "4000", 11100))
+	drops.journal(seedExportJournal(t, pool, 2055, 6, "ax3-q2-jun", "1000", "4000", 22200))
+	drops.journal(seedExportJournal(t, pool, 2055, 8, "ax3-q2-aug", "1000", "4000", 33300)) // outside Q2
 
 	q2, err := svc.Export(ctx, ExportQuery{Year: 2055, Quarter: 2, Target: TargetSage50})
 	if err != nil {
 		t.Fatalf("the quarter export must run: %v", err)
 	}
+	drops.batch(q2.BatchID)
 	qtxs := sageFile(t, q2.Content)
 	if len(qtxs) != 2 {
 		t.Fatalf("Q2's two journals export as two transactions, got %d:\n%s", len(qtxs), q2.Content)
@@ -191,6 +237,7 @@ func TestIntegration_Export_Sage50QuarterAndWholeYearPicks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the whole year export must run: %v", err)
 	}
+	drops.batch(year.BatchID)
 	ytxs := sageFile(t, year.Content)
 	if len(ytxs) != 3 {
 		t.Fatalf("the year's three journals export as three transactions, got %d:\n%s", len(ytxs), year.Content)
