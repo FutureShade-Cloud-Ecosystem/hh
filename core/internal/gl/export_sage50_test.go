@@ -187,6 +187,30 @@ func TestExport_Sage50RendersItsGeneralJournalImportFormat(t *testing.T) {
 	}
 }
 
+// TestExport_Sage50AClampedEntryKeepsTheWholeNoteUnderTheSeventyFiveLimit is the AX-3 read's
+// P3-1: the clamp note is the only place the bookkeeper can see why the file's date differs from
+// the document's, so a memo long enough to crowd it (70 of the 75 runes) must not cost the note
+// its tail. The comment keeps the whole note and cuts the memo to the room the note leaves.
+func TestExport_Sage50AClampedEntryKeepsTheWholeNoteUnderTheSeventyFiveLimit(t *testing.T) {
+	memo := strings.Repeat("m", 70)
+	svc, _ := sageFixture([]ExportRow{
+		{EntryNo: 41, PostedAt: "2096-06-28", PeriodYear: 2096, PeriodMonth: 7, AccountCode: "1000", AccountName: "Cash Bank", DebitCents: 250000, Memo: memo},
+		{EntryNo: 41, PostedAt: "2096-06-28", PeriodYear: 2096, PeriodMonth: 7, AccountCode: "4000", AccountName: "Sales", CreditCents: 250000, Memo: memo},
+	})
+	res, err := svc.Export(context.Background(), ExportQuery{Year: 2096, Month: 7, Target: TargetSage50})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	txs := sageFile(t, res.Content)
+	const note = "dated 28 June 2096, posted to July 2096"
+	if !strings.HasSuffix(txs[0].Comment, " ("+note+")") {
+		t.Fatalf("a clamped entry's comment must keep the whole note %q, got %q", note, txs[0].Comment)
+	}
+	if n := utf8.RuneCountInString(txs[0].Comment); n != 75 {
+		t.Fatalf("the comment must still hold Sage 50's 75 runes exactly, got %d: %q", n, txs[0].Comment)
+	}
+}
+
 // TestExport_Sage50RefusesAnUnbalancedEntryInWords is the tie's bite: a partial read hands the
 // render one entry whose two sides differ, and the export refuses in words naming the entry
 // before anything is written, the same assertion the QBO body carries (S7's P3-4 on 719).
