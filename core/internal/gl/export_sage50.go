@@ -56,18 +56,20 @@ func renderSage50Journals(rows []ExportRow, packageAccount map[string]string) (s
 			}
 			entryNo = r.EntryNo
 			entrySum = 0
-			// The transaction's first line: the posted house day as mm-dd-yy, the journal's own
-			// number as the source, the journal's memo as the comment. The source is
+			// The transaction's first line: the posted house day clamped into the journal's
+			// period as mm-dd-yy, the journal's own number as the source, the journal's memo as
+			// the comment (with the clamp note when the day was clamped). The source is
 			// gl_journals.entry_no, the row's EntryNo: the number every GL report shows, minted
 			// per fiscal year and unique within it, so the bookkeeper can trace the imported
 			// transaction back to the journal it came from; Sage's page says the source is
 			// typically a document number, and the GL journal's own number is exactly that. The
 			// comment is the entry's first line's memo, because v_gl_detail carries the journal's
 			// memo on every line unless the line carries one of its own.
+			dateWords, memo := journalEntryDate(r)
 			fmt.Fprintf(&b, "%s,%s,%s\r\n",
-				sageMMDDYY(r.PostedAt),
+				sageMMDDYY(dateWords),
 				sageQuoted(sageCut(sageText(strconv.Itoa(r.EntryNo)), 20)),
-				sageQuoted(sageCut(sageText(r.Memo), 75)))
+				sageQuoted(sageCut(sageText(memo), 75)))
 		}
 		pkg := packageAccount[r.AccountCode]
 		if pkg == "" {

@@ -20,7 +20,6 @@ package gl
 import (
 	"fmt"
 	"strings"
-	"time"
 )
 
 // qboJournalHeader is QBO's journal entry import vocabulary, verbatim and in its order: the ten
@@ -68,7 +67,7 @@ func renderQBOJournals(rows []ExportRow, packageAccount map[string]string) (stri
 			return "", badReq("gl: the %s export refuses the period: %s %s has movement and no mapping for the target; set the mapping before exporting",
 				target, r.AccountCode, r.AccountName)
 		}
-		date, memo := qboEntryDate(r)
+		date, memo := journalEntryDate(r)
 		fmt.Fprintf(&b, "%d,%s,%s,%s,%s,%s,,,,\n",
 			r.EntryNo, date, csvEscape(pkg), dollars(r.DebitCents), dollars(r.CreditCents), csvEscape(memo))
 		entryDebit += r.DebitCents
@@ -95,37 +94,4 @@ func dollarsExact(cents int64) string {
 		return fmt.Sprintf("-%d.%02d", mag/100, mag%100)
 	}
 	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
-}
-
-// qboEntryDate dates a row inside its own journal's period, because QBO books an entry by its
-// JournalDate and the GL books it by its period. The posted house day dates the entry when it
-// falls in the period; a day before the period (an automated post rolled forward out of a closed
-// month) goes out on the period's first day, and a day after it (a parked draft approved later)
-// on the period's last day. A clamped entry says the document's own day in words, so the bookkeeper
-// can still see when it happened. A row with no period (a planted row in a unit leg) is not clamped.
-func qboEntryDate(r ExportRow) (date, memo string) {
-	memo = r.Memo
-	if r.PeriodMonth < 1 || r.PeriodMonth > 12 {
-		return r.PostedAt, memo
-	}
-	// The period's days are calendar days, not instants: parsed from the date words, so no clock
-	// zone decides them.
-	first, ferr := time.Parse("2006-01-02", fmt.Sprintf("%04d-%02d-01", r.PeriodYear, r.PeriodMonth))
-	posted, err := time.Parse("2006-01-02", r.PostedAt)
-	if ferr != nil || err != nil {
-		return r.PostedAt, memo
-	}
-	last := first.AddDate(0, 1, -1)
-	if !posted.Before(first) && !posted.After(last) {
-		return r.PostedAt, memo
-	}
-	date = first.Format("2006-01-02")
-	if posted.After(last) {
-		date = last.Format("2006-01-02")
-	}
-	note := fmt.Sprintf("dated %d %s, posted to %s", posted.Day(), posted.Month(), first.Month())
-	if memo == "" {
-		return date, note
-	}
-	return date, memo + " (" + note + ")"
 }
