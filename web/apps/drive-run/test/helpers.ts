@@ -1,6 +1,7 @@
 // Shared helpers for the Playwright legs: the front door's handoff, written
 // the way the front door writes it, and the stub's reset.
 import { expect, test as base, type APIRequestContext } from "@playwright/test";
+import { DEFAULT_HOUSE_ZONE } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 /** Runs in the page before any script: the front door's record, as the minted session. */
 export function driverHandoff(): void {
@@ -26,25 +27,50 @@ export function driverHandoff(): void {
 }
 
 /**
+ * The one base day every drive-run leg builds its clocks from: the day named
+ * by DRIVE_EVENING_DATE (YYYY-MM-DD), or the host's own date when it is unset,
+ * at midnight UTC. A value that is not a real calendar day fails here, at once,
+ * naming the variable, rather than as NaN deep inside a clock install.
+ */
+export function pinnedDay(): Date {
+  const pinned = process.env["DRIVE_EVENING_DATE"];
+  if (pinned === undefined || pinned === "") {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    return today;
+  }
+  const at = new Date(`${pinned}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(pinned) || Number.isNaN(at.getTime()) || at.toISOString().slice(0, 10) !== pinned) {
+    throw new Error(`DRIVE_EVENING_DATE must be a real calendar day written YYYY-MM-DD, got "${pinned}"`);
+  }
+  return at;
+}
+
+/** An instant on the pinned day at the given UTC hour and minute. */
+export function pinnedUtcAt(hours: number, minutes: number): number {
+  const at = pinnedDay();
+  at.setUTCHours(hours, minutes, 0, 0);
+  return at.getTime();
+}
+
+/**
  * The instant every leg runs at unless it says otherwise: half past midnight
  * UTC, which is the previous evening in the dealer's zone, the hour at which a
- * UTC day and the dealer's day disagree. Built from the host's own date so no
- * calendar literal is written here, and pinned in the page and in the stub
- * alike, so a leg is red on wrong code at any wall hour. DRIVE_EVENING_DATE
- * (YYYY-MM-DD) moves it to another day, so a run can pin one daylight time day
- * and one standard time day; the dealer's clock reads an hour apart between
- * them, which is why no leg may write that clock as a literal.
+ * UTC day and the dealer's day disagree. Every drive-run leg's clock comes from
+ * the one base, pinnedDay(), so no calendar literal is written here, and the
+ * instant is pinned in the page and in the stub alike, so a leg is red on wrong
+ * code at any wall hour. DRIVE_EVENING_DATE moves the base to another day, so a
+ * run can pin one daylight time day and one standard time day; the dealer's
+ * clock reads an hour apart between them, which is why no leg may write that
+ * clock as a literal.
  */
 export function eveningInstant(): number {
-  const pinned = process.env["DRIVE_EVENING_DATE"] ?? "";
-  const at = /^\d{4}-\d{2}-\d{2}$/.test(pinned) ? new Date(`${pinned}T00:00:00Z`) : new Date();
-  at.setUTCHours(0, 30, 0, 0);
-  return at.getTime();
+  return pinnedUtcAt(0, 30);
 }
 
 /** An instant's clock time in the dealer's zone, in the app's glossary form ("8:30 PM", a plain space). */
 export function houseClockWords(instant: number): string {
-  return new Intl.DateTimeFormat("en-US", { timeZone: "America/Toronto", hour: "numeric", minute: "2-digit" })
+  return new Intl.DateTimeFormat("en-US", { timeZone: DEFAULT_HOUSE_ZONE, hour: "numeric", minute: "2-digit" })
     .format(new Date(instant))
     .replace(/\s+/g, " ")
     .trim();
@@ -87,7 +113,7 @@ export async function stubLog(request: APIRequestContext): Promise<LoggedCall[]>
 /** The dealer's day the way the core names it for the demo dealer: the house zone. */
 export function houseDay(at: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Toronto",
+    timeZone: DEFAULT_HOUSE_ZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
