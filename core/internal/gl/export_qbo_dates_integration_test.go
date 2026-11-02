@@ -71,8 +71,8 @@ func TestIntegration_Export_QBOARolledForwardEntryIsDatedInsideItsPeriod(t *test
 		t.Fatalf("July export: %v", err)
 	}
 	recs := qboInPeriod(t, res.Content, 2097, 7)
-	if recs[1][1] != "2097-07-01" || !strings.Contains(recs[1][5], "dated 28 June, posted to July") {
-		t.Fatalf("the rolled forward entry must be dated July 1 and say June 28, got %q", recs[1])
+	if recs[1][1] != "2097-07-01" || !strings.Contains(recs[1][5], "dated 28 June 2097, posted to July 2097") {
+		t.Fatalf("the rolled forward entry must be dated July 1 and say June 28 2097, got %q", recs[1])
 	}
 }
 
@@ -101,8 +101,8 @@ func TestIntegration_Export_QBOALateApprovedDraftIsDatedInsideItsPeriod(t *testi
 		t.Fatalf("May export: %v", err)
 	}
 	recs := qboInPeriod(t, res.Content, 2020, 5)
-	if recs[1][1] != "2020-05-31" || !strings.Contains(recs[1][5], ", posted to May") {
-		t.Fatalf("the late approved entry must be dated May 31 and say its own day, got %q", recs[1])
+	if recs[1][1] != "2020-05-31" || !strings.Contains(recs[1][5], "approved ") || !strings.Contains(recs[1][5], ", posted to May 2020") {
+		t.Fatalf("the late approved entry must be dated May 31 and say the approval day with the year, got %q", recs[1])
 	}
 }
 
