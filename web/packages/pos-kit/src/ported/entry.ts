@@ -1,6 +1,7 @@
 // The entry view: the tap-a-role chooser, staged to the till's own polish
-// (the train review's P3-5): a centered column with a headline and a one-line
-// intro, one card per flow the app hands the view (the till hands its own
+// (the train review's P3-5): a column on the desk's own left gutter with a
+// headline and a one-line intro, one card per flow the app hands the view
+// (the till hands its own
 // pair of the box's flow table, which mints more logins than any one app
 // offers cards for) wearing the ported token sheet's surfaces and borders,
 // an icon from the ported icon registry and one line of what the role opens,
@@ -79,12 +80,22 @@ const FLOW_BLURBS: Record<string, string> = {
   "outside-sales": "Build quotes in the field.",
 };
 
-export const entryStyles = css`
+/**
+ * The door stage alone: the left-aligned column every desk's door sits on. It
+ * starts at the desk's own left gutter (the desk's container carries the
+ * gutter; the stage adds none), and never centres. An app whose own sheet
+ * already has card or notice classes takes this without the rest of
+ * entryStyles (UX-143).
+ */
+export const doorStageStyles = css`
   .stage {
     max-width: 680px;
-    margin: 0 auto;
-    padding: var(--hh-s-40) var(--hh-s-8) var(--hh-s-64);
+    padding: var(--hh-s-40) 0 var(--hh-s-64);
   }
+`;
+
+export const entryStyles = css`
+  ${doorStageStyles}
   .headline {
     font-size: var(--hos-stat-size);
     line-height: 1.15;
@@ -213,7 +224,7 @@ export const entryStyles = css`
   }
 `;
 
-/** The stage column: every state the entry shows lives on it, centred. */
+/** The stage column: every state the entry shows lives on it, at the desk's own left gutter. */
 const stage = (content: TemplateResult): TemplateResult => html`<div class="stage">${content}</div>`;
 
 /**
@@ -226,6 +237,12 @@ export interface EntryCopy {
   readonly headline?: string;
   readonly intro?: string;
   readonly coming?: boolean;
+  /**
+   * False when the desk renders its own title above the door: the line doors
+   * then take no heading, so the desk keeps its one title and gets no second
+   * one (UX-143).
+   */
+  readonly title?: boolean;
 }
 
 /**
@@ -254,15 +271,26 @@ export function offlineLine(app: string | undefined, reason: "offline" | "unavai
   return html`<p class=${className} role="status">${words}</p>`;
 }
 
+/**
+ * The door line's title: the app's name in the headline style, above the line
+ * (UX-143). A desk that renders its own title passes title: false and takes
+ * none, and a door with no app name keeps the bare line it had.
+ */
+function doorTitle(copy: EntryCopy): TemplateResult | typeof nothing {
+  return copy.title === false || copy.app === undefined
+    ? nothing
+    : html`<h2 class="headline">${copy.app}</h2>`;
+}
+
 export function renderEntry(view: EntryView, copy: EntryCopy = {}): TemplateResult {
   if (view.flows.kind === "loading") {
-    return stage(html`<p class="notice" role="status">Loading the demo roles.</p>`);
+    return stage(html`${doorTitle(copy)}<p class="notice" role="status">Loading the demo roles.</p>`);
   }
   if (view.flows.kind === "signin") {
-    return stage(signInLine(copy.app));
+    return stage(html`${doorTitle(copy)}${signInLine(copy.app)}`);
   }
   if (view.flows.kind === "offline") {
-    return stage(offlineLine(copy.app, view.flows.reason));
+    return stage(html`${doorTitle(copy)}${offlineLine(copy.app, view.flows.reason)}`);
   }
   if (view.flows.kind === "unavailable") {
     // The failures say different things, so the page does not claim more than
@@ -270,16 +298,16 @@ export function renderEntry(view: EntryView, copy: EntryCopy = {}): TemplateResu
     // default-build core answers exactly that); anything else is an error
     // worth its status, because the demo may be one reload away.
     if (view.flows.status === 404) {
-      return stage(html`<p class="notice" role="status">
+      return stage(html`${doorTitle(copy)}<p class="notice" role="status">
         This deployment does not serve the demo sign-in, so there are no role cards to tap.
       </p>`);
     }
     if (view.flows.status === null) {
-      return stage(html`<p class="notice" role="status">
+      return stage(html`${doorTitle(copy)}<p class="notice" role="status">
         The demo roles could not be loaded: the call did not go through. Reload to try again.
       </p>`);
     }
-    return stage(html`<p class="notice" role="status">
+    return stage(html`${doorTitle(copy)}<p class="notice" role="status">
       The demo roles could not be loaded (HTTP ${view.flows.status}). Reload to try again.
     </p>`);
   }

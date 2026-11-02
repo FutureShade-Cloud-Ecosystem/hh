@@ -19,6 +19,9 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryAfter, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+// The door stage (UX-143): the door line sits on the shared left-aligned stage. Its own sheet
+// keeps its distance: doorStageStyles carries the .stage rule alone, no entryStyles card classes.
+import { doorStageStyles } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { bandIdentity } from "./band-identity.js";
 import { houseDay, houseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 // The offline strip and the conflict cards ride the shell chrome package,
@@ -50,7 +53,7 @@ import type { Card, OutboxStall, Staleness } from "@hardscapehouse/offline-store
 const DEMO_ORG = "hh-demo";
 
 export class DriveRunApp extends HHElement {
-  static styles = [baseStyles, driveStyles];
+  static styles = [baseStyles, driveStyles, doorStageStyles];
 
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();

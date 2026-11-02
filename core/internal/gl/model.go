@@ -179,7 +179,9 @@ type RuleRef struct {
 }
 
 // ExportRow is one posted export line. PostedAt is the line's journal's posted day in the DEALER's
-// house zone, the day the export files date its entries by, never the UTC day.
+// house zone, the day the export files date its entries by, never the UTC day. JournalMemo is the
+// journal's own memo (gl_journals.memo), read beside the line's own Memo so a body can speak the
+// journal's words on the transaction and the line's on its detail line.
 type ExportRow struct {
 	EntryNo     int
 	PostedAt    string
@@ -190,6 +192,7 @@ type ExportRow struct {
 	DebitCents  int64
 	CreditCents int64
 	Memo        string
+	JournalMemo string
 }
 
 // The accounting package export's targets (W3 AX-1, decision 1.6): QuickBooks Online first, Sage 50

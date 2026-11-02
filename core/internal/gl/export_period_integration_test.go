@@ -28,18 +28,21 @@ func exportSvc(t *testing.T, pool *pgxpool.Pool, at time.Time) *Service {
 
 // seedExportJournal posts one balanced external journal into the named house month, the movement
 // the export period then carries. It posts through its own service pinned to the month, the same
-// house-day filing the real posting path takes.
-func seedExportJournal(t *testing.T, pool *pgxpool.Pool, year, month int, key, debitCode, creditCode string, cents int64) {
+// house-day filing the real posting path takes, and answers the journal's id so a leg's cleanup
+// can delete exactly what it created (a caller that needs no id ignores the answer).
+func seedExportJournal(t *testing.T, pool *pgxpool.Pool, year, month int, key, debitCode, creditCode string, cents int64) string {
 	t.Helper()
 	user := aUser(t, pool)
 	at := time.Date(year, time.Month(month), 10, 12, 0, 0, 0, time.UTC)
 	svc := svcAt(pool, identity.StaffContext{UserID: user, RoleCode: controllerRole, Tier: identity.TierLeadership, Scope: identity.ScopeGlobal}, at)
-	if _, err := svc.PostExternal(context.Background(), ExternalJournal{
+	id, err := svc.PostExternal(context.Background(), ExternalJournal{
 		Source: SourceAdjustment, IdempotencyKey: key, Memo: "period pick",
 		Lines: []ExternalLine{{AccountCode: debitCode, DebitCents: cents}, {AccountCode: creditCode, CreditCents: cents}},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("seed the period journal: %v", err)
 	}
+	return id
 }
 
 // TestIntegration_Export_AnUnmappedAccountRefusesNamingIt is red leg 1: one account with movement

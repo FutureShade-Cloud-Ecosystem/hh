@@ -52,8 +52,8 @@ func TestExport_QBOARollForwardEntryIsDatedTheFirstDayOfItsPeriod(t *testing.T) 
 	if recs[1][1] != "2096-07-01" {
 		t.Fatalf("the rolled forward entry is dated %q, want 2096-07-01", recs[1][1])
 	}
-	if !strings.Contains(recs[1][5], "dated 28 June, posted to July") || !strings.Contains(recs[1][5], "payment") {
-		t.Fatalf("the Description must keep the memo and say the document's own day, got %q", recs[1][5])
+	if !strings.Contains(recs[1][5], "dated 28 June 2096, posted to July 2096") || !strings.Contains(recs[1][5], "payment") {
+		t.Fatalf("the Description must keep the memo and say the document's own day with the year, got %q", recs[1][5])
 	}
 }
 
@@ -69,8 +69,8 @@ func TestExport_QBOALateApprovedDraftIsDatedTheLastDayOfItsPeriod(t *testing.T) 
 	if recs[1][1] != "2096-05-31" {
 		t.Fatalf("the late approved entry is dated %q, want 2096-05-31", recs[1][1])
 	}
-	if !strings.Contains(recs[1][5], "dated 2 June, posted to May") {
-		t.Fatalf("the Description must say the document's own day, got %q", recs[1][5])
+	if !strings.Contains(recs[1][5], "approved 2 June 2096, posted to May 2096") {
+		t.Fatalf("the Description must say the approval day with the year, got %q", recs[1][5])
 	}
 }
 

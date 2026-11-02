@@ -16,9 +16,9 @@ func TestStatementDescription_AllowListedSlotsTakeOnlyMintedForms(t *testing.T) 
 	for _, s := range shapes {
 		for _, bad := range []string{swUUID, swToken, "INVSECRET-9"} {
 			memo := strings.Replace(s.tmpl, "%s", bad, 1)
-			got := statementDescription("ADJUSTMENT", "invoice", memo, "", "")
+			got := statementDescription("ADJUSTMENT", "invoice", memo, "", "", "")
 			if s.name == "holdback withheld" {
-				got = statementDescription("HOLDBACK", "", memo, "", "")
+				got = statementDescription("HOLDBACK", "", memo, "", "", "")
 			}
 			if got == memo {
 				t.Errorf("%s: the slot took %q", s.name, bad)
@@ -29,7 +29,7 @@ func TestStatementDescription_AllowListedSlotsTakeOnlyMintedForms(t *testing.T) 
 		for _, memo := range []string{
 			bad + " (holdback released 2000-01-02)",
 		} {
-			if got := statementDescription("INVOICE", "invoice", memo, "", ""); got == memo {
+			if got := statementDescription("INVOICE", "invoice", memo, "", "", ""); got == memo {
 				t.Errorf("the slot took %q", bad)
 			}
 		}
@@ -39,7 +39,7 @@ func TestStatementDescription_AllowListedSlotsTakeOnlyMintedForms(t *testing.T) 
 		"early payment discount (12)", "overpaid receipt left on account (12)", "Holdback withheld on #INV-12",
 		"#INV-12 (holdback released 2000-01-02)", "Credit memo #CM-4", "NSF fee",
 	} {
-		if got := statementDescription("ADJUSTMENT", "invoice", ok, "", ""); got != ok {
+		if got := statementDescription("ADJUSTMENT", "invoice", ok, "", "", ""); got != ok {
 			t.Errorf("%q reads %q, want it as written", ok, got)
 		}
 	}
@@ -47,7 +47,7 @@ func TestStatementDescription_AllowListedSlotsTakeOnlyMintedForms(t *testing.T) 
 
 // The clerk's own invoice memo shape (#INV-n, <memo>) never passes.
 func TestStatementDescription_AClerksInvoiceMemoIsFixedWords(t *testing.T) {
-	if got := statementDescription("INVOICE", "invoice", "#INV-12, "+swToken+" keyed 77777", "#INV-12", ""); got != "Invoice" {
+	if got := statementDescription("INVOICE", "invoice", "#INV-12, "+swToken+" keyed 77777", "#INV-12", "", ""); got != "Invoice" {
 		t.Errorf("a clerk's invoice memo reads %q, want Invoice", got)
 	}
 }
