@@ -123,15 +123,17 @@ func sageFixture(rows []ExportRow) (*Service, *fakeStore) {
 
 // TestExport_Sage50RendersItsGeneralJournalImportFormat is item 1's shape leg: two GL journals
 // export as two transactions, each opening with the mm-dd-yy house day, the journal's own number
-// as the source and the journal's memo as the comment, then one detail line per GL line (the
-// mapped account, the signed amount, the line comment, 0), CRLF between every line and no file
-// header.
+// as the source and the JOURNAL's memo as the comment (the AX-3 read's P3-2: the transaction is
+// the journal, so its comment is the journal's own words, never one line's; the line's own memo
+// stays on its detail line), then one detail line per GL line (the mapped account, the signed
+// amount, the line comment, 0), CRLF between every line and no file header. The rows carry line
+// memos that differ from the journal's, the shape an invoice or payment posting usually has.
 func TestExport_Sage50RendersItsGeneralJournalImportFormat(t *testing.T) {
 	svc, _ := sageFixture([]ExportRow{
-		{EntryNo: 41, PostedAt: "2096-05-10", AccountCode: "1000", AccountName: "Cash Bank", DebitCents: 250000, Memo: "the cash leg"},
-		{EntryNo: 41, PostedAt: "2096-05-10", AccountCode: "4000", AccountName: "Sales", CreditCents: 250000, Memo: "the sales leg"},
-		{EntryNo: 42, PostedAt: "2096-05-17", AccountCode: "1000", AccountName: "Cash Bank", DebitCents: 12599, Memo: "the second cash leg"},
-		{EntryNo: 42, PostedAt: "2096-05-17", AccountCode: "4000", AccountName: "Sales", CreditCents: 12599, Memo: "the second sales leg"},
+		{EntryNo: 41, PostedAt: "2096-05-10", AccountCode: "1000", AccountName: "Cash Bank", DebitCents: 250000, JournalMemo: "May counter sales", Memo: "the cash leg"},
+		{EntryNo: 41, PostedAt: "2096-05-10", AccountCode: "4000", AccountName: "Sales", CreditCents: 250000, JournalMemo: "May counter sales", Memo: "the sales leg"},
+		{EntryNo: 42, PostedAt: "2096-05-17", AccountCode: "1000", AccountName: "Cash Bank", DebitCents: 12599, JournalMemo: "the June deposit", Memo: "the second cash leg"},
+		{EntryNo: 42, PostedAt: "2096-05-17", AccountCode: "4000", AccountName: "Sales", CreditCents: 12599, JournalMemo: "the June deposit", Memo: "the second sales leg"},
 	})
 
 	res, err := svc.Export(context.Background(), ExportQuery{Year: 2096, Month: 5, Target: TargetSage50})
@@ -152,17 +154,20 @@ func TestExport_Sage50RendersItsGeneralJournalImportFormat(t *testing.T) {
 	if first.Source != "41" {
 		t.Fatalf("the first transaction's source is %q, want the journal's own entry number 41", first.Source)
 	}
-	if first.Comment != "the cash leg" {
-		t.Fatalf("the first transaction's comment is %q, want the journal's memo", first.Comment)
+	if first.Comment != "May counter sales" {
+		t.Fatalf("the first transaction's comment is %q, want the JOURNAL's memo (May counter sales), not a line's", first.Comment)
 	}
 	if second.Date != "05-17-96" || second.Source != "42" {
 		t.Fatalf("the second transaction reads %q and %q, want 05-17-96 and the journal number 42", second.Date, second.Source)
+	}
+	if second.Comment != "the June deposit" {
+		t.Fatalf("the second transaction's comment is %q, want the JOURNAL's memo (the June deposit), not a line's", second.Comment)
 	}
 	if len(first.Lines) != 2 || len(second.Lines) != 2 {
 		t.Fatalf("each transaction carries one detail line per GL line, got %d and %d", len(first.Lines), len(second.Lines))
 	}
 	if first.Lines[0][0] != "1000" || first.Lines[0][1] != "2500.00" || first.Lines[0][2] != "the cash leg" || first.Lines[0][3] != "0" {
-		t.Fatalf("the first detail line reads %q, want the account, the positive debit, the line comment and 0", first.Lines[0])
+		t.Fatalf("the first detail line reads %q, want the account, the positive debit, the LINE's own comment and 0", first.Lines[0])
 	}
 	if first.Lines[1][1] != "-2500.00" {
 		t.Fatalf("the credit line renders %q, want the negative amount -2500.00", first.Lines[1][1])
