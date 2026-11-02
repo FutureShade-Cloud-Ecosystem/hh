@@ -30,12 +30,24 @@ export function driverHandoff(): void {
  * UTC, which is the previous evening in the dealer's zone, the hour at which a
  * UTC day and the dealer's day disagree. Built from the host's own date so no
  * calendar literal is written here, and pinned in the page and in the stub
- * alike, so a leg is red on wrong code at any wall hour.
+ * alike, so a leg is red on wrong code at any wall hour. DRIVE_EVENING_DATE
+ * (YYYY-MM-DD) moves it to another day, so a run can pin one daylight time day
+ * and one standard time day; the dealer's clock reads an hour apart between
+ * them, which is why no leg may write that clock as a literal.
  */
 export function eveningInstant(): number {
-  const at = new Date();
+  const pinned = process.env["DRIVE_EVENING_DATE"] ?? "";
+  const at = /^\d{4}-\d{2}-\d{2}$/.test(pinned) ? new Date(`${pinned}T00:00:00Z`) : new Date();
   at.setUTCHours(0, 30, 0, 0);
   return at.getTime();
+}
+
+/** An instant's clock time in the dealer's zone, in the app's glossary form ("8:30 PM", a plain space). */
+export function houseClockWords(instant: number): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: "America/Toronto", hour: "numeric", minute: "2-digit" })
+    .format(new Date(instant))
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** The instant the stub's clock is pinned to right now; resetStub carries it across resets. */
