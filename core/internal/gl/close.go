@@ -847,11 +847,19 @@ func (s *Service) Export(ctx context.Context, q ExportQuery) (ExportResult, erro
 			if err != nil {
 				return ExportResult{}, err
 			}
-		default:
-			content, err = renderTargetExport(q, rows, packageAccount)
+		case TargetSage50:
+			// AX-3: Sage 50's general journal import format, one transaction per GL journal, its
+			// amounts asserted to sum to zero per transaction and in total.
+			content, err = renderSage50Journals(rows, packageAccount)
 			if err != nil {
 				return ExportResult{}, err
 			}
+		default:
+			// The mapping's target set is closed and both of its words have bodies, so this answers
+			// only a future target joined to the set without one: refuse in words, never render an
+			// empty file.
+			return ExportResult{}, badReq("gl: unknown export target %q; the mapping knows %s and %s",
+				q.Target, TargetQuickBooksOnline, TargetSage50)
 		}
 		format = q.Target
 	}
@@ -883,34 +891,6 @@ func renderGPParity(q ExportQuery, rows []ExportRow) string {
 			dollars(r.DebitCents), dollars(r.CreditCents), csvEscape(r.Memo))
 	}
 	return b.String()
-}
-
-// renderTargetExport renders the accounting package export for a target without its own import
-// format yet (Sage 50 is AX-3): the period's rows under the package's account codes, the HH code
-// and name beside each for provenance, and a totals line whose two sides are the file's own
-// balance assertion. The pair is ASSERTED, not just printed (S7's P3-4 on 719): an unequal pair
-// refuses the file in words before any row is written, so a partial read or a bad loader cannot
-// ship a draft whose own banner lies. QuickBooks Online has its own body, renderQBOJournals
-// (AX-2); this one keeps the row set and the totals the same for the target that replaces it next.
-func renderTargetExport(q ExportQuery, rows []ExportRow, packageAccount map[string]string) (string, error) {
-	var b strings.Builder
-	fmt.Fprintf(&b, "# ACCOUNTING PACKAGE EXPORT, %s; mapped draft, not a filing.\n", exportTargetWords(q.Target))
-	fmt.Fprintf(&b, "# fiscal_year=%d month=%d quarter=%d rows=%d\n", q.Year, q.Month, q.Quarter, len(rows))
-	b.WriteString("entry_no,posted_at,package_account,hh_account_code,hh_account_name,debit,credit,memo\n")
-	var totalDebit, totalCredit int64
-	for _, r := range rows {
-		fmt.Fprintf(&b, "%d,%s,%s,%s,%s,%s,%s,%s\n",
-			r.EntryNo, r.PostedAt, csvEscape(packageAccount[r.AccountCode]), r.AccountCode, csvEscape(r.AccountName),
-			dollars(r.DebitCents), dollars(r.CreditCents), csvEscape(r.Memo))
-		totalDebit += r.DebitCents
-		totalCredit += r.CreditCents
-	}
-	if totalDebit != totalCredit {
-		return "", badReq("gl: the %s export refuses the period: the file's debits (%s) do not equal its credits (%s); no row was written",
-			exportTargetWords(q.Target), dollarsExact(totalDebit), dollarsExact(totalCredit))
-	}
-	fmt.Fprintf(&b, "# total_debit=%s,total_credit=%s\n", dollars(totalDebit), dollars(totalCredit))
-	return b.String(), nil
 }
 
 func dollars(cents int64) string {
