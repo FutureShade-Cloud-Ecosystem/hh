@@ -14,7 +14,7 @@ func TestStatementDescription_CreditMemoLineIsTheRowsOwnNumbers(t *testing.T) {
 		{swUUID, "", "", "Credit memo"},
 		{"", "", "", "Credit memo"},
 	} {
-		if got := statementDescription("CREDIT_MEMO", "invoice", c.memo, c.doc, c.reverses); got != c.want {
+		if got := statementDescription("CREDIT_MEMO", "invoice", c.memo, c.doc, c.reverses, ""); got != c.want {
 			t.Errorf("memo %q doc %q reverses %q reads %q, want %q", c.memo, c.doc, c.reverses, got, c.want)
 		}
 	}

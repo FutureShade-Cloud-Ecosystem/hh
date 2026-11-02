@@ -10,7 +10,7 @@ func TestStatementDescription_AnEmptyPaymentMemoReadsBySource(t *testing.T) {
 		"payment_void": "Payment voided", "payment_reversal": "Payment reversed", "payment_reapply": "Payment applied",
 		"payment": "Payment received, thank you", "brand_new_writer": "Payment received, thank you",
 	} {
-		if got := statementDescription("PAYMENT", src, "", "", ""); got != want {
+		if got := statementDescription("PAYMENT", src, "", "", "", ""); got != want {
 			t.Errorf("empty memo on %s reads %q, want %q", src, got, want)
 		}
 	}
