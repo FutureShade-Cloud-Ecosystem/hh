@@ -144,7 +144,8 @@ func sageJournalMemo(r ExportRow) string {
 // runes by keeping the WHOLE note and cutting the memo to the room the note leaves (the AX-3
 // read's P3-1): the note is the only place the bookkeeper sees why the file's date differs from
 // the document's, so it never loses its tail to the limit. The note is bounded (a day, a month
-// name and a year, twice: at most fifty one runes), so the room never runs out; an absurdity
+// name and a year, twice: at most fifty two runes, for example "approved 10 September 2021, posted
+// to September 2020"), and the room is computed from the note's actual length, so it never runs out; an absurdity
 // longer than that rides alone rather than handing the cut a negative bound. A memo with no note
 // keeps the plain 75 rune cut.
 func sageTransactionComment(memo, note string) string {

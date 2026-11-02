@@ -117,10 +117,23 @@ func (d *sageLegDrops) batch(id string) {
 }
 
 // cleanup deletes the leg's export batches, then its journals' lines and the journals (lines
-// before headers), then its mappings. Every delete fails the test naming its table.
+// before headers), then its mappings and the entry number counters of its fiscal years. Every delete fails the test naming its table.
 func (d *sageLegDrops) cleanup(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
+	// Read each journal's fiscal year first: the counters to drop are the years the leg created.
+	var years []int
+	seen := map[int]bool{}
+	for _, id := range d.journalIDs {
+		var year int
+		if err := pool.QueryRow(ctx, `SELECT fiscal_year FROM gl_journals WHERE id = $1::uuid`, id).Scan(&year); err != nil {
+			t.Fatalf("cleanup read gl_journals fiscal year (%s): %v", id, err)
+		}
+		if !seen[year] {
+			seen[year] = true
+			years = append(years, year)
+		}
+	}
 	for _, id := range d.batchIDs {
 		if _, err := pool.Exec(ctx, `DELETE FROM gl_export_batches WHERE id = $1::uuid`, id); err != nil {
 			t.Fatalf("cleanup gl_export_batches (%s): %v", id, err)
@@ -136,6 +149,13 @@ func (d *sageLegDrops) cleanup(t *testing.T, pool *pgxpool.Pool) {
 	}
 	if _, err := pool.Exec(ctx, `DELETE FROM gl_account_mapping WHERE target = $1`, TargetSage50); err != nil {
 		t.Fatalf("cleanup gl_account_mapping: %v", err)
+	}
+	// The entry number counters the leg's postings created, one row per fiscal year the leg
+	// posted into (the AX-3 delta read's P3-c). The years were read before the journals went.
+	for _, year := range years {
+		if _, err := pool.Exec(ctx, `DELETE FROM gl_entry_no_sequences WHERE fiscal_year = $1`, year); err != nil {
+			t.Fatalf("cleanup gl_entry_no_sequences (fiscal year %d): %v", year, err)
+		}
 	}
 }
 
