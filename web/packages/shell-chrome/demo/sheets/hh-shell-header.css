@@ -622,6 +622,13 @@
     font-weight: 600;
     flex: none;
   }
+  .menu-glyph {
+    width: 30px;
+    height: 30px;
+    padding: 6px;
+    box-sizing: border-box;
+    flex: none;
+  }
   .account-word {
     max-width: 160px;
     overflow: hidden;

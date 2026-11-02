@@ -1128,6 +1128,8 @@ export class DealerAdminApp extends HHElement {
       band.groups = [];
       band.currentKey = "";
       band.syncState = "idle";
+      // UX-145: no sync chip and no account claim while nobody is signed in (the sign in and offline doors).
+      band.signedIn = session !== null;
       band.variant = "band";
       band.theme = this.#theme;
       band.accountMenu = html`
