@@ -28,10 +28,13 @@ import (
 )
 
 // renderSage50Journals renders the period's posted lines as Sage 50 general journal transactions,
-// one transaction per GL journal, the entry's lines in entry order as the QBO body groups them
-// (ExportRows orders by entry_no). Every account must come through the mapping: a row whose
-// account has no mapped package code refuses the whole file in words, the same rule the
-// unmapped-movement read refuses by, so the two reads cannot drift apart and hand the file a hole.
+// one transaction per GL journal. ExportRows orders the rows by entry_no and then ACCOUNT CODE, so
+// the transaction's detail lines ride in account code order (the AX-3 read's P3-2 note: not entry
+// order; the row carries no line number, and Sage 50 books a transaction's amounts regardless of
+// its lines' order, so the read's deterministic order is kept and the comment is fixed instead of
+// the order). Every account must come through the mapping: a row whose account has no mapped
+// package code refuses the whole file in words, the same rule the unmapped-movement read refuses
+// by, so the two reads cannot drift apart and hand the file a hole.
 func renderSage50Journals(rows []ExportRow, packageAccount map[string]string) (string, error) {
 	target := exportTargetWords(TargetSage50)
 	var b strings.Builder
@@ -58,15 +61,18 @@ func renderSage50Journals(rows []ExportRow, packageAccount map[string]string) (s
 			entryNo = r.EntryNo
 			entrySum = 0
 			// The transaction's first line: the posted house day clamped into the journal's
-			// period as mm-dd-yy, the journal's own number as the source, the journal's memo as
+			// period as mm-dd-yy, the journal's own number as the source, the JOURNAL's memo as
 			// the comment (with the clamp note when the day was clamped). The source is
 			// gl_journals.entry_no, the row's EntryNo: the number every GL report shows, minted
 			// per fiscal year and unique within it, so the bookkeeper can trace the imported
 			// transaction back to the journal it came from; Sage's page says the source is
 			// typically a document number, and the GL journal's own number is exactly that. The
-			// comment is the entry's first line's memo, because v_gl_detail carries the journal's
-			// memo on every line unless the line carries one of its own.
-			dateWords, journalMemo, note := journalEntryDateParts(r, r.Memo)
+			// comment is the journal's own memo (gl_journals.memo, carried on the row by
+			// ExportRows, the AX-3 read's P3-2): the transaction IS the journal, so one line's
+			// memo must not speak for it. A row with no journal memo (a journal that carries
+			// none, a planted unit row) falls back to the row's memo, so the comment is never
+			// silently empty. A line's own memo stays on its detail line below.
+			dateWords, journalMemo, note := journalEntryDateParts(r, sageJournalMemo(r))
 			fmt.Fprintf(&b, "%s,%s,%s\r\n",
 				sageMMDDYY(dateWords),
 				sageQuoted(sageCut(sageText(strconv.Itoa(r.EntryNo)), 20)),
@@ -121,6 +127,17 @@ func sageText(s string) string {
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	return s
+}
+
+// sageJournalMemo is the transaction comment's base: the journal's own memo (gl_journals.memo, the
+// AX-3 read's P3-2), not a line's. A row with no journal memo (a journal that carries none, a
+// planted unit row) keeps the row's memo, the words the comment carried before the journal's memo
+// rode the row.
+func sageJournalMemo(r ExportRow) string {
+	if r.JournalMemo != "" {
+		return r.JournalMemo
+	}
+	return r.Memo
 }
 
 // sageTransactionComment fits the transaction comment and its clamp note inside Sage 50's 75

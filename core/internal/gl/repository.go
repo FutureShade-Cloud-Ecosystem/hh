@@ -2113,6 +2113,12 @@ func (r *Repository) InsertExportBatch(ctx context.Context, year, month int, for
 // rendered in the DEALER's house zone, the same zone the posting path files periods by: an export
 // file's days are house days, never UTC days (a 9pm Ontario posting on the last day of a month is
 // that month's, in the books and in the file alike).
+//
+// The journal's own memo rides the row from the QUERY (not the 0034 view, which stays untouched):
+// v_gl_detail's memo cell is the line's memo when it carries one and the journal's only as a
+// fallback, and the Sage 50 body speaks the journal's words on the transaction comment (the AX-3
+// read's P3-2), so the row carries both. The join back to gl_journals by the view's journal_id is
+// the gl module reading its own table, no census matter.
 func (r *Repository) ExportRows(ctx context.Context, year int, months []int, branchID string) ([]ExportRow, error) {
 	if r.pool == nil {
 		return nil, errNoDB
@@ -2125,13 +2131,14 @@ func (r *Repository) ExportRows(ctx context.Context, year int, months []int, bra
 		return nil, err
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT entry_no, COALESCE(to_char(posted_at AT TIME ZONE $4, 'YYYY-MM-DD'),''), period_year, period_month, account_code::text, account_name,
-		        COALESCE(debit_cents,0), COALESCE(credit_cents,0), COALESCE(memo,'')
-		 FROM v_gl_detail
-		 WHERE period_year = $1
-		   AND (cardinality($2::int[]) = 0 OR period_month = ANY($2::int[]))
-		   AND ($3 = '' OR branch_id = $3::uuid)
-		 ORDER BY entry_no, account_code`, year, months, branchID, zone.Name())
+		`SELECT vd.entry_no, COALESCE(to_char(vd.posted_at AT TIME ZONE $4, 'YYYY-MM-DD'),''), vd.period_year, vd.period_month, vd.account_code::text, vd.account_name,
+		        COALESCE(vd.debit_cents,0), COALESCE(vd.credit_cents,0), COALESCE(vd.memo,''), COALESCE(j.memo,'')
+		 FROM v_gl_detail vd
+		 JOIN gl_journals j ON j.id = vd.journal_id
+		 WHERE vd.period_year = $1
+		   AND (cardinality($2::int[]) = 0 OR vd.period_month = ANY($2::int[]))
+		   AND ($3 = '' OR vd.branch_id = $3::uuid)
+		 ORDER BY vd.entry_no, vd.account_code`, year, months, branchID, zone.Name())
 	if err != nil {
 		return nil, fmt.Errorf("gl: export rows: %w", err)
 	}
@@ -2139,7 +2146,7 @@ func (r *Repository) ExportRows(ctx context.Context, year int, months []int, bra
 	var out []ExportRow
 	for rows.Next() {
 		var e ExportRow
-		if err := rows.Scan(&e.EntryNo, &e.PostedAt, &e.PeriodYear, &e.PeriodMonth, &e.AccountCode, &e.AccountName, &e.DebitCents, &e.CreditCents, &e.Memo); err != nil {
+		if err := rows.Scan(&e.EntryNo, &e.PostedAt, &e.PeriodYear, &e.PeriodMonth, &e.AccountCode, &e.AccountName, &e.DebitCents, &e.CreditCents, &e.Memo, &e.JournalMemo); err != nil {
 			return nil, fmt.Errorf("gl: scan export row: %w", err)
 		}
 		out = append(out, e)
