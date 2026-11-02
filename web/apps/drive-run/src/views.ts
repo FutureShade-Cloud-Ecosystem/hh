@@ -507,6 +507,6 @@ export function renderEntry(view: EntryView): TemplateResult {
     <h1>Drive</h1>
     <p class="dim">Your run, your stops and proof of delivery, on your phone.${demoNote(servedConsoleConfig())}</p>
     ${view.message !== null ? html`<p class="alert alert-error" role="alert">${view.message}</p>` : nothing}
-    ${body}
+    <div class="stage">${body}</div>
   `;
 }

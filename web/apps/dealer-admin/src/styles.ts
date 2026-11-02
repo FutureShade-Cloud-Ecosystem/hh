@@ -956,7 +956,6 @@ export const dealerStyles = css`
   }
   .stage {
     max-width: 680px;
-    margin: 0 auto;
     padding: var(--hh-s-40) 0 var(--hh-s-64);
   }
   .stage .headline {

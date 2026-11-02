@@ -29,6 +29,9 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, entryAfter, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+// The door stage (UX-143): the door line sits on the shared left-aligned stage. Its own sheet
+// keeps its distance: doorStageStyles carries the .stage rule alone, no entryStyles card classes.
+import { doorStageStyles } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { bandIdentity } from "./band-identity.js";
 // The offline strip and the conflict cards ride the shell chrome package,
 // wired here through their properties (the injected seams): this app maps the
@@ -88,7 +91,7 @@ interface Draft {
 }
 
 export class YardPickApp extends HHElement {
-  static styles = [baseStyles, yardStyles];
+  static styles = [baseStyles, yardStyles, doorStageStyles];
 
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();

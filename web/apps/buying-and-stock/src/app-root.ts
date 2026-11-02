@@ -472,7 +472,7 @@ export class BuyingAndStockApp extends HHElement {
       <main class="desk">
         <h1>Buying and Stock</h1>
         <p class="dim">Purchase orders and the reorder worklist for the buying seats; the stock lookup, read only, for Sales.${demoNote(servedConsoleConfig())}</p>
-        ${renderEntry(this.#entryView, { app: "Buying and Stock" })}
+        ${renderEntry(this.#entryView, { app: "Buying and Stock", title: false })}
       </main>
       <hh-feedback screen="Buying and Stock" trigger="external"></hh-feedback>
     `;
